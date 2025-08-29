@@ -630,7 +630,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
   );
 }
 
-/** Styles */
+
 const styles = StyleSheet.create({
   grid: {
     gap: 12,

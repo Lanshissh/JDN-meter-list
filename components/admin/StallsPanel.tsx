@@ -71,9 +71,9 @@ function decodeJwtPayload(token: string | null): any | null {
       else if (c4 === 64) str += String.fromCharCode(b1, b2);
       else str += String.fromCharCode(b1, b2, b3);
     }
-    // decodeURIComponent(escape(...)) for UTF-8
     const json = decodeURIComponent(
-      str.split("")
+      str
+        .split("")
         .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
         .join("")
     );
@@ -85,8 +85,18 @@ function decodeJwtPayload(token: string | null): any | null {
 
 export default function StallsPanel({ token }: { token: string | null }) {
   const { token: ctxToken } = useAuth();
-  const jwt = useMemo(() => decodeJwtPayload(token || ctxToken || null), [token, ctxToken]);
-  const isAdmin = String(jwt?.user_level || "").toLowerCase() === "admin";
+  const mergedToken = token || ctxToken || null;
+
+  const jwt = useMemo(() => decodeJwtPayload(mergedToken), [mergedToken]);
+  const role = String(jwt?.user_level || "").toLowerCase();
+  const isAdmin = role === "admin";
+  const isOperator = role === "operator";
+  const userBuildingId = String(jwt?.building_id || "");
+
+  // 👉 Operators now have full CRUD
+  const canCreate = isAdmin || isOperator;
+  const canEdit = isAdmin || isOperator;
+  const canDelete = isAdmin || isOperator;
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -113,8 +123,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
 
-  const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ctxToken ?? ""}` }), [token, ctxToken]);
-
+  const authHeader = useMemo(() => ({ Authorization: `Bearer ${mergedToken ?? ""}` }), [mergedToken]);
   const api = useMemo(
     () =>
       axios.create({
@@ -126,23 +135,31 @@ export default function StallsPanel({ token }: { token: string | null }) {
   );
 
   const loadAll = async () => {
-    if (!token && !ctxToken) {
+    if (!mergedToken) {
       setBusy(false);
-      Alert.alert("Not logged in", "Please log in as admin/operator to manage stalls.");
+      Alert.alert("Not logged in", "Please log in to manage stalls.");
       return;
     }
     try {
       setBusy(true);
-      const [stallsRes, buildingsRes, tenantsRes] = await Promise.all([
-        api.get<Stall[]>("/stalls"),
-        api.get<Building[]>("/buildings"),
-        api.get<Tenant[]>("/tenants"),
-      ]);
-      setStalls(stallsRes.data || []);
-      setBuildings(buildingsRes.data || []);
-      setTenants(tenantsRes.data || []);
-      if (!buildingId && buildingsRes.data?.length) {
-        setBuildingId(buildingsRes.data[0].building_id);
+
+      // Always get stalls + tenants; only admins fetch /buildings (some backends keep this admin-only)
+      const reqs: Promise<any>[] = [api.get<Stall[]>("/stalls"), api.get<Tenant[]>("/tenants")];
+      if (isAdmin) reqs.push(api.get<Building[]>("/buildings"));
+
+      const [stallsRes, tenantsRes, buildingsRes] = (await Promise.all(reqs)) as [any, any, any?];
+
+      setStalls(stallsRes?.data || []);
+      setTenants(tenantsRes?.data || []);
+
+      if (isAdmin && buildingsRes) {
+        setBuildings(buildingsRes.data || []);
+        if (!buildingId && buildingsRes.data?.length) {
+          setBuildingId(buildingsRes.data[0].building_id);
+        }
+      } else {
+        // lock building to operator's own building (and other non-admins)
+        setBuildingId((prev) => prev || userBuildingId || "");
       }
     } catch (err: any) {
       console.error("[STALLS LOAD]", err?.response?.data || err?.message);
@@ -155,7 +172,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, ctxToken]);
+  }, [mergedToken]);
 
   // tenant lists filtered by building
   const tenantsForCreate = useMemo(
@@ -204,7 +221,11 @@ export default function StallsPanel({ token }: { token: string | null }) {
 
   // --- Create ---
   const onCreate = async () => {
-    if (!stallSn || !buildingId || !status) {
+    if (!canCreate) return;
+    // admin chooses building; operator is locked to own building
+    const finalBuildingId = isAdmin ? buildingId : userBuildingId;
+
+    if (!stallSn || !finalBuildingId || !status) {
       Alert.alert("Missing info", "Please fill in Stall SN, Building, and Status.");
       return;
     }
@@ -213,7 +234,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
       await api.post("/stalls", {
         stall_sn: stallSn,
         tenant_id: status === "available" ? null : tenantId || null,
-        building_id: buildingId,
+        building_id: finalBuildingId,
         stall_status: status,
       });
       setStallSn("");
@@ -231,18 +252,20 @@ export default function StallsPanel({ token }: { token: string | null }) {
 
   // --- Edit modal ---
   const openEdit = (stall: Stall) => {
+    if (!canEdit) return;
     setEditStall({ ...stall });
     setEditVisible(true);
   };
 
   const onUpdate = async () => {
-    if (!editStall) return;
+    if (!canEdit || !editStall) return;
     try {
       setSubmitting(true);
+      const finalBuildingId = isAdmin ? editStall.building_id : userBuildingId; // operator locked to own building
       await api.put(`/stalls/${encodeURIComponent(editStall.stall_id)}`, {
         stall_sn: editStall.stall_sn,
         tenant_id: editStall.stall_status === "available" ? null : editStall.tenant_id || null,
-        building_id: editStall.building_id, // server blocks operators from moving buildings; UI disabled when !isAdmin
+        building_id: finalBuildingId,
         stall_status: editStall.stall_status,
       });
       setEditVisible(false);
@@ -260,13 +283,14 @@ export default function StallsPanel({ token }: { token: string | null }) {
     Platform.OS === "web"
       ? Promise.resolve(window.confirm(`Delete stall ${stall.stall_sn} (${stall.stall_id})?`))
       : new Promise((resolve) => {
-        Alert.alert("Delete stall", `Are you sure you want to delete ${stall.stall_sn}?`, [
-          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-          { text: "Delete", style: "destructive", onPress: () => resolve(true) },
-        ]);
-      });
+          Alert.alert("Delete stall", `Are you sure you want to delete ${stall.stall_sn}?`, [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+            { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+          ]);
+        });
 
   const onDelete = async (stall: Stall) => {
+    if (!canDelete) return;
     const ok = await confirmDelete(stall);
     if (!ok) return;
     try {
@@ -285,44 +309,52 @@ export default function StallsPanel({ token }: { token: string | null }) {
   return (
     <View style={styles.grid}>
       {/* CREATE */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Create Stall</Text>
-        <TextInput style={styles.input} placeholder="Stall SN" value={stallSn} onChangeText={setStallSn} />
-        <Dropdown
-          label="Building"
-          value={buildingId}
-          onChange={setBuildingId}
-          options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
-        />
-        <Dropdown
-          label="Status"
-          value={status}
-          onChange={(v) => {
-            const s = v as Stall["stall_status"];
-            setStatus(s);
-            if (s === "available") setTenantId("");
-          }}
-          options={[
-            { label: "Available", value: "available" },
-            { label: "Occupied", value: "occupied" },
-            { label: "Under Maintenance", value: "under maintenance" },
-          ]}
-        />
-        {status !== "available" && (
+      {canCreate && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Create Stall</Text>
+          <TextInput style={styles.input} placeholder="Stall SN" value={stallSn} onChangeText={setStallSn} />
+
+          {isAdmin ? (
+            <Dropdown
+              label="Building"
+              value={buildingId}
+              onChange={setBuildingId}
+              options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
+            />
+          ) : (
+            <ReadOnlyField label="Building" value={userBuildingId || "(none)"} />
+          )}
+
           <Dropdown
-            label="Tenant"
-            value={tenantId}
-            onChange={setTenantId}
+            label="Status"
+            value={status}
+            onChange={(v) => {
+              const s = v as Stall["stall_status"];
+              setStatus(s);
+              if (s === "available") setTenantId("");
+            }}
             options={[
-              { label: "None", value: "" },
-              ...tenantsForCreate.map((t) => ({ label: `${t.tenant_name} (${t.tenant_id})`, value: t.tenant_id })),
+              { label: "Available", value: "available" },
+              { label: "Occupied", value: "occupied" },
+              { label: "Under Maintenance", value: "under maintenance" },
             ]}
           />
-        )}
-        <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
-          {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Stall</Text>}
-        </TouchableOpacity>
-      </View>
+          {status !== "available" && (
+            <Dropdown
+              label="Tenant"
+              value={tenantId}
+              onChange={setTenantId}
+              options={[
+                { label: "None", value: "" },
+                ...tenantsForCreate.map((t) => ({ label: `${t.tenant_name} (${t.tenant_id})`, value: t.tenant_id })),
+              ]}
+            />
+          )}
+          <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
+            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Stall</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* LIST & FILTERS */}
       <View style={styles.card}>
@@ -375,13 +407,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
           )}
         </View>
 
-        <View style={styles.chipsRow}>
-          <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
-          <Chip label="Oldest" active={sortMode === "oldest"} onPress={() => setSortMode("oldest")} />
-          <Chip label="ID ↑" active={sortMode === "idAsc"} onPress={() => setSortMode("idAsc")} />
-          <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
-        </View>
-
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
@@ -402,12 +427,21 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   </Text>
                   {item.tenant_id && <Text style={styles.rowSub}>Tenant: {item.tenant_id}</Text>}
                 </View>
-                <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
-                  <Text style={styles.linkText}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
-                  <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
-                </TouchableOpacity>
+
+                {(canEdit || canDelete) && (
+                  <>
+                    {canEdit && (
+                      <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+                        <Text style={styles.linkText}>Edit</Text>
+                      </TouchableOpacity>
+                    )}
+                    {canDelete && (
+                      <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
+                        <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                )}
               </View>
             )}
           />
@@ -431,7 +465,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   value={editStall.building_id}
                   onChange={(v) => setEditStall({ ...editStall, building_id: v })}
                   options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
-                  disabled={!isAdmin} // 🔒 non-admins cannot change building in the UI
+                  disabled={!isAdmin} // 🔒 only admin can change building
                 />
                 <Dropdown
                   label="Status"
@@ -467,13 +501,26 @@ export default function StallsPanel({ token }: { token: string | null }) {
               <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
                 <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
-              </TouchableOpacity>
+              {canEdit && (
+                <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
+                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
       </Modal>
+    </View>
+  );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ marginTop: 8 }}>
+      <Text style={styles.dropdownLabel}>{label}</Text>
+      <View style={[styles.input, { justifyContent: "center" }]}>
+        <Text style={{ color: "#0b2239", fontWeight: "600" }}>{value}</Text>
+      </View>
     </View>
   );
 }

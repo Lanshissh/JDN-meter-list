@@ -1,23 +1,37 @@
-import React, { useState } from "react";
+// app/(tabs)/_layout.tsx
+import React, { useMemo } from "react";
 import { View, StyleSheet, Platform } from "react-native";
 import { Slot, useRouter, Tabs } from "expo-router";
 import SideNav, { TabKey } from "../../components/SideNav";
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from "../../contexts/AuthContext";
+
+function decodeRole(token: string | null): string {
+  try {
+    if (!token) return "";
+    const p = token.split(".")[1];
+    const b64 = p.replace(/-/g, "+").replace(/_/g, "/");
+    const json = typeof (globalThis as any).atob === "function" ? (globalThis as any).atob(b64) : "";
+    return json ? String(JSON.parse(json)?.user_level || "").toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
 
 export default function TabLayout() {
-  const [activeTab, setActiveTab] = useState<TabKey>("admin");
+  const { token } = useAuth();
+  const role = useMemo(() => decodeRole(token), [token]);
+
+  const [activeTab, setActiveTab] = React.useState<TabKey>(role === "reader" ? "scanner" : "admin");
   const router = useRouter();
 
   const handleSelectTab = (tab: TabKey) => {
     setActiveTab(tab);
-    if (tab === "logout") {
-      router.replace("/(auth)/login");
-    } else {
-      router.replace(`/(tabs)/${tab}` as any);
-    }
+    if (tab === "logout") router.replace("/(auth)/login");
+    else router.replace(`/(tabs)/${tab}` as any);
   };
 
-  // On web, use side nav
+  // On web, show our SideNav (which already hides Admin for readers)
   if (Platform.OS === "web") {
     return (
       <View style={styles.container}>
@@ -29,29 +43,26 @@ export default function TabLayout() {
     );
   }
 
-  // On mobile, use bottom tabs with white icons
+  // On mobile, hide the Admin tab entirely for readers via href=null
+  const hideAdmin = role === "reader";
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#fff", // White for active icons
-        tabBarInactiveTintColor: "#fff", // White for inactive icons
-        tabBarStyle: {
-          backgroundColor: "#007bff",
-          borderTopWidth: 1,
-          borderTopColor: "#eee",
-        }, // Optional: make bar blue for contrast
+        tabBarActiveTintColor: "#fff",
+        tabBarInactiveTintColor: "#fff",
+        tabBarStyle: { backgroundColor: "#007bff", borderTopWidth: 1, borderTopColor: "#eee" },
       }}
     >
       <Tabs.Screen
         name="admin"
         options={{
           title: "Admin",
+          // Hide this tab for readers
+          href: hideAdmin ? null : "/(tabs)/admin",
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon
-              name={focused ? "person-circle" : "person-circle-outline"}
-              color={color}
-            />
+            <Ionicons name={focused ? "person-circle" : "person-circle-outline"} size={24} color={color} />
           ),
         }}
       />
@@ -61,10 +72,7 @@ export default function TabLayout() {
         options={{
           title: "Scanner",
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon
-              name={focused ? "scan" : "scan-outline"}
-              color={color}
-            />
+            <Ionicons name={focused ? "scan" : "scan-outline"} size={24} color={color} />
           ),
         }}
       />
@@ -74,16 +82,12 @@ export default function TabLayout() {
         options={{
           title: "Billing",
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name={focused ? "card" : "card-outline"} color={color} />
+            <Ionicons name={focused ? "card" : "card-outline"} size={24} color={color} />
           ),
         }}
       />
     </Tabs>
   );
-}
-
-function TabBarIcon({ name, color }: { name: string; color: string }) {
-  return <Ionicons name={name as any} size={24} color={color} />;
 }
 
 const styles = StyleSheet.create({
