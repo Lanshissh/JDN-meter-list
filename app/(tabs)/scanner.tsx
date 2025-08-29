@@ -42,7 +42,7 @@ export default function ScannerScreen() {
   useFocusEffect(
     React.useCallback(() => {
       setScannerKey((prev) => prev + 1); // re-create scanner on focus
-    }, [])
+    }, []),
   );
 
   return (
@@ -102,7 +102,7 @@ const styles = StyleSheet.create({
   },
   iconBtn: {
     marginLeft: 8.7,
-    marginTop:53.1,
+    marginTop: 53.1,
     backgroundColor: "rgba(255, 255, 255, 0.35)",
     borderRadius: 999,
     padding: 8,

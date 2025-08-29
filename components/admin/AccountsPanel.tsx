@@ -396,10 +396,26 @@ export default function AccountsPanel({
 
         <Text style={styles.modalLabel}>Role</Text>
         <View style={styles.formRow}>
-          <Chip label="Admin" active={level === "admin"} onPress={() => setLevel("admin")} />
-          <Chip label="Operator" active={level === "operator"} onPress={() => setLevel("operator")} />
-          <Chip label="Biller" active={level === "biller"} onPress={() => setLevel("biller")} />
-          <Chip label="Reader" active={level === "reader"} onPress={() => setLevel("reader")} />
+          <Chip
+            label="Admin"
+            active={level === "admin"}
+            onPress={() => setLevel("admin")}
+          />
+          <Chip
+            label="Operator"
+            active={level === "operator"}
+            onPress={() => setLevel("operator")}
+          />
+          <Chip
+            label="Biller"
+            active={level === "biller"}
+            onPress={() => setLevel("biller")}
+          />
+          <Chip
+            label="Reader"
+            active={level === "reader"}
+            onPress={() => setLevel("reader")}
+          />
         </View>
 
         {roleNeedsBuilding(level) && (
@@ -443,7 +459,8 @@ export default function AccountsPanel({
         </TouchableOpacity>
 
         <Text style={styles.hint}>
-          New users are auto-assigned IDs like <Text style={{ fontWeight: "700" }}>USER-N</Text>.
+          New users are auto-assigned IDs like{" "}
+          <Text style={{ fontWeight: "700" }}>USER-N</Text>.
         </Text>
       </View>
 
@@ -468,26 +485,36 @@ export default function AccountsPanel({
             keyExtractor={(item) => item.user_id}
             scrollEnabled={Platform.OS === "web"}
             nestedScrollEnabled={false}
-            ListEmptyComponent={<Text style={styles.empty}>No users found.</Text>}
+            ListEmptyComponent={
+              <Text style={styles.empty}>No users found.</Text>
+            }
             renderItem={({ item }) => {
-              const utils = (item.utility_role || []).map((u) => u.toUpperCase()).join(", ");
+              const utils = (item.utility_role || [])
+                .map((u) => u.toUpperCase())
+                .join(", ");
               return (
                 <View className="row" style={styles.row}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.rowTitle}>{item.user_fullname}</Text>
                     <Text style={styles.rowSub}>
-                      {item.user_id} • {item.user_level.toUpperCase()} • {item.building_id ?? "—"}
+                      {item.user_id} • {item.user_level.toUpperCase()} •{" "}
+                      {item.building_id ?? "—"}
                       {utils ? ` • ${utils}` : ""}
                     </Text>
                   </View>
-                  <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+                  <TouchableOpacity
+                    style={styles.link}
+                    onPress={() => openEdit(item)}
+                  >
                     <Text style={styles.linkText}>Edit</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.link, { marginLeft: 8 }]}
                     onPress={() => onDelete(item)}
                   >
-                    <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
+                    <Text style={[styles.linkText, { color: "#e53935" }]}>
+                      Delete
+                    </Text>
                   </TouchableOpacity>
                 </View>
               );
@@ -502,7 +529,11 @@ export default function AccountsPanel({
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Edit User</Text>
             <Text style={styles.modalLabel}>Full name</Text>
-            <TextInput style={styles.input} value={editFullname} onChangeText={setEditFullname} />
+            <TextInput
+              style={styles.input}
+              value={editFullname}
+              onChangeText={setEditFullname}
+            />
 
             <Text style={styles.modalLabel}>New password (optional)</Text>
             <TextInput
@@ -514,14 +545,26 @@ export default function AccountsPanel({
 
             <Text style={styles.modalLabel}>Role</Text>
             <View style={styles.formRow}>
-              <Chip label="Admin" active={editLevel === "admin"} onPress={() => setEditLevel("admin")} />
+              <Chip
+                label="Admin"
+                active={editLevel === "admin"}
+                onPress={() => setEditLevel("admin")}
+              />
               <Chip
                 label="Operator"
                 active={editLevel === "operator"}
                 onPress={() => setEditLevel("operator")}
               />
-              <Chip label="Biller" active={editLevel === "biller"} onPress={() => setEditLevel("biller")} />
-              <Chip label="Reader" active={editLevel === "reader"} onPress={() => setEditLevel("reader")} />
+              <Chip
+                label="Biller"
+                active={editLevel === "biller"}
+                onPress={() => setEditLevel("biller")}
+              />
+              <Chip
+                label="Reader"
+                active={editLevel === "reader"}
+                onPress={() => setEditLevel("reader")}
+              />
             </View>
 
             {roleNeedsBuilding(editLevel) && (
@@ -559,9 +602,15 @@ export default function AccountsPanel({
                 style={[styles.btn, styles.btnGhost]}
                 onPress={() => setEditVisible(false)}
               >
-                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
+                <Text style={[styles.btnText, { color: "#102a43" }]}>
+                  Cancel
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
+              <TouchableOpacity
+                style={styles.btn}
+                onPress={onUpdate}
+                disabled={submitting}
+              >
                 {submitting ? (
                   <ActivityIndicator color="#fff" />
                 ) : (

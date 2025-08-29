@@ -67,7 +67,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // If we have a token but no stored expiry, derive it from token
       let expMs =
-        storedExp != null ? parseInt(storedExp, 10) : (storedToken ? getExpMs(storedToken) : null);
+        storedExp != null
+          ? parseInt(storedExp, 10)
+          : storedToken
+            ? getExpMs(storedToken)
+            : null;
 
       if (!storedToken || !expMs || Date.now() >= expMs) {
         // nothing valid -> ensure clean state

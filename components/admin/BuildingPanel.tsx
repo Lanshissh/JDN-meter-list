@@ -38,7 +38,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
 
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token]
+    [token],
   );
 
   const api = useMemo(
@@ -48,13 +48,16 @@ export default function BuildingPanel({ token }: { token: string | null }) {
         headers: authHeader,
         timeout: 15000,
       }),
-    [authHeader]
+    [authHeader],
   );
 
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
-      Alert.alert("Not logged in", "Please log in as admin to manage buildings.");
+      Alert.alert(
+        "Not logged in",
+        "Please log in as admin to manage buildings.",
+      );
       return;
     }
     try {
@@ -62,7 +65,10 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       const buildingsRes = await api.get<Building[]>("/buildings");
       setBuildings(buildingsRes.data || []);
     } catch (err: any) {
-      Alert.alert("Load failed", err?.response?.data?.error ?? "Connection error.");
+      Alert.alert(
+        "Load failed",
+        err?.response?.data?.error ?? "Connection error.",
+      );
     } finally {
       setBusy(false);
     }
@@ -78,7 +84,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     return buildings.filter(
       (b) =>
         b.building_id.toLowerCase().includes(q) ||
-        b.building_name.toLowerCase().includes(q)
+        b.building_name.toLowerCase().includes(q),
     );
   }, [buildings, query]);
 
@@ -93,10 +99,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       const res = await api.post("/buildings", { building_name });
       // backend returns { message, buildingId }
       const assignedId: string =
-        res?.data?.buildingId ??
-        res?.data?.building_id ??
-        res?.data?.id ??
-        "";
+        res?.data?.buildingId ?? res?.data?.building_id ?? res?.data?.id ?? "";
 
       setName("");
       await loadAll();
@@ -106,7 +109,10 @@ export default function BuildingPanel({ token }: { token: string | null }) {
         : "Building created.";
       Alert.alert("Success", msg);
     } catch (err: any) {
-      Alert.alert("Create failed", err?.response?.data?.error ?? "Server error.");
+      Alert.alert(
+        "Create failed",
+        err?.response?.data?.error ?? "Server error.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -127,14 +133,20 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     }
     try {
       setSubmitting(true);
-      await api.put(`/buildings/${encodeURIComponent(editBuilding.building_id)}`, {
-        building_name,
-      });
+      await api.put(
+        `/buildings/${encodeURIComponent(editBuilding.building_id)}`,
+        {
+          building_name,
+        },
+      );
       setEditVisible(false);
       await loadAll();
       Alert.alert("Updated", "Building updated successfully.");
     } catch (err: any) {
-      Alert.alert("Update failed", err?.response?.data?.error ?? "Server error.");
+      Alert.alert(
+        "Update failed",
+        err?.response?.data?.error ?? "Server error.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -143,16 +155,26 @@ export default function BuildingPanel({ token }: { token: string | null }) {
   const confirmDelete = (b: Building) =>
     Platform.OS === "web"
       ? Promise.resolve(
-          (globalThis as any).confirm?.(`Delete building ${b.building_name}?`) ?? false
+          (globalThis as any).confirm?.(
+            `Delete building ${b.building_name}?`,
+          ) ?? false,
         )
       : new Promise((resolve) => {
           Alert.alert(
             "Delete building",
             `Are you sure you want to delete ${b.building_name}?`,
             [
-              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-              { text: "Delete", style: "destructive", onPress: () => resolve(true) },
-            ]
+              {
+                text: "Cancel",
+                style: "cancel",
+                onPress: () => resolve(false),
+              },
+              {
+                text: "Delete",
+                style: "destructive",
+                onPress: () => resolve(true),
+              },
+            ],
           );
         });
 
@@ -167,7 +189,10 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       if (Platform.OS !== "web") Alert.alert("Deleted", "Building removed.");
     } catch (err: any) {
       // server explains if refs exist (users/tenants/stalls)
-      Alert.alert("Delete failed", err?.response?.data?.error ?? "Server error.");
+      Alert.alert(
+        "Delete failed",
+        err?.response?.data?.error ?? "Server error.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -176,7 +201,9 @@ export default function BuildingPanel({ token }: { token: string | null }) {
   const Row = ({ item }: { item: Building }) => {
     const meta =
       (item.updated_by ? item.updated_by : "—") +
-      (item.last_updated ? ` • ${new Date(item.last_updated).toLocaleString()}` : "");
+      (item.last_updated
+        ? ` • ${new Date(item.last_updated).toLocaleString()}`
+        : "");
     return (
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
@@ -189,7 +216,10 @@ export default function BuildingPanel({ token }: { token: string | null }) {
         <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
           <Text style={styles.linkText}>Edit</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
+        <TouchableOpacity
+          style={[styles.link, { marginLeft: 8 }]}
+          onPress={() => onDelete(item)}
+        >
           <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
         </TouchableOpacity>
       </View>
@@ -239,7 +269,9 @@ export default function BuildingPanel({ token }: { token: string | null }) {
             keyExtractor={(item) => item.building_id}
             scrollEnabled={Platform.OS === "web"}
             nestedScrollEnabled={false}
-            ListEmptyComponent={<Text style={styles.empty}>No buildings found.</Text>}
+            ListEmptyComponent={
+              <Text style={styles.empty}>No buildings found.</Text>
+            }
             renderItem={({ item }) => <Row item={item} />}
           />
         )}
@@ -250,15 +282,25 @@ export default function BuildingPanel({ token }: { token: string | null }) {
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Edit Building</Text>
-            <TextInput style={styles.input} value={editName} onChangeText={setEditName} />
+            <TextInput
+              style={styles.input}
+              value={editName}
+              onChangeText={setEditName}
+            />
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
                 onPress={() => setEditVisible(false)}
               >
-                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
+                <Text style={[styles.btnText, { color: "#102a43" }]}>
+                  Cancel
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
+              <TouchableOpacity
+                style={styles.btn}
+                onPress={onUpdate}
+                disabled={submitting}
+              >
                 {submitting ? (
                   <ActivityIndicator color="#fff" />
                 ) : (

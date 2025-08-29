@@ -1,37 +1,27 @@
-// app/(tabs)/_layout.tsx
-import React, { useMemo } from "react";
+import React, { useState } from "react";
 import { View, StyleSheet, Platform } from "react-native";
 import { Slot, useRouter, Tabs } from "expo-router";
 import SideNav, { TabKey } from "../../components/SideNav";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../contexts/AuthContext";
 
-function decodeRole(token: string | null): string {
-  try {
-    if (!token) return "";
-    const p = token.split(".")[1];
-    const b64 = p.replace(/-/g, "+").replace(/_/g, "/");
-    const json = typeof (globalThis as any).atob === "function" ? (globalThis as any).atob(b64) : "";
-    return json ? String(JSON.parse(json)?.user_level || "").toLowerCase() : "";
-  } catch {
-    return "";
-  }
-}
-
 export default function TabLayout() {
-  const { token } = useAuth();
-  const role = useMemo(() => decodeRole(token), [token]);
-
-  const [activeTab, setActiveTab] = React.useState<TabKey>(role === "reader" ? "scanner" : "admin");
+  const [activeTab, setActiveTab] = useState<TabKey>("admin");
   const router = useRouter();
+  const { logout } = useAuth();
 
-  const handleSelectTab = (tab: TabKey) => {
+  const handleSelectTab = async (tab: TabKey) => {
     setActiveTab(tab);
-    if (tab === "logout") router.replace("/(auth)/login");
-    else router.replace(`/(tabs)/${tab}` as any);
+    if (tab === "logout") {
+      // make sure we clear token on web logout too
+      await logout();
+      router.replace("/(auth)/login");
+    } else {
+      router.replace(`/(tabs)/${tab}` as any);
+    }
   };
 
-  // On web, show our SideNav (which already hides Admin for readers)
+  // On web, use the vertical side nav (icons + logo + logout)
   if (Platform.OS === "web") {
     return (
       <View style={styles.container}>
@@ -43,51 +33,62 @@ export default function TabLayout() {
     );
   }
 
-  // On mobile, hide the Admin tab entirely for readers via href=null
-  const hideAdmin = role === "reader";
-
+  // On mobile, use bottom tabs
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: "#fff",
         tabBarInactiveTintColor: "#fff",
-        tabBarStyle: { backgroundColor: "#007bff", borderTopWidth: 1, borderTopColor: "#eee" },
+        tabBarStyle: {
+          backgroundColor: "#007bff",
+          borderTopWidth: 1,
+          borderTopColor: "#eee",
+        },
       }}
     >
       <Tabs.Screen
         name="admin"
         options={{
           title: "Admin",
-          // Hide this tab for readers
-          href: hideAdmin ? null : "/(tabs)/admin",
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "person-circle" : "person-circle-outline"} size={24} color={color} />
+            <TabBarIcon
+              name={focused ? "person-circle" : "person-circle-outline"}
+              color={color}
+            />
           ),
         }}
       />
-
       <Tabs.Screen
         name="scanner"
         options={{
           title: "Scanner",
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "scan" : "scan-outline"} size={24} color={color} />
+            <TabBarIcon
+              name={focused ? "scan" : "scan-outline"}
+              color={color}
+            />
           ),
         }}
       />
-
       <Tabs.Screen
         name="billing"
         options={{
           title: "Billing",
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "card" : "card-outline"} size={24} color={color} />
+            <TabBarIcon
+              name={focused ? "card" : "card-outline"}
+              color={color}
+            />
           ),
         }}
       />
     </Tabs>
   );
+}
+
+function TabBarIcon({ name, color }: { name: string; color: string }) {
+  return <Ionicons name={name as any} size={24} color={color} />;
 }
 
 const styles = StyleSheet.create({
