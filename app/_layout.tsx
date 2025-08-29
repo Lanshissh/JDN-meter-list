@@ -1,0 +1,59 @@
+import { useColorScheme } from "@/hooks/useColorScheme";
+import {
+  DarkTheme,
+  DefaultTheme,
+  ThemeProvider,
+} from "@react-navigation/native";
+import { useFonts } from "expo-font";
+import { Stack, Redirect } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import "react-native-reanimated";
+import { Platform } from "react-native";
+import { AuthProvider, useAuth } from "../contexts/AuthContext";
+import { ScanHistoryProvider } from "../contexts/ScanHistoryContext";
+
+function RootLayoutNav() {
+  const { isLoggedIn, loading } = useAuth();
+
+  console.log("🧭 isLoggedIn:", isLoggedIn, "loading:", loading);
+
+  if (loading) return null;
+
+  // MOBILE-ONLY gate: if not logged in, force login page
+  const needsLoginOnMobile = Platform.OS !== "web" && !isLoggedIn;
+
+  return (
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        {/* Keep both groups registered */}
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="(auth)/login" />
+        <Stack.Screen name="+not-found" />
+      </Stack>
+
+      {needsLoginOnMobile ? <Redirect href="/(auth)/login" /> : null}
+    </>
+  );
+}
+
+export default function RootLayout() {
+  const colorScheme = useColorScheme();
+  const [loaded] = useFonts({
+    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
+  });
+
+  if (!loaded) return null;
+
+  return (
+    <AuthProvider>
+      <ScanHistoryProvider>
+        <ThemeProvider
+          value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+        >
+          <RootLayoutNav />
+          <StatusBar style="auto" />
+        </ThemeProvider>
+      </ScanHistoryProvider>
+    </AuthProvider>
+  );
+}
