@@ -1,22 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Modal,
-  Platform,
-  Keyboard,
-  Dimensions,
-  KeyboardAvoidingView,
-  ScrollView,
-  SafeAreaView,
+  View, Text, StyleSheet, TextInput, TouchableOpacity,
+  ActivityIndicator, Alert, FlatList, Modal, Platform,
+  Keyboard, Dimensions, KeyboardAvoidingView, ScrollView,
+  SafeAreaView, ToastAndroid,
 } from "react-native";
-
 import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import {
@@ -136,6 +124,17 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   function todayStr() {
     return new Date().toISOString().slice(0, 10);
   }
+
+  const toast = (title: string, message?: string) => {
+    if (Platform.OS === "android") {
+      ToastAndroid.show(
+        message ? `${title}: ${message}` : title,
+        ToastAndroid.SHORT
+      );
+    } else {
+      Alert.alert(title, message);
+    }
+  };
 
   const metersById = useMemo(() => {
     const map = new Map<string, Meter>();
@@ -287,48 +286,40 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   };
 
   // --- QR scanning (unchanged UI) ---
-  const onScan = (data: OnSuccessfulScanProps | string) => {
-    const rawScanned = String(
-      (data as any)?.code ??
-        (data as any)?.rawData ??
-        (data as any)?.data ??
-        data ??
-        "",
-    ).trim();
+const onScan = (data: OnSuccessfulScanProps | string) => {
+  const rawScanned = String(
+    (data as any)?.code ??
+    (data as any)?.rawData ??
+    (data as any)?.data ??
+    data ??
+    "",
+  ).trim();
 
-    if (!rawScanned) return;
+  if (!rawScanned) return;
 
-    const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i;
-    if (!meterIdPattern.test(rawScanned)) {
-      return;
-    }
-    const meterId = rawScanned;
+  const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i;
+  if (!meterIdPattern.test(rawScanned)) {
+    return;
+  }
+  const meterId = rawScanned;
 
-    setScanVisible(false);
+  setScanVisible(false);
 
-    // If there are existing readings for this meter, open the newest in Edit.
-    const latest = readings
-      .filter((r) => r.meter_id === meterId)
-      .sort((a, b) => {
-        const ad = a.lastread_date.localeCompare(b.lastread_date);
-        if (ad !== 0) return -ad;
-        return b.reading_id.localeCompare(a.reading_id);
-      })[0];
+  // Validate meter
+  if (!metersById.get(meterId)) {
+    Alert.alert("Unknown meter", `No meter found for id: ${meterId}`);
+    return;
+  }
 
-    if (latest) {
-      openEdit(latest);
-      return;
-    }
+  // Always prepare a NEW reading in the create form
+  setFormMeterId(meterId);
+  setFormValue("");                // clear any previous value
+  setFormDate(todayStr());         // default to today
 
-    if (!metersById.get(meterId)) {
-      Alert.alert("Unknown meter", `No meter found for id: ${meterId}`);
-      return;
-    }
-    setFormMeterId(meterId);
-    setTimeout(() => {
-      readingInputRef.current?.focus?.();
-    }, 150);
-  };
+  setTimeout(() => {
+    readingInputRef.current?.focus?.();
+  }, 150);
+};
 
   const openScanner = () => {
     setScannerKey((k) => k + 1);

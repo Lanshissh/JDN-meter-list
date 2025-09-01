@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
   headerLeft: { flexDirection: "row", alignItems: "center" },
   headerRight: {},
   logoWrap: { width: 110, height: 40, justifyContent: "center" },
-  logo: { width: 110, height: 40 },
+  logo: { width: 100, height: 100 },
   userText: { color: "#102a43", fontWeight: "600" },
 
   // top nav (web)
