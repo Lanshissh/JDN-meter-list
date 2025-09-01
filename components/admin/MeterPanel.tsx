@@ -1,4 +1,3 @@
-// components/admin/MeterPanel.tsx — UI matched to MeterReadingPanel
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
@@ -197,6 +196,13 @@ export default function MeterPanel({ token }: { token: string | null }) {
       setSubmitting(true);
       await api.post("/meters", payload);
       Alert.alert("Success", "Meter added.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Success\n\nMeter added.");
+      }
       setSn("");
       setMult("1.00");
       setStallId("");
@@ -240,6 +246,13 @@ export default function MeterPanel({ token }: { token: string | null }) {
       setEditVisible(false);
       await loadAll();
       Alert.alert("Updated", "Meter updated successfully.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Updated\n\nMeter updated successfully.");
+      }
     } catch (err: any) {
       console.error("[METER UPDATE]", err?.response?.data || err?.message);
       Alert.alert(
@@ -274,16 +287,26 @@ export default function MeterPanel({ token }: { token: string | null }) {
             );
           });
     if (!ok) return;
+
     try {
       setSubmitting(true);
       await api.delete(`/meters/${encodeURIComponent(m.meter_id)}`);
       await loadAll();
-      if (Platform.OS !== "web") Alert.alert("Deleted", "Meter removed.");
+      Alert.alert("Deleted", "Meter removed.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Deleted\n\nMeter removed.");
+      }
     } catch (err: any) {
-      Alert.alert(
-        "Delete failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      const msg = err?.response?.data?.error ?? "Server error.";
+      if (Platform.OS === "web") {
+        window.alert(`Delete failed\n\n${msg}`);
+      } else {
+        Alert.alert("Delete failed", msg);
+      }
     } finally {
       setSubmitting(false);
     }

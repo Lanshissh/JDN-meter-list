@@ -1,4 +1,3 @@
-// components/admin/StallsPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -261,6 +260,13 @@ export default function StallsPanel({ token }: { token: string | null }) {
       setStatus("available");
       await loadAll();
       Alert.alert("Success", "Stall created.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Success\n\nStall created.");
+      }
     } catch (err: any) {
       console.error("[CREATE STALL]", err?.response?.data || err?.message);
       Alert.alert(
@@ -296,6 +302,13 @@ export default function StallsPanel({ token }: { token: string | null }) {
       setEditVisible(false);
       await loadAll();
       Alert.alert("Updated", "Stall updated successfully.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Updated\n\nStall updated successfully.");
+      }
     } catch (err: any) {
       console.error("[UPDATE STALL]", err?.response?.data || err?.message);
       Alert.alert(
@@ -335,17 +348,26 @@ export default function StallsPanel({ token }: { token: string | null }) {
     if (!canDelete) return;
     const ok = await confirmDelete(stall);
     if (!ok) return;
+
     try {
       setSubmitting(true);
       await api.delete(`/stalls/${encodeURIComponent(stall.stall_id)}`);
       await loadAll();
-      if (Platform.OS !== "web") Alert.alert("Deleted", "Stall removed.");
+      Alert.alert("Deleted", "Stall removed.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Deleted\n\nStall removed.");
+      }
     } catch (err: any) {
-      console.error("[DELETE STALL]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Delete failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      const msg = err?.response?.data?.error ?? "Server error.";
+      if (Platform.OS === "web") {
+        window.alert(`Delete failed\n\n${msg}`);
+      } else {
+        Alert.alert("Delete failed", msg);
+      }
     } finally {
       setSubmitting(false);
     }

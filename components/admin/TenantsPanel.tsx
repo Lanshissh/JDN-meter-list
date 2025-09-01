@@ -1,4 +1,3 @@
-// components/admin/TenantsPanel.tsx — UI updated to match MeterPanel colors & style (UI ONLY)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -42,7 +41,8 @@ const cmp = (a: string | number, b: string | number) =>
   });
 
 /** Pick a sortable date (prefer last_updated, fallback to bill_start) */
-const dateOf = (t: Tenant) => Date.parse(t.last_updated || t.bill_start || "") || 0;
+const dateOf = (t: Tenant) =>
+  Date.parse(t.last_updated || t.bill_start || "") || 0;
 
 /** Tiny JWT payload decoder (no external deps) */
 function decodeJwtPayload(token: string | null): any | null {
@@ -52,7 +52,8 @@ function decodeJwtPayload(token: string | null): any | null {
     const base64 = (part || "").replace(/-/g, "+").replace(/_/g, "/");
     const padLen = (4 - (base64.length % 4)) % 4;
     const padded = base64 + "=".repeat(padLen);
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
     let str = "";
     for (let i = 0; i < padded.length; i += 4) {
       const c1 = chars.indexOf(padded[i]);
@@ -71,7 +72,7 @@ function decodeJwtPayload(token: string | null): any | null {
       str
         .split("")
         .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
+        .join(""),
     );
     return JSON.parse(json);
   } catch {
@@ -110,7 +111,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const isAdmin = String(jwt?.user_level || "").toLowerCase() === "admin";
   const userBuildingId = String(jwt?.building_id || "");
 
-  const authHeader = useMemo(() => ({ Authorization: `Bearer ${mergedToken ?? ""}` }), [mergedToken]);
+  const authHeader = useMemo(
+    () => ({ Authorization: `Bearer ${mergedToken ?? ""}` }),
+    [mergedToken],
+  );
   const api = useMemo(
     () =>
       axios.create({
@@ -118,7 +122,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         headers: authHeader,
         timeout: 15000,
       }),
-    [authHeader]
+    [authHeader],
   );
 
   // Filters & state
@@ -175,7 +179,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         return bRes.data?.[0]?.building_id ?? "";
       });
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || "Connection error.";
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Connection error.";
       Alert.alert("Load failed", msg);
     } finally {
       setBusy(false);
@@ -187,7 +195,8 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     const q = query.trim().toLowerCase();
     let list = tenants;
 
-    if (buildingFilter) list = list.filter((t) => t.building_id === buildingFilter);
+    if (buildingFilter)
+      list = list.filter((t) => t.building_id === buildingFilter);
 
     if (!q) return list;
     return list.filter(
@@ -196,7 +205,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         t.tenant_sn.toLowerCase().includes(q) ||
         t.tenant_name.toLowerCase().includes(q) ||
         t.building_id.toLowerCase().includes(q) ||
-        t.bill_start.toLowerCase().includes(q)
+        t.bill_start.toLowerCase().includes(q),
     );
   }, [tenants, query, buildingFilter]);
 
@@ -232,14 +241,31 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         building_id: finalBuildingId,
         bill_start: billStart,
       });
-      const assignedId: string = res?.data?.tenantId ?? res?.data?.tenant_id ?? res?.data?.id ?? "";
+      const assignedId: string =
+        res?.data?.tenantId ?? res?.data?.tenant_id ?? res?.data?.id ?? "";
 
       setSn("");
       setName("");
       setBillStart(today());
       await loadAll();
 
-      Alert.alert("Success", assignedId ? `Tenant created.\nID assigned: ${assignedId}` : "Tenant created.");
+      Alert.alert(
+        "Success",
+        assignedId
+          ? `Tenant created.\nID assigned: ${assignedId}`
+          : "Tenant created.",
+      );
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert(
+          assignedId
+            ? `Success\n\nTenant created.\nID assigned: ${assignedId}`
+            : "Success\n\nTenant created.",
+        );
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.error ?? "Server error.";
       Alert.alert("Create failed", msg);
@@ -271,6 +297,13 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       setEditVisible(false);
       await loadAll();
       Alert.alert("Updated", "Tenant updated successfully.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Updated\n\nTenant updated successfully.");
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.error ?? "Server error.";
       Alert.alert("Update failed", msg);
@@ -282,25 +315,53 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   /** Delete */
   const confirmDelete = (t: Tenant) =>
     Platform.OS === "web"
-      ? Promise.resolve(window.confirm(`Delete tenant ${t.tenant_name} (${t.tenant_id})?`))
+      ? Promise.resolve(
+          window.confirm(`Delete tenant ${t.tenant_name} (${t.tenant_id})?`),
+        )
       : new Promise((resolve) => {
-          Alert.alert("Delete tenant", `Are you sure you want to delete ${t.tenant_name}?`, [
-            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-            { text: "Delete", style: "destructive", onPress: () => resolve(true) },
-          ]);
+          Alert.alert(
+            "Delete tenant",
+            `Are you sure you want to delete ${t.tenant_name}?`,
+            [
+              {
+                text: "Cancel",
+                style: "cancel",
+                onPress: () => resolve(false),
+              },
+              {
+                text: "Delete",
+                style: "destructive",
+                onPress: () => resolve(true),
+              },
+            ],
+          );
         });
 
   const onDelete = async (t: Tenant) => {
     const ok = await confirmDelete(t);
     if (!ok) return;
+
     try {
       setSubmitting(true);
       await api.delete(`/tenants/${encodeURIComponent(t.tenant_id)}`);
       await loadAll();
-      if (Platform.OS !== "web") Alert.alert("Deleted", "Tenant removed.");
+      Alert.alert("Deleted", "Tenant removed.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Deleted\n\nTenant removed.");
+      }
     } catch (err: any) {
+      // Show server message verbatim, e.g.
+      // "Cannot delete tenant. It is still referenced by: Stall(s): [ST-1]; Rate: [R-1]"
       const msg = err?.response?.data?.error ?? "Server error.";
-      Alert.alert("Delete failed", msg);
+      if (Platform.OS === "web") {
+        window.alert(`Delete failed\n\n${msg}`);
+      } else {
+        Alert.alert("Delete failed", msg);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -309,14 +370,22 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   /** Building options for CREATE (lock to operator’s building) */
   const createBuildingOptions = useMemo(() => {
     if (isAdmin) {
-      return buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }));
+      return buildings.map((b) => ({
+        label: `${b.building_name} (${b.building_id})`,
+        value: b.building_id,
+      }));
     }
     const inList = buildings.find((b) => b.building_id === userBuildingId);
     const only = inList
-      ? [{ label: `${inList.building_name} (${inList.building_id})`, value: inList.building_id }]
+      ? [
+          {
+            label: `${inList.building_name} (${inList.building_id})`,
+            value: inList.building_id,
+          },
+        ]
       : userBuildingId
-      ? [{ label: userBuildingId, value: userBuildingId }]
-      : [];
+        ? [{ label: userBuildingId, value: userBuildingId }]
+        : [];
     return only;
   }, [isAdmin, buildings, userBuildingId]);
 
@@ -336,7 +405,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         />
 
         <Text style={styles.dropdownLabel}>Tenant Name</Text>
-        <TextInput style={styles.input} placeholder="Tenant Name" value={name} onChangeText={setName} />
+        <TextInput
+          style={styles.input}
+          placeholder="Tenant Name"
+          value={name}
+          onChangeText={setName}
+        />
 
         {isAdmin ? (
           <Dropdown
@@ -349,10 +423,22 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           <ReadOnlyField label="Building" value={userBuildingId || "(none)"} />
         )}
 
-        <DatePickerField label="Bill start (YYYY-MM-DD)" value={billStart} onChange={setBillStart} />
+        <DatePickerField
+          label="Bill start (YYYY-MM-DD)"
+          value={billStart}
+          onChange={setBillStart}
+        />
 
-        <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
-          {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Tenant</Text>}
+        <TouchableOpacity
+          style={[styles.btn, submitting && styles.btnDisabled]}
+          onPress={onCreate}
+          disabled={submitting}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.btnText}>Create Tenant</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -375,13 +461,19 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               onChange={setBuildingFilter}
               options={[
                 { label: "All Buildings", value: "" },
-                ...buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id })),
+                ...buildings.map((b) => ({
+                  label: `${b.building_name} (${b.building_id})`,
+                  value: b.building_id,
+                })),
               ]}
             />
           </View>
 
           {!!buildingFilter && (
-            <TouchableOpacity style={styles.clearBtn} onPress={() => setBuildingFilter("")}>
+            <TouchableOpacity
+              style={styles.clearBtn}
+              onPress={() => setBuildingFilter("")}
+            >
               <Text style={styles.clearBtnText}>Clear</Text>
             </TouchableOpacity>
           )}
@@ -395,7 +487,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             { label: "ID ↑", val: "idAsc" },
             { label: "ID ↓", val: "idDesc" },
           ].map(({ label, val }) => (
-            <Chip key={val} label={label} active={sortMode === (val as any)} onPress={() => setSortMode(val as any)} />
+            <Chip
+              key={val}
+              label={label}
+              active={sortMode === (val as any)}
+              onPress={() => setSortMode(val as any)}
+            />
           ))}
         </View>
 
@@ -409,7 +506,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             keyExtractor={(item) => item.tenant_id}
             scrollEnabled={Platform.OS === "web"}
             nestedScrollEnabled={false}
-            ListEmptyComponent={<Text style={styles.empty}>No tenants found.</Text>}
+            ListEmptyComponent={
+              <Text style={styles.empty}>No tenants found.</Text>
+            }
             renderItem={({ item }) => (
               <View style={styles.listRow}>
                 <View style={{ flex: 1 }}>
@@ -417,17 +516,27 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     {item.tenant_name} • {item.tenant_id}
                   </Text>
                   <Text style={styles.rowSub}>
-                    {item.tenant_sn} • {item.building_id} • Bill start: {item.bill_start}
+                    {item.tenant_sn} • {item.building_id} • Bill start:{" "}
+                    {item.bill_start}
                   </Text>
                   <Text style={styles.rowSub}>
-                    Updated {formatDateTime(item.last_updated)} by {item.updated_by}
+                    Updated {formatDateTime(item.last_updated)} by{" "}
+                    {item.updated_by}
                   </Text>
                 </View>
-                <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+                <TouchableOpacity
+                  style={styles.link}
+                  onPress={() => openEdit(item)}
+                >
                   <Text style={styles.linkText}>Edit</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
-                  <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
+                <TouchableOpacity
+                  style={[styles.link, { marginLeft: 8 }]}
+                  onPress={() => onDelete(item)}
+                >
+                  <Text style={[styles.linkText, { color: "#e53935" }]}>
+                    Delete
+                  </Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -436,33 +545,69 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       </View>
 
       {/* Edit Modal */}
-      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+      <Modal
+        visible={editVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Edit Tenant</Text>
 
             <Text style={styles.dropdownLabel}>Tenant SN</Text>
-            <TextInput style={styles.input} value={editSn} onChangeText={setEditSn} placeholder="Tenant SN" />
+            <TextInput
+              style={styles.input}
+              value={editSn}
+              onChangeText={setEditSn}
+              placeholder="Tenant SN"
+            />
 
             <Text style={styles.dropdownLabel}>Tenant Name</Text>
-            <TextInput style={styles.input} value={editName} onChangeText={setEditName} placeholder="Tenant Name" />
+            <TextInput
+              style={styles.input}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="Tenant Name"
+            />
 
             <Dropdown
               label="Building"
               value={editBuildingId}
               onChange={setEditBuildingId}
-              options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
+              options={buildings.map((b) => ({
+                label: `${b.building_name} (${b.building_id})`,
+                value: b.building_id,
+              }))}
               disabled={!isAdmin}
             />
 
-            <DatePickerField label="Bill start" value={editBillStart} onChange={setEditBillStart} />
+            <DatePickerField
+              label="Bill start"
+              value={editBillStart}
+              onChange={setEditBillStart}
+            />
 
             <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnGhost]}
+                onPress={() => setEditVisible(false)}
+              >
                 <Text style={styles.btnGhostText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save</Text>}
+              <TouchableOpacity
+                style={[styles.btn, submitting && styles.btnDisabled]}
+                onPress={onUpdate}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnText}>Save</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -505,7 +650,9 @@ const Dropdown = ({
         onValueChange={(v) => onChange(String(v))}
         style={styles.picker}
       >
-        {options.length === 0 ? <Picker.Item label="No options" value="" /> : null}
+        {options.length === 0 ? (
+          <Picker.Item label="No options" value="" />
+        ) : null}
         {options.map((opt) => (
           <Picker.Item key={opt.value} label={opt.label} value={opt.value} />
         ))}
@@ -514,9 +661,22 @@ const Dropdown = ({
   </View>
 );
 
-const Chip = ({ label, active, onPress }: { label: string; active?: boolean; onPress?: () => void }) => (
-  <TouchableOpacity onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
-    <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+const Chip = ({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active?: boolean;
+  onPress?: () => void;
+}) => (
+  <TouchableOpacity
+    onPress={onPress}
+    style={[styles.chip, active && styles.chipActive]}
+  >
+    <Text style={[styles.chipText, active && styles.chipTextActive]}>
+      {label}
+    </Text>
   </TouchableOpacity>
 );
 
@@ -529,12 +689,31 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     backgroundColor: "#fff",
-    ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }),
+    ...Platform.select({
+      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any },
+      default: { elevation: 1 },
+    }),
   },
-  cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43", marginBottom: 12 },
-  pickerWrapper: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, overflow: "hidden", backgroundColor: "#fff" },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#102a43",
+    marginBottom: 12,
+  },
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: "#d9e2ec",
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+  },
   picker: { height: 50 },
-  dropdownLabel: { color: "#334e68", marginBottom: 6, marginTop: 6, fontWeight: "600" },
+  dropdownLabel: {
+    color: "#334e68",
+    marginBottom: 6,
+    marginTop: 6,
+    fontWeight: "600",
+  },
 
   input: {
     borderWidth: 1,
@@ -565,10 +744,20 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
-  btnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: "#cbd5e1" },
+  btnGhost: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
   btnGhostText: { color: "#102a43", fontWeight: "700" },
 
-  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8, alignItems: "flex-end" },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 8,
+    alignItems: "flex-end",
+  },
   chip: {
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -588,47 +777,76 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 10,
     backgroundColor: "#fff",
-    ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }),
+    ...Platform.select({
+      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any },
+      default: { elevation: 1 },
+    }),
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
   },
   rowTitle: { fontWeight: "700", color: "#102a43" },
   rowSub: { color: "#627d98" },
-  link: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eef2ff" },
+  link: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: "#eef2ff",
+  },
   linkText: { color: "#1f4bd8", fontWeight: "700" },
 
   loader: { paddingVertical: 20, alignItems: "center" },
   empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
 
   // Modal visuals copied from MeterPanel
-  modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
-  modalCard: { width: "100%", maxWidth: 520, backgroundColor: "#fff", borderRadius: 16, padding: 16 },
-  modalTitle: { fontWeight: "700", fontSize: 18, color: "#102a43", marginBottom: 12 },
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 520,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 16,
+  },
+  modalTitle: {
+    fontWeight: "700",
+    fontSize: 18,
+    color: "#102a43",
+    marginBottom: 12,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 12,
+  },
 
   clearBtn: {
-  alignSelf: "flex-end",
-  paddingVertical: 10,
-  paddingHorizontal: 14,
-  borderRadius: 12,
-  backgroundColor: "#eef2ff",
-  borderWidth: 1,
-  borderColor: "#d6e0ff",
-  ...Platform.select({
-    web: { boxShadow: "0 1px 4px rgba(31,75,216,0.08)" as any },
-  }),
-},
-clearBtnText: {
-  color: "#1f4bd8",
-  fontWeight: "700",
-},
-// Optional: pressed/hover states
-clearBtnPressed: {
-  backgroundColor: "#e0e7ff",
-  transform: [{ translateY: 1 }],
-},
-
+    alignSelf: "flex-end",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: "#eef2ff",
+    borderWidth: 1,
+    borderColor: "#d6e0ff",
+    ...Platform.select({
+      web: { boxShadow: "0 1px 4px rgba(31,75,216,0.08)" as any },
+    }),
+  },
+  clearBtnText: {
+    color: "#1f4bd8",
+    fontWeight: "700",
+  },
+  // Optional: pressed/hover states
+  clearBtnPressed: {
+    backgroundColor: "#e0e7ff",
+    transform: [{ translateY: 1 }],
+  },
 });
 
 function today() {

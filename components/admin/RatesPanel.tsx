@@ -297,6 +297,13 @@ export default function RatesPanel({ token }: { token: string | null }) {
       );
       const rid = res?.data?.rate_id ? ` (ID: ${res.data.rate_id})` : "";
       Alert.alert("Success", `${res?.data?.message || "Saved"}${rid}`);
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert(`Success\n\n${res?.data?.message || "Saved"}${rid}`);
+      }
 
       // clear numeric fields but keep tenant selection
       setF_erate("");
@@ -359,6 +366,13 @@ export default function RatesPanel({ token }: { token: string | null }) {
       );
       setRates(rRes.data || []);
       Alert.alert("Updated", "Rate updated successfully.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Updated\n\nRate updated successfully.");
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.message || "Server error.";
       Alert.alert("Update failed", msg);
@@ -403,6 +417,16 @@ export default function RatesPanel({ token }: { token: string | null }) {
       const rRes = await api.get<Rate[]>(
         `/rates/buildings/${encodeURIComponent(buildingId)}`,
       );
+      setRates(rRes.data || []);
+      Alert.alert("Deleted", "Tenant rate deleted.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Deleted\n\nTenant rate deleted.");
+      }
+
       setRates(rRes.data || []);
       if (Platform.OS !== "web") Alert.alert("Deleted", "Tenant rate deleted.");
     } catch (err: any) {

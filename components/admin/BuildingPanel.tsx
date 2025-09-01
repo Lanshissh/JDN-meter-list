@@ -1,4 +1,3 @@
-// components/admin/BuildingPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -107,7 +106,13 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       const msg = assignedId
         ? `Building created.\nID assigned: ${assignedId}`
         : "Building created.";
-      Alert.alert("Success", msg);
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert(`Success\n\n${msg}`);
+      }
     } catch (err: any) {
       Alert.alert(
         "Create failed",
@@ -141,7 +146,13 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       );
       setEditVisible(false);
       await loadAll();
-      Alert.alert("Updated", "Building updated successfully.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Updated\n\nBuilding updated successfully.");
+      }
     } catch (err: any) {
       Alert.alert(
         "Update failed",
@@ -186,13 +197,22 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       setSubmitting(true);
       await api.delete(`/buildings/${encodeURIComponent(b.building_id)}`);
       await loadAll();
-      if (Platform.OS !== "web") Alert.alert("Deleted", "Building removed.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Deleted\n\nBuilding removed.");
+      }
     } catch (err: any) {
-      // server explains if refs exist (users/tenants/stalls)
-      Alert.alert(
-        "Delete failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      // Show the server's exact message, e.g.:
+      // "Cannot delete building. It is still referenced by: User(s): [...]; Tenant(s): [...]; Stall(s): [...]"
+      const msg = err?.response?.data?.error ?? "Server error.";
+      if (Platform.OS === "web") {
+        window.alert(`Delete failed\n\n${msg}`);
+      } else {
+        Alert.alert("Delete failed", msg);
+      }
     } finally {
       setSubmitting(false);
     }

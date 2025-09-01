@@ -1,9 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ActivityIndicator, Alert, FlatList, Modal, Platform,
-  Keyboard, Dimensions, KeyboardAvoidingView, ScrollView,
-  SafeAreaView, ToastAndroid,
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  Keyboard,
+  Dimensions,
+  KeyboardAvoidingView,
+  ScrollView,
+  SafeAreaView,
+  ToastAndroid,
 } from "react-native";
 import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
@@ -129,7 +141,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     if (Platform.OS === "android") {
       ToastAndroid.show(
         message ? `${title}: ${message}` : title,
-        ToastAndroid.SHORT
+        ToastAndroid.SHORT,
       );
     } else {
       Alert.alert(title, message);
@@ -210,7 +222,13 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       setFormValue("");
       setFormDate(todayStr());
       await loadAll();
-      Alert.alert("Success", "Meter reading recorded.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Success\n\nMeter reading recorded.");
+      }
     } catch (err: any) {
       console.error("[CREATE READING]", err?.response?.data || err?.message);
       Alert.alert(
@@ -232,7 +250,13 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         await api.delete(`/readings/${encodeURIComponent(target.reading_id)}`);
         setEditVisible(false);
         await loadAll();
-        Alert.alert("Deleted", `${target.reading_id} removed.`);
+        if (
+          Platform.OS === "web" &&
+          typeof window !== "undefined" &&
+          window.alert
+        ) {
+          window.alert(`Deleted\n\n${target.reading_id} removed.`);
+        }
       } catch (err: any) {
         console.error("[DELETE READING]", err?.response?.data || err?.message);
         Alert.alert(
@@ -273,7 +297,13 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       });
       setEditVisible(false);
       await loadAll();
-      Alert.alert("Updated", "Reading updated successfully.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Updated\n\nReading updated successfully.");
+      }
     } catch (err: any) {
       console.error("[UPDATE READING]", err?.response?.data || err?.message);
       Alert.alert(
@@ -286,40 +316,40 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   };
 
   // --- QR scanning (unchanged UI) ---
-const onScan = (data: OnSuccessfulScanProps | string) => {
-  const rawScanned = String(
-    (data as any)?.code ??
-    (data as any)?.rawData ??
-    (data as any)?.data ??
-    data ??
-    "",
-  ).trim();
+  const onScan = (data: OnSuccessfulScanProps | string) => {
+    const rawScanned = String(
+      (data as any)?.code ??
+        (data as any)?.rawData ??
+        (data as any)?.data ??
+        data ??
+        "",
+    ).trim();
 
-  if (!rawScanned) return;
+    if (!rawScanned) return;
 
-  const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i;
-  if (!meterIdPattern.test(rawScanned)) {
-    return;
-  }
-  const meterId = rawScanned;
+    const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i;
+    if (!meterIdPattern.test(rawScanned)) {
+      return;
+    }
+    const meterId = rawScanned;
 
-  setScanVisible(false);
+    setScanVisible(false);
 
-  // Validate meter
-  if (!metersById.get(meterId)) {
-    Alert.alert("Unknown meter", `No meter found for id: ${meterId}`);
-    return;
-  }
+    // Validate meter
+    if (!metersById.get(meterId)) {
+      Alert.alert("Unknown meter", `No meter found for id: ${meterId}`);
+      return;
+    }
 
-  // Always prepare a NEW reading in the create form
-  setFormMeterId(meterId);
-  setFormValue("");                // clear any previous value
-  setFormDate(todayStr());         // default to today
+    // Always prepare a NEW reading in the create form
+    setFormMeterId(meterId);
+    setFormValue(""); // clear any previous value
+    setFormDate(todayStr()); // default to today
 
-  setTimeout(() => {
-    readingInputRef.current?.focus?.();
-  }, 150);
-};
+    setTimeout(() => {
+      readingInputRef.current?.focus?.();
+    }, 150);
+  };
 
   const openScanner = () => {
     setScannerKey((k) => k + 1);

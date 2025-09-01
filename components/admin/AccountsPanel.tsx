@@ -184,7 +184,13 @@ export default function AccountsPanel({
       setLevel("operator");
       setUtilRoles([]);
       await loadAll();
-      Alert.alert("Success", "User created.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Success\n\nUser created.");
+      }
     } catch (err: any) {
       console.error("[CREATE USER]", err?.response?.data || err?.message);
       Alert.alert(
@@ -239,7 +245,13 @@ export default function AccountsPanel({
       await api.put(`/users/${encodeURIComponent(editUser.user_id)}`, payload);
       setEditVisible(false);
       await loadAll();
-      Alert.alert("Updated", "User updated successfully.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Updated\n\nUser updated successfully.");
+      }
     } catch (err: any) {
       console.error("[UPDATE USER]", err?.response?.data || err?.message);
       Alert.alert(
@@ -278,9 +290,12 @@ export default function AccountsPanel({
       setSubmitting(true);
       await api.delete(`/users/${encodeURIComponent(u.user_id)}`);
       await loadAll();
-
-      if (Platform.OS !== "web") {
-        Alert.alert("Deleted", "User removed.");
+      if (
+        Platform.OS === "web" &&
+        typeof window !== "undefined" &&
+        window.alert
+      ) {
+        window.alert("Deleted\n\nUser removed.");
       }
     } catch (err: any) {
       console.error("[DELETE USER]", err?.response?.data || err?.message);
