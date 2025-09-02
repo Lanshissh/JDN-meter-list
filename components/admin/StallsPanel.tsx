@@ -10,6 +10,8 @@ import {
   FlatList,
   Modal,
   Platform,
+  KeyboardAvoidingView,
+  ScrollView,
 } from "react-native";
 import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
@@ -83,6 +85,41 @@ function decodeJwtPayload(token: string | null): any | null {
   }
 }
 
+/** ------------ ALERT HELPERS (web + mobile) ------------ */
+function notify(title: string, message?: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}\n\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+function errorText(err: any, fallback = "Server error.") {
+  const d = err?.response?.data;
+  if (typeof d === "string") return d;
+  if (d?.error) return String(d.error);
+  if (d?.message) return String(d.message);
+  if (err?.message) return String(err.message);
+  try {
+    return JSON.stringify(d ?? err);
+  } catch {
+    return fallback;
+  }
+}
+
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
+/** ------------------------------------------------------ */
+
 export default function StallsPanel({ token }: { token: string | null }) {
   const { token: ctxToken } = useAuth();
   const mergedToken = token || ctxToken || null;
@@ -93,7 +130,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
   const isOperator = role === "operator";
   const userBuildingId = String(jwt?.building_id || "");
 
-  // 👉 Operators now have full CRUD
+  // Operators now have full CRUD
   const canCreate = isAdmin || isOperator;
   const canEdit = isAdmin || isOperator;
   const canDelete = isAdmin || isOperator;
@@ -112,7 +149,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
     "",
   );
 
-  // create form
+  // --- create form (now in a modal) ---
+  const [createVisible, setCreateVisible] = useState(false);
   const [stallSn, setStallSn] = useState("");
   const [buildingId, setBuildingId] = useState("");
   const [tenantId, setTenantId] = useState("");
@@ -142,7 +180,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
   const loadAll = async () => {
     if (!mergedToken) {
       setBusy(false);
-      Alert.alert("Not logged in", "Please log in to manage stalls.");
+      notify("Not logged in", "Please log in to manage stalls.");
       return;
     }
     try {
@@ -173,10 +211,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
       }
     } catch (err: any) {
       console.error("[STALLS LOAD]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Load failed",
-        err?.response?.data?.error ?? "Connection error.",
-      );
+      notify("Load failed", errorText(err, "Connection error."));
     } finally {
       setBusy(false);
     }
@@ -241,10 +276,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
     const finalBuildingId = isAdmin ? buildingId : userBuildingId;
 
     if (!stallSn || !finalBuildingId || !status) {
-      Alert.alert(
-        "Missing info",
-        "Please fill in Stall SN, Building, and Status.",
-      );
+      notify("Missing info", "Please fill in Stall SN, Building, and Status.");
       return;
     }
     try {
@@ -255,24 +287,17 @@ export default function StallsPanel({ token }: { token: string | null }) {
         building_id: finalBuildingId,
         stall_status: status,
       });
+      // reset + close
       setStallSn("");
       setTenantId("");
       setStatus("available");
+      setCreateVisible(false);
+
       await loadAll();
-      Alert.alert("Success", "Stall created.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Success\n\nStall created.");
-      }
+      notify("Success", "Stall created.");
     } catch (err: any) {
       console.error("[CREATE STALL]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Create failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Create failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -301,73 +326,30 @@ export default function StallsPanel({ token }: { token: string | null }) {
       });
       setEditVisible(false);
       await loadAll();
-      Alert.alert("Updated", "Stall updated successfully.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Updated\n\nStall updated successfully.");
-      }
+      notify("Updated", "Stall updated successfully.");
     } catch (err: any) {
       console.error("[UPDATE STALL]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Update failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Update failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const confirmDelete = (stall: Stall) =>
-    Platform.OS === "web"
-      ? Promise.resolve(
-          window.confirm(`Delete stall ${stall.stall_sn} (${stall.stall_id})?`),
-        )
-      : new Promise((resolve) => {
-          Alert.alert(
-            "Delete stall",
-            `Are you sure you want to delete ${stall.stall_sn}?`,
-            [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => resolve(false),
-              },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => resolve(true),
-              },
-            ],
-          );
-        });
-
   const onDelete = async (stall: Stall) => {
     if (!canDelete) return;
-    const ok = await confirmDelete(stall);
+    const ok = await confirm(
+      "Delete stall",
+      `Are you sure you want to delete ${stall.stall_sn} (${stall.stall_id})?`,
+    );
     if (!ok) return;
 
     try {
       setSubmitting(true);
       await api.delete(`/stalls/${encodeURIComponent(stall.stall_id)}`);
       await loadAll();
-      Alert.alert("Deleted", "Stall removed.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Deleted\n\nStall removed.");
-      }
+      notify("Deleted", "Stall removed.");
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? "Server error.";
-      if (Platform.OS === "web") {
-        window.alert(`Delete failed\n\n${msg}`);
-      } else {
-        Alert.alert("Delete failed", msg);
-      }
+      notify("Delete failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -375,79 +357,26 @@ export default function StallsPanel({ token }: { token: string | null }) {
 
   return (
     <View style={styles.grid}>
-      {/* CREATE */}
-      {canCreate && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Create Stall</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Stall SN"
-            value={stallSn}
-            onChangeText={setStallSn}
-          />
-
-          {isAdmin ? (
-            <Dropdown
-              label="Building"
-              value={buildingId}
-              onChange={setBuildingId}
-              options={buildings.map((b) => ({
-                label: `${b.building_name} (${b.building_id})`,
-                value: b.building_id,
-              }))}
-            />
-          ) : (
-            <ReadOnlyField
-              label="Building"
-              value={userBuildingId || "(none)"}
-            />
-          )}
-
-          <Dropdown
-            label="Status"
-            value={status}
-            onChange={(v) => {
-              const s = v as Stall["stall_status"];
-              setStatus(s);
-              if (s === "available") setTenantId("");
-            }}
-            options={[
-              { label: "Available", value: "available" },
-              { label: "Occupied", value: "occupied" },
-              { label: "Under Maintenance", value: "under maintenance" },
-            ]}
-          />
-          {status !== "available" && (
-            <Dropdown
-              label="Tenant"
-              value={tenantId}
-              onChange={setTenantId}
-              options={[
-                { label: "None", value: "" },
-                ...tenantsForCreate.map((t) => ({
-                  label: `${t.tenant_name} (${t.tenant_id})`,
-                  value: t.tenant_id,
-                })),
-              ]}
-            />
-          )}
-          <TouchableOpacity
-            style={[styles.btn, submitting && styles.btnDisabled]}
-            onPress={onCreate}
-            disabled={submitting}
-          >
-            {submitting ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.btnText}>Create Stall</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* LIST & FILTERS */}
+      {/* LIST & FILTERS + Create button */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Manage Stalls</Text>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
+        >
+          <Text style={styles.cardTitle}>Manage Stalls</Text>
+          {canCreate && (
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => setCreateVisible(true)}
+            >
+              <Text style={styles.btnText}>+ Create Stall</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <TextInput
           style={styles.search}
@@ -457,7 +386,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
         />
 
         <View style={styles.filtersBar}>
-          <View style={styles.filterCol}>
+          <View className="filter-building" style={styles.filterCol}>
             <Dropdown
               label="Filter by Building"
               value={buildingFilter}
@@ -468,11 +397,15 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   label: `${b.building_name} (${b.building_id})`,
                   value: b.building_id,
                 })),
+                // Optional: show operator's building if buildings list is empty
+                ...(buildings.length === 0 && userBuildingId
+                  ? [{ label: userBuildingId, value: userBuildingId }]
+                  : []),
               ]}
             />
           </View>
 
-          <View style={styles.filterCol}>
+          <View className="filter-status" style={styles.filterCol}>
             <Dropdown
               label="Filter by Status"
               value={statusFilter}
@@ -531,7 +464,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         style={styles.link}
                         onPress={() => openEdit(item)}
                       >
-                        <Text style={styles.linkText}>Edit</Text>
+                        <Text style={styles.linkText}>Update</Text>
                       </TouchableOpacity>
                     )}
                     {canDelete && (
@@ -551,6 +484,105 @@ export default function StallsPanel({ token }: { token: string | null }) {
           />
         )}
       </View>
+
+      {/* CREATE MODAL */}
+      <Modal
+        visible={createVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCreateVisible(false)}
+      >
+        <View style={styles.modalWrap}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Create Stall</Text>
+
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
+                <TextInput
+                  style={styles.input}
+                  placeholder="Stall SN"
+                  value={stallSn}
+                  onChangeText={setStallSn}
+                />
+
+                {isAdmin ? (
+                  <Dropdown
+                    label="Building"
+                    value={buildingId}
+                    onChange={setBuildingId}
+                    options={buildings.map((b) => ({
+                      label: `${b.building_name} (${b.building_id})`,
+                      value: b.building_id,
+                    }))}
+                  />
+                ) : (
+                  <ReadOnlyField
+                    label="Building"
+                    value={userBuildingId || "(none)"}
+                  />
+                )}
+
+                <Dropdown
+                  label="Status"
+                  value={status}
+                  onChange={(v) => {
+                    const s = v as Stall["stall_status"];
+                    setStatus(s);
+                    if (s === "available") setTenantId("");
+                  }}
+                  options={[
+                    { label: "Available", value: "available" },
+                    { label: "Occupied", value: "occupied" },
+                    { label: "Under Maintenance", value: "under maintenance" },
+                  ]}
+                />
+
+                {status !== "available" && (
+                  <Dropdown
+                    label="Tenant"
+                    value={tenantId}
+                    onChange={setTenantId}
+                    options={[
+                      { label: "None", value: "" },
+                      ...tenantsForCreate.map((t) => ({
+                        label: `${t.tenant_name} (${t.tenant_id})`,
+                        value: t.tenant_id,
+                      })),
+                    ]}
+                  />
+                )}
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={() => setCreateVisible(false)}
+                >
+                  <Text style={[styles.btnText, { color: "#102a43" }]}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.btn}
+                  onPress={onCreate}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.btnText}>Create Stall</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       {/* EDIT MODAL */}
       <Modal visible={editVisible} animationType="slide" transparent>
@@ -578,7 +610,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     label: `${b.building_name} (${b.building_id})`,
                     value: b.building_id,
                   }))}
-                  disabled={!isAdmin} // 🔒 only admin can change building
+                  disabled={!isAdmin} // only admin can change building
                 />
                 <Dropdown
                   label="Status"
@@ -653,27 +685,6 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
         <Text style={{ color: "#0b2239", fontWeight: "600" }}>{value}</Text>
       </View>
     </View>
-  );
-}
-
-function Chip({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active?: boolean;
-  onPress?: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
-    >
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
   );
 }
 

@@ -82,6 +82,37 @@ function decodeJwtPayload(token: string | null): {
   }
 }
 
+/** ------------ ALERT HELPERS (web + mobile) ------------ */
+function notify(title: string, message?: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}\n\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+function errorText(err: any, fallback = "Server error.") {
+  const d = err?.response?.data;
+  if (typeof d === "string") return d;
+  if (d?.error) return String(d.error);
+  if (d?.message) return String(d.message);
+  if (err?.message) return String(err.message);
+  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+}
+
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
+/** ------------------------------------------------------ */
+
 /** Component */
 export default function RatesPanel({ token }: { token: string | null }) {
   const [busy, setBusy] = useState(true);
@@ -102,7 +133,8 @@ export default function RatesPanel({ token }: { token: string | null }) {
   const [rates, setRates] = useState<Rate[]>([]);
   const [query, setQuery] = useState("");
 
-  // create/update form fields
+  // create form fields (now inside a modal)
+  const [createVisible, setCreateVisible] = useState(false);
   const [formTenantId, setFormTenantId] = useState<string>("");
   const [f_erate, setF_erate] = useState<string>("");
   const [f_evat, setF_evat] = useState<string>("");
@@ -155,7 +187,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
     const boot = async () => {
       if (!token) {
         setBusy(false);
-        Alert.alert("Not logged in", "Please log in to manage rates.");
+        notify("Not logged in", "Please log in to manage rates.");
         return;
       }
       try {
@@ -180,12 +212,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
           return buildingsRes?.data?.[0]?.building_id ?? lockedBuildingId ?? "";
         });
       } catch (err: any) {
-        const msg =
-          err?.response?.data?.error ||
-          err?.response?.data?.message ||
-          err?.message ||
-          "Connection error.";
-        Alert.alert("Load failed", msg);
+        notify("Load failed", errorText(err, "Connection error."));
       } finally {
         setBusy(false);
       }
@@ -205,10 +232,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
         );
         setRates(rRes.data || []);
       } catch (err: any) {
-        Alert.alert(
-          "Load failed",
-          err?.response?.data?.error ?? "Server error.",
-        );
+        notify("Load failed", errorText(err, "Server error."));
       } finally {
         setBusy(false);
       }
@@ -273,10 +297,10 @@ export default function RatesPanel({ token }: { token: string | null }) {
     }
   }, [filtered, sortMode]);
 
-  /** Create or Update (PUT) */
+  /** Create (PUT) */
   const onCreateOrUpdate = async () => {
     if (!buildingId || !formTenantId) {
-      Alert.alert("Missing info", "Please select a building and tenant.");
+      notify("Missing info", "Please select a building and tenant.");
       return;
     }
     try {
@@ -296,14 +320,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
         body,
       );
       const rid = res?.data?.rate_id ? ` (ID: ${res.data.rate_id})` : "";
-      Alert.alert("Success", `${res?.data?.message || "Saved"}${rid}`);
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert(`Success\n\n${res?.data?.message || "Saved"}${rid}`);
-      }
+      notify("Success", `${res?.data?.message || "Saved"}${rid}`);
 
       // clear numeric fields but keep tenant selection
       setF_erate("");
@@ -315,14 +332,14 @@ export default function RatesPanel({ token }: { token: string | null }) {
       setF_wvat("");
       setF_lpg("");
 
-      // refresh
+      // refresh list & close modal
       const rRes = await api.get<Rate[]>(
         `/rates/buildings/${encodeURIComponent(buildingId)}`,
       );
       setRates(rRes.data || []);
+      setCreateVisible(false);
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || "Server error.";
-      Alert.alert("Save failed", msg);
+      notify("Save failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -365,49 +382,20 @@ export default function RatesPanel({ token }: { token: string | null }) {
         `/rates/buildings/${encodeURIComponent(buildingId)}`,
       );
       setRates(rRes.data || []);
-      Alert.alert("Updated", "Rate updated successfully.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Updated\n\nRate updated successfully.");
-      }
+      notify("Updated", "Rate updated successfully.");
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || "Server error.";
-      Alert.alert("Update failed", msg);
+      notify("Update failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
   /** Delete */
-  const confirmDelete = (r: Rate) =>
-    Platform.OS === "web"
-      ? Promise.resolve(
-          window.confirm(`Delete rate for ${r.tenant_name || r.tenant_id}?`),
-        )
-      : new Promise((resolve) => {
-          Alert.alert(
-            "Delete rate",
-            `Are you sure you want to delete the rate for ${r.tenant_name || r.tenant_id}?`,
-            [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => resolve(false),
-              },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => resolve(true),
-              },
-            ],
-          );
-        });
-
   const onDelete = async (r: Rate) => {
-    const ok = await confirmDelete(r);
+    const ok = await confirm(
+      "Delete rate",
+      `Are you sure you want to delete the rate for ${r.tenant_name || r.tenant_id}?`,
+    );
     if (!ok) return;
     try {
       setSubmitting(true);
@@ -418,20 +406,9 @@ export default function RatesPanel({ token }: { token: string | null }) {
         `/rates/buildings/${encodeURIComponent(buildingId)}`,
       );
       setRates(rRes.data || []);
-      Alert.alert("Deleted", "Tenant rate deleted.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Deleted\n\nTenant rate deleted.");
-      }
-
-      setRates(rRes.data || []);
-      if (Platform.OS !== "web") Alert.alert("Deleted", "Tenant rate deleted.");
+      notify("Deleted", "Tenant rate deleted.");
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || "Server error.";
-      Alert.alert("Delete failed", msg);
+      notify("Delete failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -537,127 +514,25 @@ export default function RatesPanel({ token }: { token: string | null }) {
         />
       </View>
 
-      {/* CREATE / UPDATE (PUT) — mobile-friendly */}
-      <View style={styles.card}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+      {/* LIST + Create button */}
+      <View className="list-card" style={styles.card}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
         >
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.formContainer}
+          <Text style={styles.cardTitle}>Tenant Rates in Building</Text>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => setCreateVisible(true)}
+            disabled={!buildingId}
           >
-            <Text style={styles.cardTitle}>Create / Update Tenant Rate</Text>
-
-            <Dropdown
-              label="Tenant"
-              value={formTenantId}
-              onChange={setFormTenantId}
-              options={tenantsInBuilding.map((t) => ({
-                label: `${t.tenant_name} (${t.tenant_sn})`,
-                value: t.tenant_id,
-              }))}
-            />
-
-            {/* Electric */}
-            <Text style={styles.sectionTitle}>Electric</Text>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Electric Rate per KwH"
-                  value={f_erate}
-                  setValue={setF_erate}
-                />
-              </View>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Electric VAT"
-                  value={f_evat}
-                  setValue={setF_evat}
-                />
-              </View>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Electric Min Consumption"
-                  value={f_emin}
-                  setValue={setF_emin}
-                />
-              </View>
-            </View>
-
-            {/* Water */}
-            <Text style={styles.sectionTitle}>Water</Text>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Water Min Consumption"
-                  value={f_wmin}
-                  setValue={setF_wmin}
-                />
-              </View>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Water Rate per CbM"
-                  value={f_wrate}
-                  setValue={setF_wrate}
-                />
-              </View>
-              <View className="field" style={styles.field}>
-                <LabeledInput
-                  label="Water Net VAT"
-                  value={f_wnet}
-                  setValue={setF_wnet}
-                />
-              </View>
-            </View>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Water VAT"
-                  value={f_wvat}
-                  setValue={setF_wvat}
-                />
-              </View>
-            </View>
-
-            {/* LPG */}
-            <Text style={styles.sectionTitle}>LPG</Text>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="LPG Rate per Kg"
-                  value={f_lpg}
-                  setValue={setF_lpg}
-                />
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={[
-                styles.btn,
-                styles.btnWide,
-                submitting && styles.btnDisabled,
-              ]}
-              onPress={onCreateOrUpdate}
-              disabled={submitting || !formTenantId}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.btnText}>Save Rate</Text>
-              )}
-            </TouchableOpacity>
-
-            <Text style={styles.hint}>
-              • Admin can edit all fields. Biller edits are limited by their
-              utility access; other fields will be ignored by the server.
-            </Text>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </View>
-
-      {/* LIST */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Tenant Rates in Building</Text>
+            <Text style={styles.btnText}>+ Create Rate</Text>
+          </TouchableOpacity>
+        </View>
 
         <TextInput
           style={styles.search}
@@ -739,7 +614,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
                     style={styles.link}
                     onPress={() => openEdit(item)}
                   >
-                    <Text style={styles.linkText}>Edit</Text>
+                    <Text style={styles.linkText}>Update</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.link, { marginLeft: 8 }]}
@@ -755,6 +630,140 @@ export default function RatesPanel({ token }: { token: string | null }) {
           />
         )}
       </View>
+
+      {/* CREATE MODAL */}
+      <Modal
+        visible={createVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCreateVisible(false)}
+      >
+        <View style={styles.modalWrap}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.modalCard}>
+              <Text style={styles.cardTitle}>Create Tenant Rate</Text>
+
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
+                <Dropdown
+                  label="Tenant"
+                  value={formTenantId}
+                  onChange={setFormTenantId}
+                  options={tenantsInBuilding.map((t) => ({
+                    label: `${t.tenant_name} (${t.tenant_sn})`,
+                    value: t.tenant_id,
+                  }))}
+                />
+
+                {/* Electric */}
+                <Text style={styles.sectionTitle}>Electric</Text>
+                <View style={[styles.gridCols, styles.stackOnMobile]}>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="Electric Rate per KwH"
+                      value={f_erate}
+                      setValue={setF_erate}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="Electric VAT"
+                      value={f_evat}
+                      setValue={setF_evat}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="Electric Min Consumption"
+                      value={f_emin}
+                      setValue={setF_emin}
+                    />
+                  </View>
+                </View>
+
+                {/* Water */}
+                <Text style={styles.sectionTitle}>Water</Text>
+                <View style={[styles.gridCols, styles.stackOnMobile]}>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="Water Min Consumption"
+                      value={f_wmin}
+                      setValue={setF_wmin}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="Water Rate per CbM"
+                      value={f_wrate}
+                      setValue={setF_wrate}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="Water Net VAT"
+                      value={f_wnet}
+                      setValue={setF_wnet}
+                    />
+                  </View>
+                </View>
+                <View style={[styles.gridCols, styles.stackOnMobile]}>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="Water VAT"
+                      value={f_wvat}
+                      setValue={setF_wvat}
+                    />
+                  </View>
+                </View>
+
+                {/* LPG */}
+                <Text style={styles.sectionTitle}>LPG</Text>
+                <View style={[styles.gridCols, styles.stackOnMobile]}>
+                  <View style={styles.field}>
+                    <LabeledInput
+                      label="LPG Rate per Kg"
+                      value={f_lpg}
+                      setValue={setF_lpg}
+                    />
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "flex-end",
+                  marginTop: 10,
+                }}
+              >
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnLight]}
+                  onPress={() => setCreateVisible(false)}
+                >
+                  <Text style={[styles.btnText, { color: "#082cac" }]}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, { marginLeft: 8 }]}
+                  onPress={onCreateOrUpdate}
+                  disabled={submitting || !formTenantId}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.btnText}>Create Rate</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       {/* EDIT MODAL */}
       <Modal
@@ -916,17 +925,23 @@ const styles = StyleSheet.create({
   stackOnMobile: { flexWrap: "wrap" },
   field: { flex: 1, minWidth: 180 },
 
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
+  chipsRow: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+    marginBottom: 12,
+  },
   chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#c7d2fe",
+    borderColor: "#d9e2ec",
+    backgroundColor: "#fff",
   },
-  chipActive: { backgroundColor: "#e0e7ff" },
-  chipText: { fontSize: 12, color: "#1f2937" },
-  chipTextActive: { fontWeight: "700" },
+  chipActive: { backgroundColor: "#1f4bd8", borderColor: "#1f4bd8" },
+  chipText: { color: "#102a43", fontWeight: "700" },
+  chipTextActive: { color: "#fff" },
 
   search: {
     borderWidth: 1,

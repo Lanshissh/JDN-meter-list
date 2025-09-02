@@ -33,6 +33,41 @@ type Building = {
   rate_id: string;
 };
 
+/** ------------ ALERT HELPERS (web + mobile) ------------ */
+function notify(title: string, message?: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}\n\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+function errorText(err: any, fallback = "Server error.") {
+  const d = err?.response?.data;
+  if (typeof d === "string") return d;
+  if (d?.error) return String(d.error);
+  if (d?.message) return String(d.message);
+  if (err?.message) return String(err.message);
+  try {
+    return JSON.stringify(d ?? err);
+  } catch {
+    return fallback;
+  }
+}
+
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
+/** ------------------------------------------------------ */
+
 export default function AccountsPanel({
   token,
   apiBase = `${BASE_API}`,
@@ -46,14 +81,15 @@ export default function AccountsPanel({
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [query, setQuery] = useState("");
 
-  // create form
+  // --- create form state (now shown in a modal) ---
+  const [createVisible, setCreateVisible] = useState(false);
   const [fullname, setFullname] = useState("");
   const [password, setPassword] = useState("");
   const [level, setLevel] = useState<Role>("operator");
   const [buildingId, setBuildingId] = useState("");
   const [utilRoles, setUtilRoles] = useState<Util[]>([]);
 
-  // edit form
+  // --- edit form state ---
   const [editVisible, setEditVisible] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [editFullname, setEditFullname] = useState("");
@@ -82,7 +118,6 @@ export default function AccountsPanel({
     if (Array.isArray(val)) {
       return val.map(String).map((v) => v.toLowerCase() as Util);
     }
-    // if backend serializes as JSON string for some reason
     try {
       const arr = JSON.parse(String(val));
       return Array.isArray(arr)
@@ -96,7 +131,7 @@ export default function AccountsPanel({
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
-      Alert.alert("Not logged in", "Please log in as admin to manage users.");
+      notify("Not logged in", "Please log in as admin to manage users.");
       return;
     }
     try {
@@ -106,7 +141,6 @@ export default function AccountsPanel({
         api.get<Building[]>("/buildings"),
       ]);
 
-      // normalize utility_role just in case
       const normalizedUsers = (usersRes.data || []).map((u: any) => ({
         ...u,
         utility_role: parseUtils(u.utility_role),
@@ -125,10 +159,9 @@ export default function AccountsPanel({
       }
     } catch (err: any) {
       console.error("[ADMIN LOAD]", err?.response?.data || err?.message);
-      Alert.alert(
+      notify(
         "Load failed",
-        err?.response?.data?.error ??
-          "Please check your connection and permissions.",
+        errorText(err, "Please check your connection and permissions."),
       );
     } finally {
       setBusy(false);
@@ -159,11 +192,11 @@ export default function AccountsPanel({
 
   const onCreate = async () => {
     if (!fullname || !password) {
-      Alert.alert("Missing info", "Please fill in full name and password.");
+      notify("Missing info", "Please fill in full name and password.");
       return;
     }
     if (roleNeedsBuilding(level) && !buildingId) {
-      Alert.alert("Missing building", "Select a building for non-admin users.");
+      notify("Missing building", "Select a building for non-admin users.");
       return;
     }
     try {
@@ -178,25 +211,18 @@ export default function AccountsPanel({
 
       await api.post("/users", payload);
 
-      // reset
+      // reset + close modal
       setFullname("");
       setPassword("");
       setLevel("operator");
       setUtilRoles([]);
+      setCreateVisible(false);
       await loadAll();
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Success\n\nUser created.");
-      }
+
+      notify("Success", "User created.");
     } catch (err: any) {
       console.error("[CREATE USER]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Create failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Create failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -215,7 +241,7 @@ export default function AccountsPanel({
   const onUpdate = async () => {
     if (!editUser) return;
     if (roleNeedsBuilding(editLevel) && !editBuildingId) {
-      Alert.alert("Missing building", "Select a building for non-admin users.");
+      notify("Missing building", "Select a building for non-admin users.");
       return;
     }
     try {
@@ -225,15 +251,12 @@ export default function AccountsPanel({
         user_level: editLevel,
       };
 
-      // building logic
       if (editLevel === "admin") {
-        // let backend keep or null it only if provided; we’ll pass null if cleared in UI
         payload.building_id = editBuildingId || null;
       } else {
         payload.building_id = editBuildingId;
       }
 
-      // utility role logic
       if (roleUsesUtilities(editLevel)) {
         payload.utility_role = editUtilRoles;
       } else {
@@ -245,42 +268,18 @@ export default function AccountsPanel({
       await api.put(`/users/${encodeURIComponent(editUser.user_id)}`, payload);
       setEditVisible(false);
       await loadAll();
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Updated\n\nUser updated successfully.");
-      }
+
+      notify("Updated", "User updated successfully.");
     } catch (err: any) {
       console.error("[UPDATE USER]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Update failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Update failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
-  /** Cross-platform confirm helper */
-  const confirmDelete = (title: string, message: string): Promise<boolean> => {
-    if (Platform.OS === "web") {
-      const ok = (globalThis as any).confirm
-        ? (globalThis as any).confirm(`${title}\n\n${message}`)
-        : true;
-      return Promise.resolve(!!ok);
-    }
-    return new Promise((resolve) => {
-      Alert.alert(title, message, [
-        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-        { text: "Delete", style: "destructive", onPress: () => resolve(true) },
-      ]);
-    });
-  };
-
   const onDelete = async (u: User) => {
-    const ok = await confirmDelete(
+    const ok = await confirm(
       "Delete user",
       `Are you sure you want to delete ${u.user_fullname} (${u.user_id})?`,
     );
@@ -290,19 +289,10 @@ export default function AccountsPanel({
       setSubmitting(true);
       await api.delete(`/users/${encodeURIComponent(u.user_id)}`);
       await loadAll();
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Deleted\n\nUser removed.");
-      }
+      notify("Deleted", "User removed.");
     } catch (err: any) {
       console.error("[DELETE USER]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Delete failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Delete failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -389,99 +379,24 @@ export default function AccountsPanel({
 
   return (
     <View style={styles.grid}>
-      {/* CREATE ACCOUNT */}
+      {/* MANAGE ACCOUNTS (with Create button) */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Create Account</Text>
-
-        <View style={styles.formRow}>
-          <TextInput
-            style={styles.input}
-            placeholder="Full name"
-            value={fullname}
-            onChangeText={setFullname}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
-        </View>
-
-        <Text style={styles.modalLabel}>Role</Text>
-        <View style={styles.formRow}>
-          <Chip
-            label="Admin"
-            active={level === "admin"}
-            onPress={() => setLevel("admin")}
-          />
-          <Chip
-            label="Operator"
-            active={level === "operator"}
-            onPress={() => setLevel("operator")}
-          />
-          <Chip
-            label="Biller"
-            active={level === "biller"}
-            onPress={() => setLevel("biller")}
-          />
-          <Chip
-            label="Reader"
-            active={level === "reader"}
-            onPress={() => setLevel("reader")}
-          />
-        </View>
-
-        {roleNeedsBuilding(level) && (
-          <Dropdown
-            label="Building"
-            value={buildingId}
-            onChange={setBuildingId}
-            options={buildings.map((b) => ({
-              label: `${b.building_name} (${b.building_id})`,
-              value: b.building_id,
-            }))}
-          />
-        )}
-
-        {roleUsesUtilities(level) && (
-          <View style={{ marginTop: 10 }}>
-            <Text style={styles.modalLabel}>Utility Role</Text>
-            <View style={styles.formRow}>
-              {UTIL_OPTIONS.map((u) => (
-                <UtilChip
-                  key={u}
-                  util={u}
-                  selected={utilRoles.includes(u)}
-                  onToggle={() => setUtilRoles(toggleArrayValue(utilRoles, u))}
-                />
-              ))}
-            </View>
-          </View>
-        )}
-
-        <TouchableOpacity
-          style={[styles.btn, submitting && styles.btnDisabled]}
-          onPress={onCreate}
-          disabled={submitting}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
         >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.btnText}>Create Account</Text>
-          )}
-        </TouchableOpacity>
-
-        <Text style={styles.hint}>
-          New users are auto-assigned IDs like{" "}
-          <Text style={{ fontWeight: "700" }}>USER-N</Text>.
-        </Text>
-      </View>
-
-      {/* MANAGE ACCOUNTS */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Manage Accounts</Text>
+          <Text style={styles.cardTitle}>Manage Accounts</Text>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => setCreateVisible(true)}
+          >
+            <Text style={styles.btnText}>+ Create Account</Text>
+          </TouchableOpacity>
+        </View>
 
         <TextInput
           style={styles.search}
@@ -521,7 +436,7 @@ export default function AccountsPanel({
                     style={styles.link}
                     onPress={() => openEdit(item)}
                   >
-                    <Text style={styles.linkText}>Edit</Text>
+                    <Text style={styles.linkText}>Update</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.link, { marginLeft: 8 }]}
@@ -537,6 +452,106 @@ export default function AccountsPanel({
           />
         )}
       </View>
+
+      {/* CREATE MODAL */}
+      <Modal visible={createVisible} animationType="slide" transparent>
+        <View style={styles.modalWrap}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Create User</Text>
+
+            <Text style={styles.modalLabel}>Full name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Full name"
+              value={fullname}
+              onChangeText={setFullname}
+            />
+
+            <Text style={styles.modalLabel}>Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
+
+            <Text style={styles.modalLabel}>Role</Text>
+            <View style={styles.formRow}>
+              <Chip
+                label="Admin"
+                active={level === "admin"}
+                onPress={() => setLevel("admin")}
+              />
+              <Chip
+                label="Operator"
+                active={level === "operator"}
+                onPress={() => setLevel("operator")}
+              />
+              <Chip
+                label="Biller"
+                active={level === "biller"}
+                onPress={() => setLevel("biller")}
+              />
+              <Chip
+                label="Reader"
+                active={level === "reader"}
+                onPress={() => setLevel("reader")}
+              />
+            </View>
+
+            {roleNeedsBuilding(level) && (
+              <Dropdown
+                label="Building"
+                value={buildingId}
+                onChange={setBuildingId}
+                options={buildings.map((b) => ({
+                  label: `${b.building_name} (${b.building_id})`,
+                  value: b.building_id,
+                }))}
+              />
+            )}
+
+            {roleUsesUtilities(level) && (
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.modalLabel}>Utility Role</Text>
+                <View style={styles.formRow}>
+                  {UTIL_OPTIONS.map((u) => (
+                    <UtilChip
+                      key={u}
+                      util={u}
+                      selected={utilRoles.includes(u)}
+                      onToggle={() => setUtilRoles(toggleArrayValue(utilRoles, u))}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnGhost]}
+                onPress={() => setCreateVisible(false)}
+              >
+                <Text style={[styles.btnText, { color: "#102a43" }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.btn}
+                onPress={onCreate}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnText}>Create Account</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* EDIT MODAL */}
       <Modal visible={editVisible} animationType="slide" transparent>

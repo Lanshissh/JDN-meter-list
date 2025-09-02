@@ -10,11 +10,42 @@ import {
   FlatList,
   Modal,
   Platform,
+  KeyboardAvoidingView,
+  ScrollView,
 } from "react-native";
 import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import QRCode from "react-native-qrcode-svg";
 import { BASE_API } from "../../constants/api";
+
+// ------------ ALERT HELPERS (web + mobile) ------------
+function notify(title: string, message?: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}\n\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+function errorText(err: any, fallback = "Server error.") {
+  const d = err?.response?.data;
+  if (typeof d === "string") return d;
+  if (d?.error) return String(d.error);
+  if (d?.message) return String(d.message);
+  if (err?.message) return String(err.message);
+  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+}
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
+// ------------------------------------------------------
 
 // ---- Types ----
 export type Meter = {
@@ -42,14 +73,11 @@ export default function MeterPanel({ token }: { token: string | null }) {
 
   // search & filter & sort
   const [query, setQuery] = useState("");
-  const [filterType, setFilterType] = useState<
-    "all" | "electric" | "water" | "lpg"
-  >("all");
-  const [sortBy, setSortBy] = useState<
-    "id_asc" | "id_desc" | "type" | "stall" | "status"
-  >("id_asc");
+  const [filterType, setFilterType] = useState<"all" | "electric" | "water" | "lpg">("all");
+  const [sortBy, setSortBy] = useState<"id_asc" | "id_desc" | "type" | "stall" | "status">("id_asc");
 
-  // create form
+  // create form (now in a modal)
+  const [createVisible, setCreateVisible] = useState(false);
   const [type, setType] = useState<Meter["meter_type"]>("electric");
   const [sn, setSn] = useState("");
   const [mult, setMult] = useState("1.00");
@@ -63,8 +91,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const [editSn, setEditSn] = useState("");
   const [editMult, setEditMult] = useState("1.00");
   const [editStallId, setEditStallId] = useState("");
-  const [editStatus, setEditStatus] =
-    useState<Meter["meter_status"]>("inactive");
+  const [editStatus, setEditStatus] = useState<Meter["meter_status"]>("inactive");
 
   // QR modal
   const [qrVisible, setQrVisible] = useState(false);
@@ -72,13 +99,9 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const qrRef = useRef<any>(null);
 
   // api
-  const authHeader = useMemo(
-    () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token],
-  );
+  const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(
-    () =>
-      axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
+    () => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
     [authHeader],
   );
 
@@ -90,7 +113,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
-      Alert.alert("Not logged in", "Please log in to manage meters.");
+      notify("Not logged in", "Please log in to manage meters.");
       return;
     }
     try {
@@ -103,10 +126,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       setStalls(stallsRes.data || []);
     } catch (err: any) {
       console.error("[METERS LOAD]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Load failed",
-        err?.response?.data?.error ?? "Could not load meters/stalls.",
-      );
+      notify("Load failed", errorText(err, "Could not load meters/stalls."));
     } finally {
       setBusy(false);
     }
@@ -122,8 +142,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = meters;
-    if (filterType !== "all")
-      list = list.filter((m) => m.meter_type === filterType);
+    if (filterType !== "all") list = list.filter((m) => m.meter_type === filterType);
     if (!q) return list;
     return list.filter((m) =>
       [m.meter_id, m.meter_sn, m.meter_type, m.stall_id, m.meter_status]
@@ -139,8 +158,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       case "id_desc":
         arr.sort(
           (a, b) =>
-            mtrNum(b.meter_id) - mtrNum(a.meter_id) ||
-            b.meter_id.localeCompare(a.meter_id),
+            mtrNum(b.meter_id) - mtrNum(a.meter_id) || b.meter_id.localeCompare(a.meter_id),
         );
         break;
       case "type":
@@ -160,9 +178,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       case "status": {
         const rank = (s: Meter["meter_status"]) => (s === "active" ? 0 : 1);
         arr.sort(
-          (a, b) =>
-            rank(a.meter_status) - rank(b.meter_status) ||
-            mtrNum(a.meter_id) - mtrNum(b.meter_id),
+          (a, b) => rank(a.meter_status) - rank(b.meter_status) || mtrNum(a.meter_id) - mtrNum(b.meter_id),
         );
         break;
       }
@@ -170,8 +186,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       default:
         arr.sort(
           (a, b) =>
-            mtrNum(a.meter_id) - mtrNum(b.meter_id) ||
-            a.meter_id.localeCompare(b.meter_id),
+            mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id),
         );
         break;
     }
@@ -181,7 +196,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   // CRUD
   const onCreate = async () => {
     if (!sn.trim() || !stallId.trim()) {
-      Alert.alert("Missing info", "Serial number and Stall are required.");
+      notify("Missing info", "Serial number and Stall are required.");
       return;
     }
     const multValue = mult.trim() === "" ? undefined : Number(mult);
@@ -195,25 +210,18 @@ export default function MeterPanel({ token }: { token: string | null }) {
     try {
       setSubmitting(true);
       await api.post("/meters", payload);
-      Alert.alert("Success", "Meter added.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Success\n\nMeter added.");
-      }
+      notify("Success", "Meter added.");
+
+      // reset + close modal
       setSn("");
       setMult("1.00");
       setStallId("");
       setStatus("inactive");
+      setCreateVisible(false);
       await loadAll();
     } catch (err: any) {
       console.error("[METER CREATE]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Create failed",
-        err?.response?.data?.error ?? "Unable to add meter.",
-      );
+      notify("Create failed", errorText(err, "Unable to add meter."));
     } finally {
       setSubmitting(false);
     }
@@ -245,68 +253,29 @@ export default function MeterPanel({ token }: { token: string | null }) {
       await api.put(`/meters/${encodeURIComponent(editRow.meter_id)}`, body);
       setEditVisible(false);
       await loadAll();
-      Alert.alert("Updated", "Meter updated successfully.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Updated\n\nMeter updated successfully.");
-      }
+      notify("Updated", "Meter updated successfully.");
     } catch (err: any) {
       console.error("[METER UPDATE]", err?.response?.data || err?.message);
-      Alert.alert(
-        "Update failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Update failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
   const onDelete = async (m: Meter) => {
-    const ok =
-      Platform.OS === "web"
-        ? window.confirm(`Delete meter ${m.meter_id}?`)
-        : await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              "Delete meter",
-              `Are you sure you want to delete ${m.meter_id}?`,
-              [
-                {
-                  text: "Cancel",
-                  style: "cancel",
-                  onPress: () => resolve(false),
-                },
-                {
-                  text: "Delete",
-                  style: "destructive",
-                  onPress: () => resolve(true),
-                },
-              ],
-            );
-          });
+    const ok = await confirm(
+      "Delete meter",
+      `Are you sure you want to delete ${m.meter_id}?`,
+    );
     if (!ok) return;
 
     try {
       setSubmitting(true);
       await api.delete(`/meters/${encodeURIComponent(m.meter_id)}`);
       await loadAll();
-      Alert.alert("Deleted", "Meter removed.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Deleted\n\nMeter removed.");
-      }
+      notify("Deleted", "Meter removed.");
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? "Server error.";
-      if (Platform.OS === "web") {
-        window.alert(`Delete failed\n\n${msg}`);
-      } else {
-        Alert.alert("Delete failed", msg);
-      }
+      notify("Delete failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -330,15 +299,12 @@ export default function MeterPanel({ token }: { token: string | null }) {
           a.click();
           a.remove();
         } else {
-          Alert.alert(
-            "Save QR",
-            "On mobile, please take a screenshot of this QR.",
-          );
+          notify("Save QR", "On mobile, please take a screenshot of this QR.");
         }
       });
     } catch (err) {
       console.error("[QR DOWNLOAD]", err);
-      Alert.alert("Download failed", "Could not generate QR image.");
+      notify("Download failed", "Could not generate QR image.");
     }
   };
 
@@ -352,86 +318,14 @@ export default function MeterPanel({ token }: { token: string | null }) {
 
   return (
     <View style={styles.grid}>
-      {/* --- Create form (same card UI) --- */}
+      {/* --- Manage list + Create button --- */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Add Meter</Text>
-
-        <Text style={styles.dropdownLabel}>Type</Text>
-        <View style={styles.pickerWrapper}>
-          <Picker
-            selectedValue={type}
-            onValueChange={(v) => setType(v)}
-            style={styles.picker}
-          >
-            <Picker.Item label="Electric" value="electric" />
-            <Picker.Item label="Water" value="water" />
-            <Picker.Item label="LPG (Gas)" value="lpg" />
-          </Picker>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <Text style={styles.cardTitle}>Manage Meters</Text>
+          <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+            <Text style={styles.btnText}>+ Create Meter</Text>
+          </TouchableOpacity>
         </View>
-
-        <Text style={styles.dropdownLabel}>Serial Number</Text>
-        <TextInput
-          value={sn}
-          onChangeText={setSn}
-          placeholder="e.g. UGF-E-000111"
-          style={styles.input}
-        />
-
-        <Text style={styles.dropdownLabel}>Multiplier</Text>
-        <TextInput
-          value={mult}
-          onChangeText={setMult}
-          keyboardType="numeric"
-          placeholder="1.00"
-          style={styles.input}
-        />
-
-        <Text style={styles.dropdownLabel}>Stall</Text>
-        <View style={styles.pickerWrapper}>
-          <Picker
-            selectedValue={stallId}
-            onValueChange={(v) => setStallId(v)}
-            style={styles.picker}
-          >
-            <Picker.Item label="Select a stall" value="" />
-            {stalls.map((s) => (
-              <Picker.Item
-                key={s.stall_id}
-                label={`${s.stall_id} • ${s.stall_sn || ""}`}
-                value={s.stall_id}
-              />
-            ))}
-          </Picker>
-        </View>
-
-        <Text style={styles.dropdownLabel}>Status</Text>
-        <View style={styles.pickerWrapper}>
-          <Picker
-            selectedValue={status}
-            onValueChange={(v) => setStatus(v)}
-            style={styles.picker}
-          >
-            <Picker.Item label="Inactive" value="inactive" />
-            <Picker.Item label="Active" value="active" />
-          </Picker>
-        </View>
-
-        <TouchableOpacity
-          style={[styles.btn, submitting && styles.btnDisabled]}
-          onPress={onCreate}
-          disabled={submitting}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.btnText}>Add Meter</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* --- Manage list (same card, search, chips, list row UI) --- */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Manage Meters</Text>
 
         <TextInput
           value={query}
@@ -449,17 +343,11 @@ export default function MeterPanel({ token }: { token: string | null }) {
           ].map(({ label, val }) => (
             <TouchableOpacity
               key={label}
-              style={[
-                styles.chip,
-                filterType === (val as any) && styles.chipActive,
-              ]}
+              style={[styles.chip, filterType === (val as any) && styles.chipActive]}
               onPress={() => setFilterType(val as any)}
             >
               <Text
-                style={[
-                  styles.chipText,
-                  filterType === (val as any) && styles.chipTextActive,
-                ]}
+                style={[styles.chipText, filterType === (val as any) && styles.chipTextActive]}
               >
                 {label}
               </Text>
@@ -477,18 +365,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
           ].map(({ label, val }) => (
             <TouchableOpacity
               key={val}
-              style={[
-                styles.chip,
-                sortBy === (val as any) && styles.chipActive,
-              ]}
+              style={[styles.chip, sortBy === (val as any) && styles.chipActive]}
               onPress={() => setSortBy(val as any)}
             >
-              <Text
-                style={[
-                  styles.chipText,
-                  sortBy === (val as any) && styles.chipTextActive,
-                ]}
-              >
+              <Text style={[styles.chipText, sortBy === (val as any) && styles.chipTextActive]}>
                 {label}
               </Text>
             </TouchableOpacity>
@@ -496,9 +376,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </View>
 
         {sorted.length === 0 ? (
-          <Text style={{ paddingVertical: 8, color: "#627d98" }}>
-            No meters found.
-          </Text>
+          <Text style={{ paddingVertical: 8, color: "#627d98" }}>No meters found.</Text>
         ) : (
           <FlatList
             data={sorted}
@@ -510,28 +388,17 @@ export default function MeterPanel({ token }: { token: string | null }) {
                     {item.meter_id} • {item.meter_type}
                   </Text>
                   <Text style={styles.rowSub}>
-                    SN: {item.meter_sn} • Mult: {item.meter_mult} • Stall:{" "}
-                    {item.stall_id} • {item.meter_status}
+                    SN: {item.meter_sn} • Mult: {item.meter_mult} • Stall: {item.stall_id} •{" "}
+                    {item.meter_status}
                   </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.link}
-                  onPress={() => openEdit(item)}
-                >
-                  <Text style={styles.linkText}>Edit</Text>
+                <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+                  <Text style={styles.linkText}>Update</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.link, { marginLeft: 8 }]}
-                  onPress={() => onDelete(item)}
-                >
-                  <Text style={[styles.linkText, { color: "#e53935" }]}>
-                    Delete
-                  </Text>
+                <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
+                  <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.link, { marginLeft: 8 }]}
-                  onPress={() => openQr(item.meter_id)}
-                >
+                <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => openQr(item.meter_id)}>
                   <Text style={styles.linkText}>QR</Text>
                 </TouchableOpacity>
               </View>
@@ -540,24 +407,91 @@ export default function MeterPanel({ token }: { token: string | null }) {
         )}
       </View>
 
-      {/* --- Edit Modal (same spacing / buttons as readings) --- */}
+      {/* --- CREATE MODAL --- */}
       <Modal
-        visible={editVisible}
+        visible={createVisible}
         animationType="slide"
         transparent
-        onRequestClose={() => setEditVisible(false)}
+        onRequestClose={() => setCreateVisible(false)}
       >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Create Meter</Text>
+
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+              <Text style={styles.dropdownLabel}>Type</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker selectedValue={type} onValueChange={(v) => setType(v)} style={styles.picker}>
+                  <Picker.Item label="Electric" value="electric" />
+                  <Picker.Item label="Water" value="water" />
+                  <Picker.Item label="LPG (Gas)" value="lpg" />
+                </Picker>
+              </View>
+
+              <Text style={styles.dropdownLabel}>Serial Number</Text>
+              <TextInput
+                value={sn}
+                onChangeText={setSn}
+                placeholder="e.g. UGF-E-000111"
+                style={styles.input}
+              />
+
+              <Text style={styles.dropdownLabel}>Multiplier</Text>
+              <TextInput
+                value={mult}
+                onChangeText={setMult}
+                keyboardType="numeric"
+                placeholder="1.00"
+                style={styles.input}
+              />
+
+              <Text style={styles.dropdownLabel}>Stall</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker selectedValue={stallId} onValueChange={(v) => setStallId(v)} style={styles.picker}>
+                  <Picker.Item label="Select a stall" value="" />
+                  {stalls.map((s) => (
+                    <Picker.Item key={s.stall_id} label={`${s.stall_id} • ${s.stall_sn || ""}`} value={s.stall_id} />
+                  ))}
+                </Picker>
+              </View>
+
+              <Text style={styles.dropdownLabel}>Status</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker selectedValue={status} onValueChange={(v) => setStatus(v)} style={styles.picker}>
+                  <Picker.Item label="Inactive" value="inactive" />
+                  <Picker.Item label="Active" value="active" />
+                </Picker>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
+                <Text style={styles.btnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, submitting && styles.btnDisabled]}
+                onPress={onCreate}
+                disabled={submitting}
+              >
+                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Meter</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* --- EDIT MODAL --- */}
+      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Edit {editRow?.meter_id}</Text>
 
             <Text style={styles.dropdownLabel}>Type</Text>
             <View style={styles.pickerWrapper}>
-              <Picker
-                selectedValue={editType}
-                onValueChange={(v) => setEditType(v)}
-                style={styles.picker}
-              >
+              <Picker selectedValue={editType} onValueChange={(v) => setEditType(v)} style={styles.picker}>
                 <Picker.Item label="Electric" value="electric" />
                 <Picker.Item label="Water" value="water" />
                 <Picker.Item label="LPG (Gas)" value="lpg" />
@@ -565,11 +499,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
             </View>
 
             <Text style={styles.dropdownLabel}>Serial Number</Text>
-            <TextInput
-              value={editSn}
-              onChangeText={setEditSn}
-              style={styles.input}
-            />
+            <TextInput value={editSn} onChangeText={setEditSn} style={styles.input} />
 
             <Text style={styles.dropdownLabel}>Multiplier</Text>
             <TextInput
@@ -582,38 +512,23 @@ export default function MeterPanel({ token }: { token: string | null }) {
 
             <Text style={styles.dropdownLabel}>Stall</Text>
             <View style={styles.pickerWrapper}>
-              <Picker
-                selectedValue={editStallId}
-                onValueChange={(v) => setEditStallId(v)}
-                style={styles.picker}
-              >
+              <Picker selectedValue={editStallId} onValueChange={(v) => setEditStallId(v)} style={styles.picker}>
                 {stalls.map((s) => (
-                  <Picker.Item
-                    key={s.stall_id}
-                    label={`${s.stall_id} • ${s.stall_sn || ""}`}
-                    value={s.stall_id}
-                  />
+                  <Picker.Item key={s.stall_id} label={`${s.stall_id} • ${s.stall_sn || ""}`} value={s.stall_id} />
                 ))}
               </Picker>
             </View>
 
             <Text style={styles.dropdownLabel}>Status</Text>
             <View style={styles.pickerWrapper}>
-              <Picker
-                selectedValue={editStatus}
-                onValueChange={(v) => setEditStatus(v)}
-                style={styles.picker}
-              >
+              <Picker selectedValue={editStatus} onValueChange={(v) => setEditStatus(v)} style={styles.picker}>
                 <Picker.Item label="Inactive" value="inactive" />
                 <Picker.Item label="Active" value="active" />
               </Picker>
             </View>
 
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => setEditVisible(false)}
-              >
+              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
                 <Text style={styles.btnGhostText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -621,39 +536,23 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 onPress={onUpdate}
                 disabled={submitting}
               >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.btnText}>Save changes</Text>
-                )}
+                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* --- QR Modal (kept, but with same dialog UI) --- */}
-      <Modal
-        visible={qrVisible}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setQrVisible(false)}
-      >
+      {/* --- QR MODAL --- */}
+      <Modal visible={qrVisible} animationType="fade" transparent onRequestClose={() => setQrVisible(false)}>
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>QR: {qrMeterId}</Text>
             <View style={{ alignItems: "center", paddingVertical: 8 }}>
-              <QRCode
-                value={qrMeterId || ""}
-                size={220}
-                getRef={(c) => (qrRef.current = c)}
-              />
+              <QRCode value={qrMeterId || ""} size={220} getRef={(c) => (qrRef.current = c)} />
             </View>
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => setQrVisible(false)}
-              >
+              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setQrVisible(false)}>
                 <Text style={styles.btnGhostText}>Close</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btn} onPress={downloadQr}>
@@ -667,7 +566,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   );
 }
 
-// --- Small UI helpers ---
+// --- Small UI helpers (kept for consistency) ---
 function Chip({
   label,
   active,
@@ -678,18 +577,13 @@ function Chip({
   onPress?: () => void;
 }) {
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
-    >
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>
-        {label}
-      </Text>
+    <TouchableOpacity onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-// --- Styles copied from MeterReadingPanel for UI parity ---
+// --- Styles (aligned with your other panels) ---
 const styles = StyleSheet.create({
   grid: { gap: 16 },
   card: {

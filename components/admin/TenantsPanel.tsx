@@ -80,6 +80,37 @@ function decodeJwtPayload(token: string | null): any | null {
   }
 }
 
+/** ------------ ALERT HELPERS (web + mobile) ------------ */
+function notify(title: string, message?: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}\n\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+function errorText(err: any, fallback = "Server error.") {
+  const d = err?.response?.data;
+  if (typeof d === "string") return d;
+  if (d?.error) return String(d.error);
+  if (d?.message) return String(d.message);
+  if (err?.message) return String(err.message);
+  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+}
+
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
+/** ------------------------------------------------------ */
+
 /** Date field (simple, cross-platform) */
 function DatePickerField({
   label,
@@ -138,7 +169,8 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
 
-  // Create form (🔒 building locked for non-admins)
+  // Create form (now shown in a modal)
+  const [createVisible, setCreateVisible] = useState(false);
   const [sn, setSn] = useState("");
   const [name, setName] = useState("");
   const [buildingId, setBuildingId] = useState("");
@@ -160,7 +192,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const loadAll = async () => {
     if (!mergedToken) {
       setBusy(false);
-      Alert.alert("Not logged in", "Please log in to view tenants.");
+      notify("Not logged in", "Please log in to view tenants.");
       return;
     }
     try {
@@ -187,12 +219,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         return bData?.[0]?.building_id ?? "";
       });
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.error ||
-        err?.response?.data?.message ||
-        err?.message ||
-        "Connection error.";
-      Alert.alert("Load failed", msg);
+      notify("Load failed", errorText(err, "Connection error."));
     } finally {
       setBusy(false);
     }
@@ -234,11 +261,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     }
   }, [filtered, sortMode]);
 
-  /** Create — UI-only update */
+  /** Create — now triggered by modal */
   const onCreate = async () => {
     const finalBuildingId = isAdmin ? buildingId : userBuildingId || buildingId;
     if (!sn || !name || !finalBuildingId || !billStart) {
-      Alert.alert("Missing info", "Please fill in all fields.");
+      notify("Missing info", "Please fill in all fields.");
       return;
     }
     try {
@@ -252,31 +279,20 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       const assignedId: string =
         res?.data?.tenantId ?? res?.data?.tenant_id ?? res?.data?.id ?? "";
 
+      // reset + close modal
       setSn("");
       setName("");
       setBillStart(today());
+      setCreateVisible(false);
+
       await loadAll();
 
-      Alert.alert(
-        "Success",
-        assignedId
-          ? `Tenant created.\nID assigned: ${assignedId}`
-          : "Tenant created.",
-      );
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert(
-          assignedId
-            ? `Success\n\nTenant created.\nID assigned: ${assignedId}`
-            : "Success\n\nTenant created.",
-        );
-      }
+      const msg = assignedId
+        ? `Tenant created.\nID assigned: ${assignedId}`
+        : "Tenant created.";
+      notify("Success", msg);
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? "Server error.";
-      Alert.alert("Create failed", msg);
+      notify("Create failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -304,71 +320,30 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       });
       setEditVisible(false);
       await loadAll();
-      Alert.alert("Updated", "Tenant updated successfully.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Updated\n\nTenant updated successfully.");
-      }
+      notify("Updated", "Tenant updated successfully.");
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? "Server error.";
-      Alert.alert("Update failed", msg);
+      notify("Update failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
   /** Delete */
-  const confirmDelete = (t: Tenant) =>
-    Platform.OS === "web"
-      ? Promise.resolve(
-          window.confirm(`Delete tenant ${t.tenant_name} (${t.tenant_id})?`),
-        )
-      : new Promise((resolve) => {
-          Alert.alert(
-            "Delete tenant",
-            `Are you sure you want to delete ${t.tenant_name}?`,
-            [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => resolve(false),
-              },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => resolve(true),
-              },
-            ],
-          );
-        });
-
   const onDelete = async (t: Tenant) => {
-    const ok = await confirmDelete(t);
+    const ok = await confirm(
+      "Delete tenant",
+      `Are you sure you want to delete ${t.tenant_name} (${t.tenant_id})?`,
+    );
     if (!ok) return;
 
     try {
       setSubmitting(true);
       await api.delete(`/tenants/${encodeURIComponent(t.tenant_id)}`);
       await loadAll();
-      Alert.alert("Deleted", "Tenant removed.");
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Deleted\n\nTenant removed.");
-      }
+      notify("Deleted", "Tenant removed.");
     } catch (err: any) {
       // Show server message verbatim (e.g., dependency errors)
-      const msg = err?.response?.data?.error ?? "Server error.";
-      if (Platform.OS === "web") {
-        window.alert(`Delete failed\n\n${msg}`);
-      } else {
-        Alert.alert("Delete failed", msg);
-      }
+      notify("Delete failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -413,60 +388,24 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
   return (
     <View style={styles.grid}>
-      {/* Create Tenant */}
+      {/* Manage Tenants + Create button */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Create Tenant</Text>
-
-        <Text style={styles.dropdownLabel}>Tenant SN</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Tenant SN"
-          value={sn}
-          onChangeText={setSn}
-          autoCapitalize="characters"
-        />
-
-        <Text style={styles.dropdownLabel}>Tenant Name</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Tenant Name"
-          value={name}
-          onChangeText={setName}
-        />
-
-        {isAdmin ? (
-          <Dropdown
-            label="Building"
-            value={buildingId}
-            onChange={setBuildingId}
-            options={createBuildingOptions}
-          />
-        ) : (
-          <ReadOnlyField label="Building" value={userBuildingId || "(none)"} />
-        )}
-
-        <DatePickerField
-          label="Bill start (YYYY-MM-DD)"
-          value={billStart}
-          onChange={setBillStart}
-        />
-
-        <TouchableOpacity
-          style={[styles.btn, submitting && styles.btnDisabled]}
-          onPress={onCreate}
-          disabled={submitting}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
         >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.btnText}>Create Tenant</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* Filters & Sort */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Manage Tenants</Text>
+          <Text style={styles.cardTitle}>Manage Tenants</Text>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => setCreateVisible(true)}
+          >
+            <Text style={styles.btnText}>+ Create Tenant</Text>
+          </TouchableOpacity>
+        </View>
 
         <TextInput
           style={styles.search}
@@ -544,7 +483,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                   style={styles.link}
                   onPress={() => openEdit(item)}
                 >
-                  <Text style={styles.linkText}>Edit</Text>
+                  <Text style={styles.linkText}>Update</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.link, { marginLeft: 8 }]}
@@ -560,7 +499,78 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         )}
       </View>
 
-      {/* Edit Modal */}
+      {/* CREATE MODAL */}
+      <Modal
+        visible={createVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCreateVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Create Tenant</Text>
+
+            <Text style={styles.dropdownLabel}>Tenant SN</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Tenant SN"
+              value={sn}
+              onChangeText={setSn}
+              autoCapitalize="characters"
+            />
+
+            <Text style={styles.dropdownLabel}>Tenant Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Tenant Name"
+              value={name}
+              onChangeText={setName}
+            />
+
+            {isAdmin ? (
+              <Dropdown
+                label="Building"
+                value={buildingId}
+                onChange={setBuildingId}
+                options={createBuildingOptions}
+              />
+            ) : (
+              <ReadOnlyField label="Building" value={userBuildingId || "(none)"} />
+            )}
+
+            <DatePickerField
+              label="Bill start (YYYY-MM-DD)"
+              value={billStart}
+              onChange={setBillStart}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnGhost]}
+                onPress={() => setCreateVisible(false)}
+              >
+                <Text style={styles.btnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, submitting && styles.btnDisabled]}
+                onPress={onCreate}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnText}>Create Tenant</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* EDIT MODAL */}
       <Modal
         visible={editVisible}
         animationType="slide"
@@ -659,7 +669,7 @@ const Dropdown = ({
 }) => (
   <View style={{ marginTop: 8, opacity: disabled ? 0.6 : 1 }}>
     <Text style={styles.dropdownLabel}>{label}</Text>
-    <View style={styles.pickerWrapper}>
+    <View className="picker" style={styles.pickerWrapper}>
       <Picker
         enabled={!disabled}
         selectedValue={value}
@@ -696,7 +706,7 @@ const Chip = ({
   </TouchableOpacity>
 );
 
-// ---------- Styles copied from MeterPanel look & feel ----------
+// ---------- Styles (consistent with your admin panels) ----------
 const styles = StyleSheet.create({
   grid: { gap: 16 },
   card: {
@@ -752,11 +762,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   btn: {
-    marginTop: 12,
     backgroundColor: "#1f4bd8",
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: "center",
+    paddingHorizontal: 14,
   },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
@@ -814,7 +824,7 @@ const styles = StyleSheet.create({
   loader: { paddingVertical: 20, alignItems: "center" },
   empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
 
-  // Modal visuals copied from MeterPanel
+  // Modal visuals
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -857,11 +867,6 @@ const styles = StyleSheet.create({
   clearBtnText: {
     color: "#1f4bd8",
     fontWeight: "700",
-  },
-  // Optional: pressed/hover states
-  clearBtnPressed: {
-    backgroundColor: "#e0e7ff",
-    transform: [{ translateY: 1 }],
   },
 });
 

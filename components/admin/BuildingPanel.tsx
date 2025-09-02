@@ -21,13 +21,45 @@ type Building = {
   updated_by?: string;
 };
 
+/** ------------ ALERT HELPERS (web + mobile) ------------ */
+function notify(title: string, message?: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}\n\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+function errorText(err: any, fallback = "Server error.") {
+  const d = err?.response?.data;
+  if (typeof d === "string") return d;
+  if (d?.error) return String(d.error);
+  if (d?.message) return String(d.message);
+  if (err?.message) return String(err.message);
+  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+}
+
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
+/** ------------------------------------------------------ */
+
 export default function BuildingPanel({ token }: { token: string | null }) {
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [query, setQuery] = useState("");
 
-  // create form
+  // create form (now in a modal)
+  const [createVisible, setCreateVisible] = useState(false);
   const [name, setName] = useState("");
 
   // edit form
@@ -53,10 +85,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
-      Alert.alert(
-        "Not logged in",
-        "Please log in as admin to manage buildings.",
-      );
+      notify("Not logged in", "Please log in as admin to manage buildings.");
       return;
     }
     try {
@@ -64,10 +93,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       const buildingsRes = await api.get<Building[]>("/buildings");
       setBuildings(buildingsRes.data || []);
     } catch (err: any) {
-      Alert.alert(
-        "Load failed",
-        err?.response?.data?.error ?? "Connection error.",
-      );
+      notify("Load failed", errorText(err, "Connection error."));
     } finally {
       setBusy(false);
     }
@@ -90,34 +116,26 @@ export default function BuildingPanel({ token }: { token: string | null }) {
   const onCreate = async () => {
     const building_name = name.trim();
     if (!building_name) {
-      Alert.alert("Missing info", "Please enter a building name.");
+      notify("Missing info", "Please enter a building name.");
       return;
     }
     try {
       setSubmitting(true);
       const res = await api.post("/buildings", { building_name });
-      // backend returns { message, buildingId }
+      // backend returns { message, buildingId } (or similar)
       const assignedId: string =
         res?.data?.buildingId ?? res?.data?.building_id ?? res?.data?.id ?? "";
 
       setName("");
+      setCreateVisible(false);
       await loadAll();
 
       const msg = assignedId
         ? `Building created.\nID assigned: ${assignedId}`
         : "Building created.";
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert(`Success\n\n${msg}`);
-      }
+      notify("Success", msg);
     } catch (err: any) {
-      Alert.alert(
-        "Create failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Create failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -133,86 +151,40 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     if (!editBuilding) return;
     const building_name = editName.trim();
     if (!building_name) {
-      Alert.alert("Missing info", "Please enter a building name.");
+      notify("Missing info", "Please enter a building name.");
       return;
     }
     try {
       setSubmitting(true);
-      await api.put(
-        `/buildings/${encodeURIComponent(editBuilding.building_id)}`,
-        {
-          building_name,
-        },
-      );
+      await api.put(`/buildings/${encodeURIComponent(editBuilding.building_id)}`, {
+        building_name,
+      });
       setEditVisible(false);
       await loadAll();
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Updated\n\nBuilding updated successfully.");
-      }
+      notify("Updated", "Building updated successfully.");
     } catch (err: any) {
-      Alert.alert(
-        "Update failed",
-        err?.response?.data?.error ?? "Server error.",
-      );
+      notify("Update failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const confirmDelete = (b: Building) =>
-    Platform.OS === "web"
-      ? Promise.resolve(
-          (globalThis as any).confirm?.(
-            `Delete building ${b.building_name}?`,
-          ) ?? false,
-        )
-      : new Promise((resolve) => {
-          Alert.alert(
-            "Delete building",
-            `Are you sure you want to delete ${b.building_name}?`,
-            [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => resolve(false),
-              },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => resolve(true),
-              },
-            ],
-          );
-        });
-
   const onDelete = async (b: Building) => {
-    const ok = await confirmDelete(b);
+    const ok = await confirm(
+      "Delete building",
+      `Are you sure you want to delete ${b.building_name}?`,
+    );
     if (!ok) return;
 
     try {
       setSubmitting(true);
       await api.delete(`/buildings/${encodeURIComponent(b.building_id)}`);
       await loadAll();
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        window.alert
-      ) {
-        window.alert("Deleted\n\nBuilding removed.");
-      }
+      notify("Deleted", "Building removed.");
     } catch (err: any) {
-      // Show the server's exact message, e.g.:
-      // "Cannot delete building. It is still referenced by: User(s): [...]; Tenant(s): [...]; Stall(s): [...]"
-      const msg = err?.response?.data?.error ?? "Server error.";
-      if (Platform.OS === "web") {
-        window.alert(`Delete failed\n\n${msg}`);
-      } else {
-        Alert.alert("Delete failed", msg);
-      }
+      // Surfaces dependency errors like:
+      // "Cannot delete building. It is still referenced by: ..."
+      notify("Delete failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -221,9 +193,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
   const Row = ({ item }: { item: Building }) => {
     const meta =
       (item.updated_by ? item.updated_by : "—") +
-      (item.last_updated
-        ? ` • ${new Date(item.last_updated).toLocaleString()}`
-        : "");
+      (item.last_updated ? ` • ${new Date(item.last_updated).toLocaleString()}` : "");
     return (
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
@@ -234,12 +204,9 @@ export default function BuildingPanel({ token }: { token: string | null }) {
           </Text>
         </View>
         <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
-          <Text style={styles.linkText}>Edit</Text>
+          <Text style={styles.linkText}>Update</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.link, { marginLeft: 8 }]}
-          onPress={() => onDelete(item)}
-        >
+        <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
           <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
         </TouchableOpacity>
       </View>
@@ -248,37 +215,22 @@ export default function BuildingPanel({ token }: { token: string | null }) {
 
   return (
     <View style={styles.grid}>
-      {/* Create Building */}
+      {/* Manage Buildings + Create button */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Create Building</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Building name"
-          value={name}
-          onChangeText={setName}
-        />
-        <TouchableOpacity
-          style={[styles.btn, submitting && styles.btnDisabled]}
-          onPress={onCreate}
-          disabled={submitting}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.btnText}>Create Building</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <Text style={styles.cardTitle}>Manage Buildings</Text>
+          <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+            <Text style={styles.btnText}>+ Create Building</Text>
+          </TouchableOpacity>
+        </View>
 
-      {/* Manage Buildings */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Manage Buildings</Text>
         <TextInput
           style={styles.search}
           placeholder="Search by ID or name…"
           value={query}
           onChangeText={setQuery}
         />
+
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
@@ -289,43 +241,47 @@ export default function BuildingPanel({ token }: { token: string | null }) {
             keyExtractor={(item) => item.building_id}
             scrollEnabled={Platform.OS === "web"}
             nestedScrollEnabled={false}
-            ListEmptyComponent={
-              <Text style={styles.empty}>No buildings found.</Text>
-            }
+            ListEmptyComponent={<Text style={styles.empty}>No buildings found.</Text>}
             renderItem={({ item }) => <Row item={item} />}
           />
         )}
       </View>
+
+      {/* Create Modal */}
+      <Modal visible={createVisible} animationType="slide" transparent>
+        <View style={styles.modalWrap}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Create Building</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Building name"
+              value={name}
+              onChangeText={setName}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
+                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btn} onPress={onCreate} disabled={submitting}>
+                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Building</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit Modal */}
       <Modal visible={editVisible} animationType="slide" transparent>
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Edit Building</Text>
-            <TextInput
-              style={styles.input}
-              value={editName}
-              onChangeText={setEditName}
-            />
+            <TextInput style={styles.input} value={editName} onChangeText={setEditName} />
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => setEditVisible(false)}
-              >
-                <Text style={[styles.btnText, { color: "#102a43" }]}>
-                  Cancel
-                </Text>
+              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
+                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.btn}
-                onPress={onUpdate}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.btnText}>Save changes</Text>
-                )}
+              <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
+                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
               </TouchableOpacity>
             </View>
           </View>
