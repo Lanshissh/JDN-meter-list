@@ -18,6 +18,7 @@ import { Picker } from "@react-native-picker/picker";
 import { BASE_API } from "../../constants/api";
 import { useAuth } from "../../contexts/AuthContext";
 
+// -------------------- Types --------------------
 type Stall = {
   stall_id: string;
   stall_sn: string;
@@ -120,6 +121,30 @@ function confirm(title: string, message: string): Promise<boolean> {
 }
 /** ------------------------------------------------------ */
 
+// A tiny wrapper so CREATE & EDIT modals look EXACTLY the same
+function ModalShell({
+  title,
+  children,
+  footer,
+}: {
+  title: string;
+  children: React.ReactNode;
+  footer: React.ReactNode;
+}) {
+  return (
+    <View style={styles.modalWrap}>
+      <View style={styles.modalCard}>
+        <Text style={styles.modalTitle}>{title}</Text>
+        <View style={styles.modalDivider} />
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+          {children}
+        </ScrollView>
+        <View style={styles.modalActions}>{footer}</View>
+      </View>
+    </View>
+  );
+}
+
 export default function StallsPanel({ token }: { token: string | null }) {
   const { token: ctxToken } = useAuth();
   const mergedToken = token || ctxToken || null;
@@ -219,7 +244,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergedToken]);
 
   // tenant lists filtered by building
@@ -228,7 +252,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
     [tenants, buildingId],
   );
   const tenantsForEdit = useMemo(() => {
-    if (!editStall) return [];
+    if (!editStall) return [] as Tenant[];
     return tenants.filter((t) => t.building_id === editStall.building_id);
   }, [tenants, editStall]);
 
@@ -237,10 +261,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
     const q = query.trim().toLowerCase();
     let list = stalls;
 
-    if (buildingFilter)
-      list = list.filter((s) => s.building_id === buildingFilter);
-    if (statusFilter)
-      list = list.filter((s) => s.stall_status === statusFilter);
+    if (buildingFilter) list = list.filter((s) => s.building_id === buildingFilter);
+    if (statusFilter) list = list.filter((s) => s.stall_status === statusFilter);
 
     if (!q) return list;
     return list.filter(
@@ -315,7 +337,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
     try {
       setSubmitting(true);
       const finalBuildingId = isAdmin ? editStall.building_id : userBuildingId; // operator locked to own building
-      await api.put(`/stalls/${encodeURIComponent(editStall.stall_id)}`, {
+      await api.put(`/stalls/${encodeURIComponent(editStall.stall_id)}` , {
         stall_sn: editStall.stall_sn,
         tenant_id:
           editStall.stall_status === "available"
@@ -397,7 +419,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   label: `${b.building_name} (${b.building_id})`,
                   value: b.building_id,
                 })),
-                // Optional: show operator's building if buildings list is empty
                 ...(buildings.length === 0 && userBuildingId
                   ? [{ label: userBuildingId, value: userBuildingId }]
                   : []),
@@ -492,176 +513,95 @@ export default function StallsPanel({ token }: { token: string | null }) {
         transparent
         onRequestClose={() => setCreateVisible(false)}
       >
-        <View style={styles.modalWrap}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-          >
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Create Stall</Text>
-
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingBottom: 8 }}
-              >
-                <TextInput
-                  style={styles.input}
-                  placeholder="Stall SN"
-                  value={stallSn}
-                  onChangeText={setStallSn}
-                />
-
-                {isAdmin ? (
-                  <Dropdown
-                    label="Building"
-                    value={buildingId}
-                    onChange={setBuildingId}
-                    options={buildings.map((b) => ({
-                      label: `${b.building_name} (${b.building_id})`,
-                      value: b.building_id,
-                    }))}
-                  />
-                ) : (
-                  <ReadOnlyField
-                    label="Building"
-                    value={userBuildingId || "(none)"}
-                  />
-                )}
-
-                <Dropdown
-                  label="Status"
-                  value={status}
-                  onChange={(v) => {
-                    const s = v as Stall["stall_status"];
-                    setStatus(s);
-                    if (s === "available") setTenantId("");
-                  }}
-                  options={[
-                    { label: "Available", value: "available" },
-                    { label: "Occupied", value: "occupied" },
-                    { label: "Under Maintenance", value: "under maintenance" },
-                  ]}
-                />
-
-                {status !== "available" && (
-                  <Dropdown
-                    label="Tenant"
-                    value={tenantId}
-                    onChange={setTenantId}
-                    options={[
-                      { label: "None", value: "" },
-                      ...tenantsForCreate.map((t) => ({
-                        label: `${t.tenant_name} (${t.tenant_id})`,
-                        value: t.tenant_id,
-                      })),
-                    ]}
-                  />
-                )}
-              </ScrollView>
-
-              <View style={styles.modalActions}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+          <ModalShell
+            title="Create Stall"
+            footer={
+              <>
                 <TouchableOpacity
                   style={[styles.btn, styles.btnGhost]}
                   onPress={() => setCreateVisible(false)}
                 >
-                  <Text style={[styles.btnText, { color: "#102a43" }]}>
-                    Cancel
-                  </Text>
+                  <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.btn}
-                  onPress={onCreate}
-                  disabled={submitting}
-                >
+                <TouchableOpacity style={styles.btn} onPress={onCreate} disabled={submitting}>
                   {submitting ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.btnText}>Create Stall</Text>
                   )}
                 </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
+              </>
+            }
+          >
+            <TextInput
+              style={styles.input}
+              placeholder="Stall SN"
+              value={stallSn}
+              onChangeText={setStallSn}
+            />
+
+            {isAdmin ? (
+              <Dropdown
+                label="Building"
+                value={buildingId}
+                onChange={setBuildingId}
+                options={buildings.map((b) => ({
+                  label: `${b.building_name} (${b.building_id})`,
+                  value: b.building_id,
+                }))}
+              />
+            ) : (
+              <ReadOnlyField label="Building" value={userBuildingId || "(none)"} />
+            )}
+
+            <Dropdown
+              label="Status"
+              value={status}
+              onChange={(v) => {
+                const s = v as Stall["stall_status"];
+                setStatus(s);
+                if (s === "available") setTenantId("");
+              }}
+              options={[
+                { label: "Available", value: "available" },
+                { label: "Occupied", value: "occupied" },
+                { label: "Under Maintenance", value: "under maintenance" },
+              ]}
+            />
+
+            {status !== "available" && (
+              <Dropdown
+                label="Tenant"
+                value={tenantId}
+                onChange={setTenantId}
+                options={[
+                  { label: "None", value: "" },
+                  ...tenantsForCreate.map((t) => ({
+                    label: `${t.tenant_name} (${t.tenant_id})`,
+                    value: t.tenant_id,
+                  })),
+                ]}
+              />
+            )}
+          </ModalShell>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* EDIT MODAL */}
       <Modal visible={editVisible} animationType="slide" transparent>
-        <View style={styles.modalWrap}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>
-              Edit Stall {editStall?.stall_id}
-            </Text>
-            {editStall && (
-              <>
-                <TextInput
-                  style={styles.input}
-                  value={editStall.stall_sn}
-                  onChangeText={(v) =>
-                    setEditStall({ ...editStall, stall_sn: v })
-                  }
-                />
-                <Dropdown
-                  label="Building"
-                  value={editStall.building_id}
-                  onChange={(v) =>
-                    setEditStall({ ...editStall, building_id: v })
-                  }
-                  options={buildings.map((b) => ({
-                    label: `${b.building_name} (${b.building_id})`,
-                    value: b.building_id,
-                  }))}
-                  disabled={!isAdmin} // only admin can change building
-                />
-                <Dropdown
-                  label="Status"
-                  value={editStall.stall_status}
-                  onChange={(v) => {
-                    const s = v as Stall["stall_status"];
-                    setEditStall({
-                      ...editStall,
-                      stall_status: s,
-                      tenant_id: s === "available" ? null : editStall.tenant_id,
-                    });
-                  }}
-                  options={[
-                    { label: "Available", value: "available" },
-                    { label: "Occupied", value: "occupied" },
-                    { label: "Under Maintenance", value: "under maintenance" },
-                  ]}
-                />
-                {editStall.stall_status !== "available" && (
-                  <Dropdown
-                    label="Tenant"
-                    value={editStall.tenant_id ?? ""}
-                    onChange={(v) =>
-                      setEditStall({ ...editStall, tenant_id: v || null })
-                    }
-                    options={[
-                      { label: "None", value: "" },
-                      ...tenantsForEdit.map((t) => ({
-                        label: `${t.tenant_name} (${t.tenant_id})`,
-                        value: t.tenant_id,
-                      })),
-                    ]}
-                  />
-                )}
-              </>
-            )}
-            <View style={styles.modalActions}>
+        <ModalShell
+          title={`Edit Stall ${editStall?.stall_id ?? ""}`}
+          footer={
+            <>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
                 onPress={() => setEditVisible(false)}
               >
-                <Text style={[styles.btnText, { color: "#102a43" }]}>
-                  Cancel
-                </Text>
+                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
               </TouchableOpacity>
               {canEdit && (
-                <TouchableOpacity
-                  style={styles.btn}
-                  onPress={onUpdate}
-                  disabled={submitting}
-                >
+                <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
                   {submitting ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
@@ -669,9 +609,60 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   )}
                 </TouchableOpacity>
               )}
-            </View>
-          </View>
-        </View>
+            </>
+          }
+        >
+          {editStall && (
+            <>
+              <TextInput
+                style={styles.input}
+                value={editStall.stall_sn}
+                onChangeText={(v) => setEditStall({ ...editStall, stall_sn: v })}
+              />
+              <Dropdown
+                label="Building"
+                value={editStall.building_id}
+                onChange={(v) => setEditStall({ ...editStall, building_id: v })}
+                options={buildings.map((b) => ({
+                  label: `${b.building_name} (${b.building_id})`,
+                  value: b.building_id,
+                }))}
+                disabled={!isAdmin}
+              />
+              <Dropdown
+                label="Status"
+                value={editStall.stall_status}
+                onChange={(v) => {
+                  const s = v as Stall["stall_status"];
+                  setEditStall({
+                    ...editStall,
+                    stall_status: s,
+                    tenant_id: s === "available" ? null : editStall.tenant_id,
+                  });
+                }}
+                options={[
+                  { label: "Available", value: "available" },
+                  { label: "Occupied", value: "occupied" },
+                  { label: "Under Maintenance", value: "under maintenance" },
+                ]}
+              />
+              {editStall.stall_status !== "available" && (
+                <Dropdown
+                  label="Tenant"
+                  value={editStall.tenant_id ?? ""}
+                  onChange={(v) => setEditStall({ ...editStall, tenant_id: v || null })}
+                  options={[
+                    { label: "None", value: "" },
+                    ...tenantsForEdit.map((t) => ({
+                      label: `${t.tenant_name} (${t.tenant_id})`,
+                      value: t.tenant_id,
+                    })),
+                  ]}
+                />
+              )}
+            </>
+          )}
+        </ModalShell>
       </Modal>
     </View>
   );
@@ -707,10 +698,7 @@ function Dropdown({
   return (
     <View style={{ marginTop: 8, opacity: disabled ? 0.6 : 1 }}>
       <Text style={styles.dropdownLabel}>{label}</Text>
-      <View
-        style={styles.pickerWrapper}
-        pointerEvents={disabled ? "none" : "auto"}
-      >
+      <View style={styles.pickerWrapper} pointerEvents={disabled ? "none" : "auto"}>
         <Picker
           selectedValue={value}
           onValueChange={onValueChange}
@@ -825,7 +813,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: "100%",
-    maxWidth: 560,
+    maxWidth: 720, // unified width (matches Edit modal look)
     backgroundColor: "#fff",
     borderRadius: 20,
     padding: 16,
@@ -838,7 +826,11 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontSize: 18,
     color: "#102a43",
-    marginBottom: 10,
+  },
+  modalDivider: {
+    height: 1,
+    backgroundColor: "#edf2f7",
+    marginVertical: 10,
   },
   modalActions: {
     flexDirection: "row",
