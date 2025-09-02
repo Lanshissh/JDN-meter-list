@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
+// app/(tabs)/admin.tsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -10,44 +11,116 @@ import {
   Modal,
   Image,
   Animated,
+  KeyboardAvoidingView,
+  Dimensions,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
+import { jwtDecode } from "jwt-decode";
+import { useRouter } from "expo-router";
+
 import { useAuth } from "../../contexts/AuthContext";
 import AccountsPanel from "../../components/admin/AccountsPanel";
 import BuildingPanel from "../../components/admin/BuildingPanel";
 import RatesPanel from "../../components/admin/RatesPanel";
 import StallsPanel from "../../components/admin/StallsPanel";
+import TenantsPanel from "../../components/admin/TenantsPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
-import TenantsPanel from "../../components/admin/TenantsPanel";
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { jwtDecode } from "jwt-decode";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+
+type PageKey =
+  | "accounts"
+  | "buildings"
+  | "rates"
+  | "stalls"
+  | "tenants"
+  | "meters"
+  | "readings";
+
+type Page = {
+  label: string;
+  key: PageKey;
+  icon: keyof typeof Ionicons.glyphMap;
+};
 
 export default function AdminScreen() {
-  const { token, logout } = useAuth();
   const router = useRouter();
+  const { token, logout } = useAuth();
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [activePage, setActivePage] = useState<
-    | "accounts"
-    | "buildings"
-    | "rates"
-    | "stalls"
-    | "tenants"
-    | "meters"
-    | "readings"
-  >("accounts");
+  const pages = useMemo<Page[]>(
+    () => [
+      { label: "Accounts", key: "accounts", icon: "people-outline" },
+      { label: "Buildings", key: "buildings", icon: "business-outline" },
+      { label: "Rates", key: "rates", icon: "pricetag-outline" },
+      { label: "Stalls", key: "stalls", icon: "storefront-outline" },
+      { label: "Tenants", key: "tenants", icon: "person-outline" },
+      { label: "Meters", key: "meters", icon: "speedometer-outline" },
+      { label: "Readings", key: "readings", icon: "reader-outline" },
+    ],
+    []
+  );
 
-  // drawer animation (mobile only)
-  const drawerWidth = 250;
-  const slideAnim = useRef(new Animated.Value(-drawerWidth)).current;
+  // --- derive role immediately from token to avoid first-frame admin mount ---
+  const role: string = useMemo(() => {
+    try {
+      if (!token) return "";
+      const dec: any = jwtDecode(token);
+      return String(dec?.user_level || "").toLowerCase();
+    } catch {
+      return "";
+    }
+  }, [token]);
 
-  const [userInfo, setUserInfo] = useState<{
-    name: string;
-    level: string;
-  } | null>(null);
+  // Role-based allowed tabs INSIDE Admin
+  const roleAllowed: Record<string, Set<PageKey>> = useMemo(
+    () => ({
+      admin: new Set<PageKey>([
+        "accounts",
+        "buildings",
+        "rates",
+        "stalls",
+        "tenants",
+        "meters",
+        "readings",
+      ]),
+      operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
+      reader: new Set<PageKey>(["readings"]), // Scanner/Billing are separate screens
+      biller: new Set<PageKey>(["rates", "tenants"]), // Tenants read-only enforced inside panel
+    }),
+    []
+  );
+
+  const allowed = roleAllowed[role] ?? roleAllowed.admin;
+  const visiblePages = useMemo(
+    () => pages.filter((p) => allowed.has(p.key)),
+    [pages, allowed]
+  );
+
+  // Initial tab per role (prevents admin-only fetch on first frame)
+  const roleInitial: Record<string, PageKey> = {
+    admin: "accounts",
+    operator: "stalls",
+    reader: "readings",
+    biller: "rates",
+  };
+  const initialActive: PageKey = roleInitial[role] ?? "accounts";
+  const [active, setActive] = useState<PageKey>(initialActive);
+
+  // ensure current tab stays allowed when role/token changes
+  useEffect(() => {
+    if (!visiblePages.length) return;
+    if (!visiblePages.some((p) => p.key === active)) {
+      setActive(visiblePages[0].key);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, token, visiblePages.length]);
+
+  // only render content once we know the active tab is allowed
+  const ready = visiblePages.some((p) => p.key === active);
+
+  // Welcome modal (first login per user)
   const [welcomeVisible, setWelcomeVisible] = useState(false);
+  const [userInfo, setUserInfo] = useState<{ name?: string; level?: string }>({});
 
   useEffect(() => {
     if (!token) return;
@@ -55,32 +128,57 @@ export default function AdminScreen() {
     try {
       const decoded: any = jwtDecode(token);
       setUserInfo({ name: decoded.user_fullname, level: decoded.user_level });
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     (async () => {
       try {
         const decoded: any = jwtDecode(token);
         const key = `welcome_shown_${decoded?.sub || "user"}_${decoded?.exp || "exp"}`;
-        if (!(await AsyncStorage.getItem(key))) {
+        const already = await AsyncStorage.getItem(key);
+        if (!already) {
           setWelcomeVisible(true);
           await AsyncStorage.setItem(key, "1");
         }
-      } catch {}
+      } catch {
+        // ignore
+      }
     })();
   }, [token]);
 
-  const pages = [
-    { label: "Accounts", key: "accounts", icon: "people-outline" },
-    { label: "Buildings", key: "buildings", icon: "business-outline" },
-    { label: "Rates", key: "rates", icon: "pricetag-outline" },
-    { label: "Stalls", key: "stalls", icon: "storefront-outline" },
-    { label: "Tenants", key: "tenants", icon: "person-outline" },
-    { label: "Meters", key: "meters", icon: "speedometer-outline" },
-    { label: "Meter Readings", key: "readings", icon: "reader-outline" },
-  ] as const;
+  // Drawer (mobile)
+  const screenW = Dimensions.get("window").width;
+  const drawerWidth = Math.min(280, Math.round(screenW * 0.82));
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const slideX = useRef(new Animated.Value(-drawerWidth)).current;
+
+  const openDrawer = () => {
+    setDrawerOpen(true);
+    Animated.timing(slideX, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const closeDrawer = () => {
+    Animated.timing(slideX, {
+      toValue: -drawerWidth,
+      duration: 200,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) setDrawerOpen(false);
+    });
+  };
+
+  const handleSelect = (key: PageKey) => {
+    setActive(key);
+    if (drawerOpen) closeDrawer();
+  };
 
   const renderContent = () => {
-    switch (activePage) {
+    switch (active) {
       case "accounts":
         return <AccountsPanel token={token} />;
       case "buildings":
@@ -100,26 +198,49 @@ export default function AdminScreen() {
     }
   };
 
-  // ---- Drawer controls (mobile only) ----
-  const openDrawer = () => {
-    if (Platform.OS === "web") return; // hard guard
-    setMenuOpen(true);
-    Animated.timing(slideAnim, {
-      toValue: 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  };
-  const closeDrawer = () => {
-    if (Platform.OS === "web") return;
-    Animated.timing(slideAnim, {
-      toValue: -drawerWidth,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => setMenuOpen(false));
-  };
+  const Header = () => (
+    <View style={[styles.header, Platform.OS !== "web" && styles.headerLowerMobile]}>
+      {Platform.OS !== "web" && (
+        <TouchableOpacity onPress={openDrawer} style={styles.hamburger}>
+          <Ionicons name="menu" size={22} color="#102a43" />
+        </TouchableOpacity>
+      )}
 
-  const NavButton = ({
+      <View style={styles.headerTitleWrap}>
+        <Image
+          source={require("../../assets/images/jdn.jpg")}
+          style={styles.headerLogo}
+        />
+        <Text style={styles.headerTitle}>Admin</Text>
+      </View>
+
+      {/* WEB: user info + logout on the right */}
+      <View style={styles.headerRight}>
+        {!!userInfo?.name && (
+          <Text style={styles.headerUser} numberOfLines={1}>
+            {userInfo.name}
+            {userInfo.level ? ` · ${String(userInfo.level).toUpperCase()}` : ""}
+          </Text>
+        )}
+
+        {Platform.OS === "web" && (
+          <TouchableOpacity
+            onPress={async () => {
+              await logout();
+              router.replace("/(auth)/login");
+            }}
+            style={styles.headerLogoutBtn}
+          >
+            <Ionicons name="log-out-outline" size={16} color="#fff" />
+            <Text style={styles.headerLogoutText}>Logout</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+
+  // Web-only nav chips
+  const NavChip = ({
     label,
     icon,
     isActive,
@@ -131,291 +252,395 @@ export default function AdminScreen() {
     onPress: () => void;
   }) => (
     <TouchableOpacity
-      style={[styles.navButton, isActive && styles.navButtonActive]}
       onPress={onPress}
+      style={[styles.chip, isActive && styles.chipActive]}
+      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
     >
       <Ionicons
         name={icon}
-        size={18}
+        size={16}
         color={isActive ? "#fff" : "#102a43"}
         style={{ marginRight: 6 }}
       />
-      <Text
-        style={[styles.navButtonText, isActive && styles.navButtonTextActive]}
-      >
+      <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
         {label}
       </Text>
     </TouchableOpacity>
   );
 
+  const NavBarWeb = () => (
+    <View style={styles.navbarWeb}>
+      {visiblePages.map((p) => (
+        <NavChip
+          key={p.key}
+          label={p.label}
+          icon={p.icon}
+          isActive={active === p.key}
+          onPress={() => handleSelect(p.key)}
+        />
+      ))}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.safe}>
-      {/* ----- WEB LAYOUT (no drawer here) ----- */}
-      {Platform.OS === "web" ? (
-        <>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.logoWrap}>
-                <Image
-                  source={require("../../assets/images/logo.png")}
-                  style={styles.logo}
-                  resizeMode="contain"
-                />
-              </View>
-            </View>
-            <View style={styles.headerRight}>
-              <Text style={styles.userText}>
-                {userInfo?.name} · {userInfo?.level?.toUpperCase()}
-              </Text>
-            </View>
-          </View>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View style={styles.container}>
+          <Header />
 
-          {/* Top nav */}
-          <View style={styles.navBar}>
-            <View style={styles.navButtons}>
-              {pages.map((item) => (
-                <NavButton
+          {/* WEB-ONLY NAV BAR. On mobile it is hidden (drawer only). */}
+          {Platform.OS === "web" && <NavBarWeb />}
+
+          {/* Guard: don’t render any panel until the active tab is allowed */}
+          {!ready ? (
+            <View style={[styles.content, styles.contentWeb, { alignItems: "center", justifyContent: "center" }]}>
+              <Text style={{ color: "#486581" }}>Loading…</Text>
+            </View>
+          ) : Platform.OS === "web" ? (
+            <View style={[styles.content, styles.contentWeb]}>
+              {renderContent()}
+            </View>
+          ) : (
+            <FlatList
+              data={[]}
+              renderItem={() => null}
+              keyExtractor={(_, i) => String(i)}
+              ListHeaderComponent={renderContent}
+              style={styles.mobileList}
+              contentContainerStyle={styles.mobileListContent}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+            />
+          )}
+        </View>
+      </KeyboardAvoidingView>
+
+      {/* Drawer (mobile only) */}
+      {Platform.OS !== "web" && drawerOpen && (
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.backdrop} onPress={closeDrawer} />
+          <Animated.View style={[styles.drawer, { left: slideX, width: drawerWidth }]}>
+            <View style={styles.drawerHeader}>
+              <Image
+                source={require("../../assets/images/jdn.jpg")}
+                style={styles.drawerLogo}
+              />
+              <TouchableOpacity onPress={closeDrawer} style={styles.closeBtn}>
+                <Ionicons name="close" size={24} color="#102a43" />
+              </TouchableOpacity>
+            </View>
+
+            {/* menu items (role-filtered) */}
+            <View style={styles.drawerBody}>
+              {visiblePages.map((item) => (
+                <TouchableOpacity
                   key={item.key}
-                  label={item.label}
-                  icon={item.icon as any}
-                  isActive={activePage === item.key}
-                  onPress={() => setActivePage(item.key as any)}
-                />
+                  style={[
+                    styles.drawerItem,
+                    active === item.key && styles.drawerItemActive,
+                  ]}
+                  onPress={() => handleSelect(item.key)}
+                >
+                  <Ionicons
+                    name={item.icon}
+                    size={18}
+                    color={active === item.key ? "#fff" : "#102a43"}
+                    style={{ marginRight: 10 }}
+                  />
+                  <Text
+                    style={[
+                      styles.drawerItemText,
+                      active === item.key && styles.drawerItemTextActive,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
               ))}
             </View>
-          </View>
 
-          {/* Content */}
-          <FlatList
-            data={[]}
-            renderItem={() => null}
-            keyExtractor={(_, i) => String(i)}
-            ListHeaderComponent={renderContent}
-            contentContainerStyle={styles.container}
-            nestedScrollEnabled
-          />
-        </>
-      ) : (
-        // ----- MOBILE LAYOUT (drawer lives only here) -----
-        <>
-          <View style={styles.mobileHeader}>
-            <TouchableOpacity onPress={openDrawer} style={styles.menuIconWrap}>
-              <Ionicons name="menu" size={24} color="#102a43" />
-            </TouchableOpacity>
-            <View style={styles.logoContainer}>
-              <Image
-                source={require("../../assets/images/logo.png")}
-                style={styles.mobileLogo}
-                resizeMode="contain"
-              />
-            </View>
-            <View style={{ width: 30 }} />
-          </View>
-
-          <FlatList
-            style={{ flex: 1 }}
-            data={[]}
-            renderItem={() => null}
-            keyExtractor={(_, i) => String(i)}
-            ListHeaderComponent={renderContent}
-            contentContainerStyle={styles.container}
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled
-          />
-
-          {/* Drawer (MOBILE ONLY) */}
-          <Modal
-            animationType="none"
-            transparent
-            visible={menuOpen}
-            onRequestClose={closeDrawer}
-          >
-            <View style={styles.drawerOverlay}>
-              <Animated.View
-                style={[
-                  styles.drawer,
-                  { transform: [{ translateX: slideAnim }] },
-                ]}
-              >
-                <View style={styles.drawerHeader}>
-                  <Image
-                    source={require("../../assets/images/logo.png")}
-                    style={styles.drawerLogo}
-                    resizeMode="contain"
-                  />
-                  <TouchableOpacity
-                    onPress={closeDrawer}
-                    style={styles.closeBtn}
-                  >
-                    <Ionicons name="close" size={24} color="#102a43" />
-                  </TouchableOpacity>
-                </View>
-
-                {pages.map((item) => (
-                  <TouchableOpacity
-                    key={item.key}
-                    style={[
-                      styles.drawerItem,
-                      activePage === item.key && styles.drawerItemActive,
-                    ]}
-                    onPress={() => {
-                      setActivePage(item.key as any);
-                      closeDrawer();
-                    }}
-                  >
-                    <Ionicons
-                      name={item.icon as any}
-                      size={18}
-                      color={activePage === item.key ? "#fff" : "#102a43"}
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text
-                      style={[
-                        styles.drawerItemText,
-                        activePage === item.key && { color: "#fff" },
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-
-                {/* Logout pinned to bottom */}
-                <View style={styles.drawerFooter}>
-                  <TouchableOpacity
-                    style={styles.drawerLogout}
-                    onPress={async () => {
-                      closeDrawer();
-                      await logout();
-                      router.replace("/(auth)/login");
-                    }}
-                  >
-                    <Ionicons
-                      name="log-out-outline"
-                      size={18}
-                      color="#fff"
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text style={styles.drawerLogoutText}>Logout</Text>
-                  </TouchableOpacity>
-                </View>
-              </Animated.View>
-
-              {/* Click-away to close */}
+            {/* LOGOUT pinned to bottom (mobile) */}
+            <View style={styles.drawerFooter}>
               <TouchableOpacity
-                style={styles.overlayTouchable}
-                onPress={closeDrawer}
-                activeOpacity={1}
-              />
+                style={styles.drawerLogout}
+                onPress={async () => {
+                  closeDrawer();
+                  await logout();
+                  router.replace("/(auth)/login");
+                }}
+              >
+                <Ionicons name="log-out-outline" size={18} color="#fff" />
+                <Text style={styles.drawerLogoutText}>Logout</Text>
+              </TouchableOpacity>
             </View>
-          </Modal>
-        </>
+          </Animated.View>
+        </View>
       )}
 
-      {/* (Welcome modal left as-is) */}
+      {/* Welcome modal */}
+      <Modal transparent visible={welcomeVisible} animationType="fade">
+        <View style={styles.center}>
+          <View style={styles.welcomeCard}>
+            <Image
+              source={require("../../assets/images/jdn.jpg")}
+              style={styles.welcomeLogo}
+            />
+            <Text style={styles.welcomeTitle}>Welcome!</Text>
+            {userInfo?.name ? (
+              <Text style={styles.welcomeText}>
+                Hi {userInfo.name}. Use the tabs to manage what your role allows.
+              </Text>
+            ) : (
+              <Text style={styles.welcomeText}>
+                Use the tabs to manage what your role allows.
+              </Text>
+            )}
+
+            <TouchableOpacity
+              onPress={() => setWelcomeVisible(false)}
+              style={styles.modalBtn}
+            >
+              <Text style={styles.modalBtnText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f9fbfd" },
+  safe: { flex: 1, backgroundColor: "#f7f9fc" },
+  container: {
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingTop: 6,
+    minHeight: 0, // important for RN Web scrolling
+  },
 
-  // header (web)
+  // Header
   header: {
-    height: 60,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e6ecf1",
-    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-  },
-  headerLeft: { flexDirection: "row", alignItems: "center" },
-  headerRight: {},
-  logoWrap: { width: 110, height: 40, justifyContent: "center" },
-  logo: { width: 100, height: 100 },
-  userText: { color: "#102a43", fontWeight: "600" },
-
-  // top nav (web)
-  navBar: {
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e6ecf1",
-  },
-  navButtons: {
-    flexDirection: "row",
-    paddingHorizontal: 12,
     paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderBottomColor: "#e6eef7",
+    borderBottomWidth: 1,
+    gap: 10,
+  },
+  hamburger: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#e6efff",
+  },
+  headerTitleWrap: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerLogo: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#cbd2d9",
+  },
+  headerTitle: { fontSize: 18, fontWeight: "800", color: "#102a43" },
+
+  // Right side of web header: user + logout
+  headerRight: {
+    marginLeft: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  headerUser: { color: "#486581", maxWidth: 240, fontSize: 12 },
+  headerLogoutBtn: {
+    marginLeft: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ef4444",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+  },
+  headerLogoutText: { color: "#fff", fontWeight: "700", marginLeft: 6 },
+  headerLowerMobile: {
+    marginTop: 16,
+  },
+
+  // WEB-ONLY nav (chips)
+  navbarWeb: {
+    flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-  },
-  navButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#eef2f7",
-    borderRadius: 10,
-    paddingHorizontal: 10,
     paddingVertical: 8,
   },
-  navButtonActive: { backgroundColor: "#082cac" },
-  navButtonText: { color: "#102a43", fontWeight: "600" },
-  navButtonTextActive: { color: "#fff" },
-
-  // content wrapper
-  container: { padding: 16 },
-
-  // mobile header
-  mobileHeader: {
+  chip: {
     flexDirection: "row",
     alignItems: "center",
-    height: 56,
-    paddingHorizontal: 8,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e6ecf1",
-    marginTop: 30,
-  },
-  menuIconWrap: { padding: 8, borderRadius: 8 },
-  logoContainer: { flex: 1, alignItems: "center" },
-  mobileLogo: { width: 100, height: 50 },
-
-  // drawer (mobile)
-  drawerOverlay: { flex: 1, flexDirection: "row" },
-  overlayTouchable: { flex: 1, backgroundColor: "rgba(0,0,0,0.25)" },
-  drawer: {
-    width: 250,
-    backgroundColor: "#fff",
-    paddingVertical: 12,
+    paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRightWidth: 1,
-    borderRightColor: "#e6ecf1",
+    borderRadius: 999,
+    backgroundColor: "#eef4ff",
+    borderWidth: 1,
+    borderColor: "#d6e0ff",
+    marginRight: 8,
   },
-  drawerHeader: { flexDirection: "row", alignItems: "center" },
-  drawerLogo: { width: 120, height: 40 },
-  closeBtn: { marginLeft: "auto", padding: 6, borderRadius: 8 },
+  chipActive: {
+    backgroundColor: "#1f4bd8",
+    borderColor: "#1f4bd8",
+  },
+  chipText: { color: "#102a43", fontWeight: "700", fontSize: 13 },
+  chipTextActive: { color: "#fff" },
 
+  // Content shells
+  content: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e6eef7",
+    padding: 10,
+    minHeight: 0,
+  },
+  contentWeb: {
+    overflowY: "auto" as any,
+  },
+
+  // Mobile parent list wrapper
+  mobileList: { flex: 1 },
+  mobileListContent: { paddingBottom: 18 },
+
+  // Drawer
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: "row",
+  },
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.28)",
+  },
+  drawer: {
+    backgroundColor: "#fff",
+    paddingTop: 12,
+    paddingHorizontal: 12,
+    borderTopRightRadius: 18,
+    borderBottomRightRadius: 18,
+    borderWidth: 1,
+    borderColor: "#e6eef7",
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+  },
+  drawerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  drawerLogo: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#cbd2d9",
+  },
+  closeBtn: {
+    marginLeft: "auto",
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#e6efff",
+  },
+  drawerBody: {
+    flex: 1,
+    paddingTop: 4,
+  },
   drawerItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    marginTop: 6,
-  },
-  drawerItemActive: { backgroundColor: "#082cac" },
-  drawerItemText: { color: "#102a43", fontWeight: "600" },
-
-  drawerFooter: { marginTop: "auto" },
-  drawerLogout: {
-    backgroundColor: "#d32f2f",
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#eef4ff",
+    marginBottom: 8,
+  },
+  drawerItemActive: {
+    backgroundColor: "#1f4bd8",
+    borderColor: "#1f4bd8",
+  },
+  drawerItemText: { color: "#102a43", fontWeight: "700" },
+  drawerItemTextActive: { color: "#fff" },
+
+  // Drawer footer (Logout)
+  drawerFooter: {
     paddingVertical: 10,
-    paddingHorizontal: 12,
-    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: "#e6eef7",
+  },
+  drawerLogout: {
+    backgroundColor: "#ef4444",
+    borderRadius: 12,
+    paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
   },
-  drawerLogoutText: { color: "#fff", fontWeight: "700" },
+  drawerLogoutText: {
+    color: "#fff",
+    fontWeight: "700",
+    marginLeft: 8,
+  },
+
+  // Welcome modal
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.28)",
+    padding: 16,
+  },
+  welcomeCard: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e6eef7",
+    padding: 18,
+  },
+  welcomeLogo: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    alignSelf: "center",
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#cbd2d9",
+  },
+  welcomeTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    textAlign: "center",
+    color: "#102a43",
+    marginBottom: 6,
+  },
+  welcomeText: {
+    textAlign: "center",
+    color: "#486581",
+    marginBottom: 12,
+  },
+  modalBtn: {
+    backgroundColor: "#1f4bd8",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  modalBtnText: { color: "#fff", fontWeight: "700", textAlign: "center" },
 });

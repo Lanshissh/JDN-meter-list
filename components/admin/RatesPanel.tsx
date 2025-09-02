@@ -872,28 +872,24 @@ export default function RatesPanel({ token }: { token: string | null }) {
 }
 
 const styles = StyleSheet.create({
-  grid: {
-    gap: 12,
-    padding: 12,
-  },
+  grid: { gap: 16 },
   card: {
     borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderColor: "#edf2f7",
     borderRadius: 12,
     padding: 12,
     backgroundColor: "#fff",
     ...Platform.select({
-      android: { elevation: 1 },
-      ios: {
-        shadowColor: "#000",
-        shadowOpacity: 0.06,
-        shadowOffset: { width: 0, height: 1 },
-        shadowRadius: 2,
-      },
-      web: {},
+      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any },
+      default: { elevation: 1 },
     }),
   },
-  cardTitle: { fontSize: 16, fontWeight: "700", marginBottom: 6 },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#102a43",
+    marginBottom: 12,
+  },
   sectionTitle: {
     fontSize: 14,
     fontWeight: "700",

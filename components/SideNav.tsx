@@ -1,6 +1,6 @@
 // components/SideNav.tsx
-import React, { useMemo } from "react";
-import { View, TouchableOpacity, StyleSheet, Image } from "react-native";
+import React, { useMemo, useState } from "react";
+import { View, TouchableOpacity, StyleSheet, Image, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -30,11 +30,13 @@ export default function SideNav({ active, onSelect }: Props) {
   const { token } = useAuth();
   const role = useMemo(() => decodeRole(token), [token]);
   const canSeeAdmin = role !== "reader";
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <View style={styles.sideNav}>
+    <View style={[styles.sideNav, expanded && styles.sideNavExpanded]}>
+      {/* Logo */}
       <TouchableOpacity
-        style={styles.iconBtn}
+        style={[styles.iconBtn, expanded && styles.iconBtnWide]}
         onPress={() => onSelect(canSeeAdmin ? "admin" : "scanner")}
       >
         <Image
@@ -43,37 +45,77 @@ export default function SideNav({ active, onSelect }: Props) {
         />
       </TouchableOpacity>
 
+      {/* Nav buttons */}
       <View style={styles.navSection}>
         {canSeeAdmin && (
           <TouchableOpacity
-            style={[styles.iconBtn, active === "admin" && styles.active]}
+            style={[
+              styles.iconBtn,
+              expanded && styles.iconBtnWide,
+              active === "admin" && styles.active,
+            ]}
             onPress={() => onSelect("admin")}
           >
-            <Ionicons name="person-circle-outline" size={28} color="#fff" />
+            <View style={[styles.row, expanded && styles.rowExpanded]}>
+              <Ionicons name="person-circle-outline" size={28} color="#fff" />
+              {expanded && <Text style={styles.label}>Admin</Text>}
+            </View>
           </TouchableOpacity>
         )}
 
         <TouchableOpacity
-          style={[styles.iconBtn, active === "scanner" && styles.active]}
+          style={[
+            styles.iconBtn,
+            expanded && styles.iconBtnWide,
+            active === "scanner" && styles.active,
+          ]}
           onPress={() => onSelect("scanner")}
         >
-          <Ionicons name="scan-outline" size={28} color="#fff" />
+          <View style={[styles.row, expanded && styles.rowExpanded]}>
+            <Ionicons name="scan-outline" size={28} color="#fff" />
+            {expanded && <Text style={styles.label}>Scanner</Text>}
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.iconBtn, active === "billing" && styles.active]}
+          style={[
+            styles.iconBtn,
+            expanded && styles.iconBtnWide,
+            active === "billing" && styles.active,
+          ]}
           onPress={() => onSelect("billing")}
         >
-          <Ionicons name="card-outline" size={28} color="#fff" />
+          <View style={[styles.row, expanded && styles.rowExpanded]}>
+            <Ionicons name="card-outline" size={28} color="#fff" />
+            {expanded && <Text style={styles.label}>Billing</Text>}
+          </View>
         </TouchableOpacity>
       </View>
 
       <View style={{ flex: 1 }} />
+
+      {/* Expand / Collapse toggle (replaces logout) */}
       <TouchableOpacity
-        style={styles.iconBtn}
-        onPress={() => onSelect("logout")}
+        style={[styles.iconBtn, expanded && styles.iconBtnWide]}
+        onPress={() => setExpanded((v) => !v)}
+        accessibilityLabel={expanded ? "Collapse" : "Expand"}
       >
-        <Ionicons name="log-out-outline" size={28} color="#fff" />
+        <View style={[styles.row, expanded && styles.rowExpanded]}>
+          {!expanded ? (
+            // |→  (arrow then bar)
+            <View style={styles.expandIconRow}>
+              <Ionicons name="arrow-forward-outline" size={24} color="#fff" />
+              <View style={styles.vertBar} />
+            </View>
+          ) : (
+            // |←  (bar then arrow)
+            <View style={styles.expandIconRow}>
+              <View style={styles.vertBar} />
+              <Ionicons name="arrow-back-outline" size={24} color="#fff" />
+            </View>
+          )}
+          {expanded && <Text style={styles.label}>Collapse</Text>}
+        </View>
       </TouchableOpacity>
     </View>
   );
@@ -91,6 +133,12 @@ const styles = StyleSheet.create({
     flexDirection: "column",
     height: "100%",
   },
+  sideNavExpanded: {
+    width: 220,
+    alignItems: "flex-start",
+    paddingLeft: 10,
+    paddingRight: 10,
+  },
   navSection: {
     flexDirection: "column",
     alignItems: "center",
@@ -105,6 +153,18 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 16,
   },
+  iconBtnWide: {
+    width: "100%",
+    alignItems: "flex-start",
+    paddingHorizontal: 8,
+  },
+  row: {
+    alignItems: "center",
+  },
+  rowExpanded: {
+    flexDirection: "row",
+    gap: 12,
+  },
   logo: {
     width: 48,
     height: 48,
@@ -112,6 +172,22 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 2,
     borderColor: "#fff",
+  },
+  label: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  expandIconRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  vertBar: {
+    width: 3,
+    height: 22,
+    backgroundColor: "#fff",
+    borderRadius: 2,
   },
   active: { backgroundColor: "rgba(255,255,255,0.15)" },
 });

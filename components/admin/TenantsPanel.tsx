@@ -80,7 +80,7 @@ function decodeJwtPayload(token: string | null): any | null {
   }
 }
 
-/** Date field (simple, cross‑platform) */
+/** Date field (simple, cross-platform) */
 function DatePickerField({
   label,
   value,
@@ -165,18 +165,26 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     }
     try {
       setBusy(true);
-      const [tRes, bRes] = await Promise.all([
-        api.get<Tenant[]>("/tenants"),
-        api.get<Building[]>("/buildings"),
-      ]);
-      setTenants(tRes.data || []);
-      setBuildings(bRes.data || []);
 
-      // Default building for create form:
+      // Always fetch tenants…
+      const tRes = await api.get<Tenant[]>("/tenants");
+      setTenants(tRes.data || []);
+
+      // …and only fetch buildings if admin (operators cannot access /buildings)
+      let bData: Building[] = [];
+      if (isAdmin) {
+        const bRes = await api.get<Building[]>("/buildings");
+        bData = bRes.data || [];
+        setBuildings(bData);
+      } else {
+        setBuildings([]); // keep UI consistent; operators don't need the list
+      }
+
+      // Default building for create form
       setBuildingId((prev) => {
         if (prev) return prev;
         if (!isAdmin && userBuildingId) return userBuildingId;
-        return bRes.data?.[0]?.building_id ?? "";
+        return bData?.[0]?.building_id ?? "";
       });
     } catch (err: any) {
       const msg =
@@ -354,8 +362,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         window.alert("Deleted\n\nTenant removed.");
       }
     } catch (err: any) {
-      // Show server message verbatim, e.g.
-      // "Cannot delete tenant. It is still referenced by: Stall(s): [ST-1]; Rate: [R-1]"
+      // Show server message verbatim (e.g., dependency errors)
       const msg = err?.response?.data?.error ?? "Server error.";
       if (Platform.OS === "web") {
         window.alert(`Delete failed\n\n${msg}`);
@@ -387,6 +394,21 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         ? [{ label: userBuildingId, value: userBuildingId }]
         : [];
     return only;
+  }, [isAdmin, buildings, userBuildingId]);
+
+  // Filter dropdown options (include operator’s building even if buildings list is empty)
+  const filterBuildingOptions = useMemo(() => {
+    return [
+      { label: "All Buildings", value: "" },
+      ...(isAdmin
+        ? buildings.map((b) => ({
+            label: `${b.building_name} (${b.building_id})`,
+            value: b.building_id,
+          }))
+        : userBuildingId
+          ? [{ label: userBuildingId, value: userBuildingId }]
+          : []),
+    ];
   }, [isAdmin, buildings, userBuildingId]);
 
   return (
@@ -459,13 +481,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               label="Filter by Building"
               value={buildingFilter}
               onChange={setBuildingFilter}
-              options={[
-                { label: "All Buildings", value: "" },
-                ...buildings.map((b) => ({
-                  label: `${b.building_name} (${b.building_id})`,
-                  value: b.building_id,
-                })),
-              ]}
+              options={filterBuildingOptions}
             />
           </View>
 
