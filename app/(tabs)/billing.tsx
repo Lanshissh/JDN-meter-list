@@ -166,7 +166,7 @@ export default function BillingScreen() {
 
     try {
       if (mode === "meter") {
-        // BACKEND: /billings/meters/:meter_id  (no /preview) :contentReference[oaicite:1]{index=1}
+        // BACKEND: /billings/meters/:meter_id  (no /preview)
         const urls = [
           `${BASE_API}/billings/meters/${encodeURIComponent(id)}`,
           // optional fallbacks if your server mounts differently:
@@ -196,7 +196,7 @@ export default function BillingScreen() {
           tenantId = resolved.toUpperCase();
         }
 
-        // BACKEND: /billings/tenants/:tenant_id/  (trailing slash) :contentReference[oaicite:2]{index=2}
+        // BACKEND: /billings/tenants/:tenant_id/  (trailing slash)
         const tUrls = [
           `${BASE_API}/billings/tenants/${encodeURIComponent(tenantId)}/`,
           // fallbacks
@@ -386,29 +386,80 @@ export default function BillingScreen() {
 
           {/* Tenant aggregate */}
           {!loading && !error && mode === "tenant" && tenantData && (
-            <View style={styles.card}>
-              <Text style={styles.title}>Tenant {tenantData.tenant_id}</Text>
-              {!!tenantData.tenant_name && (
-                <Text style={styles.muted}>{tenantData.tenant_name}</Text>
-              )}
-              <View style={styles.divider} />
-              <View style={styles.grid2}>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Aggregate (latest)</Text>
-                  <Text style={styles.statValue}>{fmt(tenantData.total_latest)}</Text>
-                </View>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Aggregate (prev)</Text>
-                  <Text style={styles.statValue}>{fmt(tenantData.total_prev)}</Text>
-                </View>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Average change</Text>
-                  <Text style={[styles.statValue, { fontVariant: ["tabular-nums"] }]}>
-                    {pct(tenantData.avg_change_rate)}
-                  </Text>
+            <>
+              <View style={styles.card}>
+                <Text style={styles.title}>Tenant {tenantData.tenant_id}</Text>
+                {!!tenantData.tenant_name && (
+                  <Text style={styles.muted}>{tenantData.tenant_name}</Text>
+                )}
+                <View style={styles.divider} />
+                <View style={styles.grid2}>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>Aggregate (latest)</Text>
+                    <Text style={styles.statValue}>{fmt(tenantData.total_latest)}</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>Aggregate (prev)</Text>
+                    <Text style={styles.statValue}>{fmt(tenantData.total_prev)}</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>Average change</Text>
+                    <Text style={[styles.statValue, { fontVariant: ["tabular-nums"] }]}>
+                      {pct(tenantData.avg_change_rate)}
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
+
+              {/* NEW: Per-meter breakdown (electric, water, LPG — all shown) */}
+              <View style={styles.card}>
+                <Text style={styles.title}>Meters (all)</Text>
+                {tenantData.meters && tenantData.meters.length > 0 ? (
+                  <View style={{ gap: 10 }}>
+                    {tenantData.meters.map((m: any) => (
+                      <View key={m.meter_id} style={styles.meterRow}>
+                        <View style={styles.rowHeader}>
+                          <Text style={styles.rowTitle}>
+                            {String(m.meter_type || "").toUpperCase()} — {m.meter_id}
+                          </Text>
+                          <View style={styles.typeBadge}>
+                            <Text style={styles.typeBadgeText}>
+                              {String(m.meter_type || "").toUpperCase()}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.grid2}>
+                          <View style={styles.stat}>
+                            <Text style={styles.statLabel}>Latest bill</Text>
+                            <Text style={styles.statValue}>{fmt(m.bill_latest_total)}</Text>
+                          </View>
+                          <View style={styles.stat}>
+                            <Text style={styles.statLabel}>Prev bill</Text>
+                            <Text style={styles.statValue}>{fmt(m.bill_prev_total)}</Text>
+                          </View>
+                          <View style={styles.stat}>
+                            <Text style={styles.statLabel}>Latest kWh/m³</Text>
+                            <Text style={styles.statValue}>{fmt(m.consumption_latest, false)}</Text>
+                          </View>
+                          <View style={styles.stat}>
+                            <Text style={styles.statLabel}>Prev kWh/m³</Text>
+                            <Text style={styles.statValue}>{fmt(m.consumption_prev, false)}</Text>
+                          </View>
+                          <View style={styles.stat}>
+                            <Text style={styles.statLabel}>Change</Text>
+                            <Text style={[styles.statValue, { fontVariant: ["tabular-nums"] }]}>
+                              {pct(m.change_rate)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.muted}>No meters found for this tenant.</Text>
+                )}
+              </View>
+            </>
           )}
 
           {/* Empty hint */}
@@ -475,108 +526,147 @@ const styles = StyleSheet.create({
     color: "#11181C",
   },
 
-  // Card
+  // Cards
   card: {
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
+    backgroundColor: "#fff",
     padding: 14,
+    borderRadius: 14,
+    marginTop: 12,
     shadowColor: "#000",
     shadowOpacity: 0.06,
-    shadowRadius: 8,
+    shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     ...Platform.select({ android: { elevation: 1 } }),
   },
-
-  // Inputs
+  title: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#11181C",
+    marginBottom: 2,
+  },
   label: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginBottom: 8,
-    fontWeight: "600",
+    fontSize: 13,
+    color: "#4B5563",
+    marginBottom: 6,
   },
   inputRow: {
     flexDirection: "row",
-    alignItems: "center",
     gap: 8,
+    alignItems: "center",
   },
   input: {
     flex: 1,
-    height: 44,
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    backgroundColor: "#F8FAFF",
     borderWidth: 1,
-    borderColor: "#DDE3EA",
-    backgroundColor: "#FBFCFE",
-    color: "#11181C",
+    borderColor: "#E6EBF3",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: Platform.OS === "ios" ? 12 : 10,
+    fontSize: 15,
   },
   pillBtn: {
-    height: 36,
-    paddingHorizontal: 12,
-    borderRadius: 18,
     backgroundColor: "#11181C",
-    alignItems: "center",
-    justifyContent: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
   },
   pillText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-  },
-
-  // Messages
-  badge: {
-    marginTop: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    alignSelf: "flex-start",
-  },
-  badgeError: {
-    backgroundColor: "#FEE2E2",
-  },
-  badgeText: {
-    color: "#7F1D1D",
+    color: "#fff",
     fontWeight: "600",
+    fontSize: 12,
   },
 
-  // Key-value
+  // Key/Value row
   kv: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
-    paddingVertical: 2,
+    paddingVertical: 4,
   },
-  k: { color: "#6B7280" },
-  v: { color: "#11181C", fontWeight: "600" },
+  k: { color: "#4B5563" },
+  v: { fontWeight: "600" },
 
-  // Layout bits
-  divider: {
-    height: 1,
-    backgroundColor: "#EEF2F7",
-    marginVertical: 10,
-  },
+  // Grid stats
   grid2: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
   },
   stat: {
-    width: "48%",
-    marginBottom: 6,
+    flexGrow: 1,
+    flexBasis: "48%",
+    padding: 10,
+    backgroundColor: "#FAFBFE",
+    borderWidth: 1,
+    borderColor: "#E6EBF3",
+    borderRadius: 10,
   },
   statLabel: {
     fontSize: 12,
     color: "#6B7280",
   },
   statValue: {
-    fontSize: 18,
+    marginTop: 2,
+    fontSize: 16,
     fontWeight: "700",
     color: "#11181C",
   },
 
-  // misc
-  center: { alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 18, fontWeight: "700", marginBottom: 2, color: "#11181C" },
-  muted: { color: "#6B7280" },
+  // Misc
+  divider: {
+    height: 1,
+    backgroundColor: "#EEF2F7",
+    marginVertical: 8,
+  },
+  center: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  muted: {
+    color: "#6B7280",
+    fontSize: 13,
+  },
+  badge: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  badgeError: {
+    backgroundColor: "#FEE2E2",
+  },
+  badgeText: {
+    color: "#991B1B",
+    fontWeight: "600",
+  },
+
+  // NEW: per-meter list styling
+  meterRow: {
+    padding: 10,
+    backgroundColor: "#FAFBFE",
+    borderWidth: 1,
+    borderColor: "#E6EBF3",
+    borderRadius: 12,
+  },
+  rowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  rowTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#11181C",
+  },
+  typeBadge: {
+    backgroundColor: "#EEF3FF",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  typeBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#1F2A44",
+  },
 });

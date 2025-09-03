@@ -145,6 +145,28 @@ function ModalShell({
   );
 }
 
+/** ---------- Chip helper for filter UI ---------- */
+function Chip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[styles.chip, active && styles.chipActive]}
+    >
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function StallsPanel({ token }: { token: string | null }) {
   const { token: ctxToken } = useAuth();
   const mergedToken = token || ctxToken || null;
@@ -407,37 +429,51 @@ export default function StallsPanel({ token }: { token: string | null }) {
           onChangeText={setQuery}
         />
 
+        {/* --- Chip-based filter bar --- */}
         <View style={styles.filtersBar}>
+          {/* Building chips */}
           <View className="filter-building" style={styles.filterCol}>
-            <Dropdown
-              label="Filter by Building"
-              value={buildingFilter}
-              onChange={setBuildingFilter}
-              options={[
-                { label: "All Buildings", value: "" },
-                ...buildings.map((b) => ({
-                  label: `${b.building_name} (${b.building_id})`,
-                  value: b.building_id,
-                })),
-                ...(buildings.length === 0 && userBuildingId
+            <Text style={styles.dropdownLabel}>Filter by Building</Text>
+            <View style={styles.chipsRow}>
+              {[
+                { label: "All", value: "" },
+                ...(isAdmin
+                  ? buildings.map((b) => ({
+                      label: `${b.building_name} (${b.building_id})`,
+                      value: b.building_id,
+                    }))
+                  : userBuildingId
                   ? [{ label: userBuildingId, value: userBuildingId }]
                   : []),
-              ]}
-            />
+              ].map((opt) => (
+                <Chip
+                  key={opt.value || "all"}
+                  label={opt.label}
+                  active={buildingFilter === opt.value}
+                  onPress={() => setBuildingFilter(opt.value)}
+                />
+              ))}
+            </View>
           </View>
 
+          {/* Status chips */}
           <View className="filter-status" style={styles.filterCol}>
-            <Dropdown
-              label="Filter by Status"
-              value={statusFilter}
-              onChange={(v) => setStatusFilter(v as any)}
-              options={[
-                { label: "All Statuses", value: "" },
+            <Text style={styles.dropdownLabel}>Filter by Status</Text>
+            <View style={styles.chipsRow}>
+              {[
+                { label: "All", value: "" },
                 { label: "Available", value: "available" },
                 { label: "Occupied", value: "occupied" },
                 { label: "Under Maintenance", value: "under maintenance" },
-              ]}
-            />
+              ].map((opt) => (
+                <Chip
+                  key={opt.value || "all"}
+                  label={opt.label}
+                  active={statusFilter === (opt.value as any)}
+                  onPress={() => setStatusFilter(opt.value as any)}
+                />
+              ))}
+            </View>
           </View>
 
           {(!!buildingFilter || !!statusFilter) && (
@@ -746,6 +782,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#1f4bd8",
     paddingVertical: 12,
     borderRadius: 12,
+    paddingHorizontal: 12,
     alignItems: "center",
   },
   btnDisabled: { opacity: 0.7 },

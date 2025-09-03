@@ -414,43 +414,55 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           onChangeText={setQuery}
         />
 
-        <View style={styles.filterRow}>
-          <View style={{ flex: 1, minWidth: 220 }}>
-            <Dropdown
-              label="Filter by Building"
-              value={buildingFilter}
-              onChange={setBuildingFilter}
-              options={filterBuildingOptions}
-            />
-          </View>
+{/* Filters bar — building chips + sort chips (like Stalls) */}
+<View style={styles.filtersBar}>
+  {/* Building chips */}
+  <View style={styles.filterCol}>
+    <Text style={styles.dropdownLabel}>Filter by Building</Text>
+    <View style={styles.chipsRow}>
+      {filterBuildingOptions.map((opt) => (
+        <Chip
+          key={opt.value || "all"}
+          label={opt.label}
+          active={buildingFilter === opt.value}
+          onPress={() => setBuildingFilter(opt.value)}
+        />
+      ))}
+    </View>
+  </View>
 
-          {!!buildingFilter && (
-            <TouchableOpacity
-              style={styles.clearBtn}
-              onPress={() => setBuildingFilter("")}
-            >
-              <Text style={styles.clearBtnText}>Clear</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+  {/* Sort chips (moved here) */}
+  <View style={styles.filterCol}>
+    <Text style={styles.dropdownLabel}>Sort</Text>
+    <View style={styles.chipsRow}>
+      {[
+        { label: "Newest", val: "newest" },
+        { label: "Oldest", val: "oldest" },
+        { label: "ID ↑", val: "idAsc" },
+        { label: "ID ↓", val: "idDesc" },
+      ].map(({ label, val }) => (
+        <Chip
+          key={val}
+          label={label}
+          active={sortMode === (val as any)}
+          onPress={() => setSortMode(val as any)}
+        />
+      ))}
+    </View>
+  </View>
 
-        {/* Sort chips */}
-        <View style={[styles.filterRow, { marginTop: -4 }]}>
-          {[
-            { label: "Newest", val: "newest" },
-            { label: "Oldest", val: "oldest" },
-            { label: "ID ↑", val: "idAsc" },
-            { label: "ID ↓", val: "idDesc" },
-          ].map(({ label, val }) => (
-            <Chip
-              key={val}
-              label={label}
-              active={sortMode === (val as any)}
-              onPress={() => setSortMode(val as any)}
-            />
-          ))}
-        </View>
-
+  {(!!buildingFilter) && (
+    <TouchableOpacity
+      style={styles.clearBtn}
+      onPress={() => {
+        setBuildingFilter("");
+        // sort reset optional — leaving as-is to match your logic
+      }}
+    >
+      <Text style={styles.clearBtnText}>Clear</Text>
+    </TouchableOpacity>
+  )}
+</View>x
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
@@ -867,6 +879,25 @@ const styles = StyleSheet.create({
   clearBtnText: {
     color: "#1f4bd8",
     fontWeight: "700",
+  },
+  filtersBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-end",
+    gap: 12,
+    padding: 12,
+    marginBottom: 12,
+    backgroundColor: "#f7f9ff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e6efff",
+  },
+  filterCol: { flex: 1, minWidth: 220 },
+  chipsRow: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+    marginBottom: 12,
   },
 });
 

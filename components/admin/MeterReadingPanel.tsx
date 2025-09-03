@@ -78,7 +78,48 @@ export type Meter = {
   updated_by: string;
 };
 
+// NEW: stall + building types for building chips
+type Stall = {
+  stall_id: string;
+  building_id?: string;
+  stall_sn?: string;
+};
+type Building = {
+  building_id: string;
+  building_name: string;
+};
+
+// --- Tiny JWT payload decoder (to know admin & assigned building) ---
+function decodeJwtPayload(token: string | null): any | null {
+  if (!token) return null;
+  try {
+    const part = token.split(".")[1] || "";
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padLen = (4 - (base64.length % 4)) % 4;
+    const padded = base64 + "=".repeat(padLen);
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    let str = "";
+    for (let i = 0; i < padded.length; i += 4) {
+      const c1 = chars.indexOf(padded[i]);
+      const c2 = chars.indexOf(padded[i + 1]);
+      const c3 = chars.indexOf(padded[i + 2]);
+      const c4 = chars.indexOf(padded[i + 3]);
+      const n = (c1 << 18) | (c2 << 12) | ((c3 & 63) << 6) | (c4 & 63);
+      const b1 = (n >> 16) & 255, b2 = (n >> 8) & 255, b3 = n & 255;
+      if (c3 === 64) str += String.fromCharCode(b1);
+      else if (c4 === 64) str += String.fromCharCode(b1, b2);
+      else str += String.fromCharCode(b1, b2, b3);
+    }
+    const json = decodeURIComponent(str.split("").map(c => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)).join(""));
+    return JSON.parse(json);
+  } catch { return null; }
+}
+
 export default function MeterReadingPanel({ token }: { token: string | null }) {
+  const jwt = useMemo(() => decodeJwtPayload(token), [token]);
+  const isAdmin = String(jwt?.user_level || "").toLowerCase() === "admin";
+  const userBuildingId = String(jwt?.building_id || "");
+
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
     [token],
@@ -88,11 +129,18 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     [authHeader],
   );
 
+  // SEARCH + FILTER + SORT
   const [typeFilter, setTypeFilter] = useState<"" | "electric" | "water" | "lpg">("");
+  const [buildingFilter, setBuildingFilter] = useState<string>(""); // "" = ALL
+  const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "id_desc" | "id_asc">("date_desc");
+
+  // DATA
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [meters, setMeters] = useState<Meter[]>([]);
+  const [stalls, setStalls] = useState<Stall[]>([]);        // NEW
+  const [buildings, setBuildings] = useState<Building[]>([]); // NEW
   const [query, setQuery] = useState("");
 
   // CREATE (moved to modal)
@@ -113,7 +161,6 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [scannerKey, setScannerKey] = useState(0);
   const readingInputRef = useRef<TextInput>(null);
 
-  const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "id_desc" | "id_asc">("date_desc");
   const readNum = (id: string) => {
     const m = /^MR-(\d+)/i.exec(id || "");
     return m ? parseInt(m[1], 10) : 0;
@@ -132,13 +179,27 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     }
     try {
       setBusy(true);
-      const [rRes, mRes] = await Promise.all([
+      const [rRes, mRes, sRes] = await Promise.all([
         api.get<Reading[]>("/readings"),
         api.get<Meter[]>("/meters"),
+        api.get<Stall[]>("/stalls"), // NEW: to map stall -> building
       ]);
       setReadings(rRes.data || []);
       setMeters(mRes.data || []);
+      setStalls(sRes.data || []);
       if (!formMeterId && mRes.data?.length) setFormMeterId(mRes.data[0].meter_id);
+
+      // Admin can fetch building names
+      if (isAdmin) {
+        try {
+          const bRes = await api.get<Building[]>("/buildings");
+          setBuildings(bRes.data || []);
+        } catch {
+          setBuildings([]);
+        }
+      } else {
+        setBuildings([]);
+      }
     } catch (err: any) {
       console.error("[READINGS LOAD]", err?.response?.data || err?.message);
       notify("Load failed", errorText(err, "Please check your connection and permissions."));
@@ -160,6 +221,36 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     return map;
   }, [meters]);
 
+  // NEW: stall_id -> building_id map
+  const stallToBuilding = useMemo(() => {
+    const m = new Map<string, string>();
+    stalls.forEach((s) => {
+      if (s?.stall_id && s?.building_id) m.set(s.stall_id, s.building_id);
+    });
+    return m;
+  }, [stalls]);
+
+  // NEW: building chips (names for admin)
+  const buildingChipOptions = useMemo(() => {
+    if (isAdmin && buildings.length) {
+      return [
+        { label: "All Buildings", value: "" },
+        ...buildings
+          .slice()
+          .sort((a, b) => a.building_name.localeCompare(b.building_name))
+          .map((b) => ({
+            label: `${b.building_name} (${b.building_id})`,
+            value: b.building_id,
+          })),
+      ];
+    }
+    // operator: show assigned building or derive from stalls
+    const base = [{ label: "All Buildings", value: "" }];
+    if (userBuildingId) return base.concat([{ label: userBuildingId, value: userBuildingId }]);
+    const ids = Array.from(new Set(stalls.map((s) => s.building_id).filter(Boolean) as string[])).sort();
+    return base.concat(ids.map((id) => ({ label: id, value: id })));
+  }, [isAdmin, buildings, stalls, userBuildingId]);
+
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return readings;
@@ -173,12 +264,25 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   }, [readings, query]);
 
   const visible = useMemo(() => {
+    // Type filter
     const typed = searched.filter(
       (r) =>
         !typeFilter ||
         (metersById.get(r.meter_id)?.meter_type || "").toLowerCase() === typeFilter,
     );
-    const arr = [...typed];
+
+    // NEW: Building filter (reading -> meter -> stall -> building)
+    const byBuilding = buildingFilter
+      ? typed.filter((r) => {
+          const meter = metersById.get(r.meter_id);
+          if (!meter) return false;
+          const b = stallToBuilding.get(meter.stall_id || "");
+          return b === buildingFilter;
+        })
+      : typed;
+
+    // Sorting
+    const arr = [...byBuilding];
     switch (sortBy) {
       case "date_asc":
         arr.sort(
@@ -202,7 +306,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         );
     }
     return arr;
-  }, [searched, typeFilter, metersById, sortBy]);
+  }, [searched, typeFilter, metersById, sortBy, buildingFilter, stallToBuilding]);
 
   // --- CREATE (now inside modal) ---
   const onCreate = async () => {
@@ -342,38 +446,80 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           onChangeText={setQuery}
         />
 
-        <View style={styles.filterRow}>
-          {[
-            { label: "ALL", val: "" },
-            { label: "ELECTRIC", val: "electric" },
-            { label: "WATER", val: "water" },
-            { label: "GAS", val: "lpg" },
-          ].map(({ label, val }) => (
-            <TouchableOpacity
-              key={label}
-              style={[styles.chip, typeFilter === val && styles.chipActive]}
-              onPress={() => setTypeFilter(val as any)}
-            >
-              <Text style={[styles.chipText, typeFilter === val && styles.chipTextActive]}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {/* NEW — Filters bar: Building (left), Type above Sort (right) */}
+        <View style={styles.filtersBar}>
+          {/* Building chips */}
+          <View style={styles.filterCol}>
+            <Text style={styles.dropdownLabel}>Filter by Building</Text>
+            <View style={styles.chipsRow}>
+              {buildingChipOptions.map((opt) => (
+                <TouchableOpacity
+                  key={opt.value || "all"}
+                  style={[styles.chip, buildingFilter === opt.value && styles.chipActive]}
+                  onPress={() => setBuildingFilter(opt.value)}
+                >
+                  <Text style={[styles.chipText, buildingFilter === opt.value && styles.chipTextActive]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
 
-        <View style={[styles.filterRow, { marginTop: -4 }]}>
-          {[
-            { label: "Newest", val: "date_desc" },
-            { label: "Oldest", val: "date_asc" },
-            { label: "ID ↑", val: "id_asc" },
-            { label: "ID ↓", val: "id_desc" },
-          ].map(({ label, val }) => (
+          {/* Right column: Type (top) + Sort (bottom) */}
+          <View style={[styles.filterCol, styles.stackCol]}>
+            <View style={{ marginBottom: 12 }}>
+              <Text style={styles.dropdownLabel}>Filter by Type</Text>
+              <View style={styles.chipsRow}>
+                {[
+                  { label: "ALL", val: "" },
+                  { label: "ELECTRIC", val: "electric" },
+                  { label: "WATER", val: "water" },
+                  { label: "GAS", val: "lpg" },
+                ].map(({ label, val }) => (
+                  <TouchableOpacity
+                    key={label}
+                    style={[styles.chip, typeFilter === (val as any) && styles.chipActive]}
+                    onPress={() => setTypeFilter(val as any)}
+                  >
+                    <Text style={[styles.chipText, typeFilter === (val as any) && styles.chipTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View>
+              <Text style={styles.dropdownLabel}>Sort</Text>
+              <View style={styles.chipsRow}>
+                {[
+                  { label: "Newest", val: "date_desc" },
+                  { label: "Oldest", val: "date_asc" },
+                  { label: "ID ↑", val: "id_asc" },
+                  { label: "ID ↓", val: "id_desc" },
+                ].map(({ label, val }) => (
+                  <TouchableOpacity
+                    key={val}
+                    style={[styles.chip, sortBy === (val as any) && styles.chipActive]}
+                    onPress={() => setSortBy(val as any)}
+                  >
+                    <Text style={[styles.chipText, sortBy === (val as any) && styles.chipTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+
+          {(typeFilter !== "" || buildingFilter !== "") && (
             <TouchableOpacity
-              key={val}
-              style={[styles.chip, sortBy === (val as any) && styles.chipActive]}
-              onPress={() => setSortBy(val as any)}
+              style={styles.clearBtn}
+              onPress={() => {
+                setTypeFilter("");
+                setBuildingFilter("");
+              }}
             >
-              <Text style={[styles.chipText, sortBy === (val as any) && styles.chipTextActive]}>{label}</Text>
+              <Text style={styles.clearBtnText}>Clear</Text>
             </TouchableOpacity>
-          ))}
+          )}
         </View>
 
         {busy ? (
@@ -766,7 +912,10 @@ const styles = StyleSheet.create({
   btnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: "#cbd5e1" },
   btnGhostText: { color: "#102a43", fontWeight: "700" },
 
+  // OLD simple row chips kept (unused)
   filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
+
+  // Chips
   chip: {
     paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1,
     borderColor: "#d9e2ec", backgroundColor: "#fff",
@@ -775,6 +924,30 @@ const styles = StyleSheet.create({
   chipText: { color: "#102a43", fontWeight: "700" },
   chipTextActive: { color: "#fff" },
 
+  // NEW chips bar (matches MeterPanel)
+  filtersBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-end",
+    gap: 12,
+    padding: 12,
+    marginBottom: 12,
+    backgroundColor: "#f7f9ff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e6efff",
+  },
+  filterCol: { flex: 1, minWidth: 220 },
+  stackCol: { flexDirection: "column" },
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  clearBtn: {
+    paddingVertical: 8, paddingHorizontal: 12,
+    borderRadius: 10, borderWidth: 1, borderColor: "#cbd5e1",
+    backgroundColor: "#fff", alignSelf: "flex-end",
+  },
+  clearBtnText: { color: "#334e68", fontWeight: "700" },
+
+  // Scanner overlay
   scannerScreen: { flex: 1, backgroundColor: "#000" },
   scannerFill: { ...StyleSheet.absoluteFillObject },
   scanTopBar: { position: "absolute", top: 0, left: 0, right: 0, padding: 12, alignItems: "flex-start" },

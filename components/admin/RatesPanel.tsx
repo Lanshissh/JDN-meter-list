@@ -133,6 +133,10 @@ export default function RatesPanel({ token }: { token: string | null }) {
   const [rates, setRates] = useState<Rate[]>([]);
   const [query, setQuery] = useState("");
 
+  // >>> ADDED: utility filter state <<<
+  type UtilFilter = "" | "has_elec" | "has_water" | "has_lpg" | "missing";
+  const [utilFilter, setUtilFilter] = useState<UtilFilter>("");
+
   // create form fields (now inside a modal)
   const [createVisible, setCreateVisible] = useState(false);
   const [formTenantId, setFormTenantId] = useState<string>("");
@@ -252,10 +256,29 @@ export default function RatesPanel({ token }: { token: string | null }) {
     [tenants, buildingId],
   );
 
+  // >>> UPDATED: include utilFilter in filtering <<<
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rates;
-    return rates.filter((r) => {
+    let list = rates;
+
+    if (utilFilter) {
+      list = list.filter((r) => {
+        const hasElec = r.erate_perKwH != null;
+        const hasWater = r.wrate_perCbM != null;
+        const hasLpg = r.lrate_perKg != null;
+
+        switch (utilFilter) {
+          case "has_elec": return hasElec;
+          case "has_water": return hasWater;
+          case "has_lpg": return hasLpg;
+          case "missing": return !hasElec || !hasWater || !hasLpg;
+          default: return true;
+        }
+      });
+    }
+
+    if (!q) return list;
+    return list.filter((r) => {
       const tn = (r.tenant_name || "").toLowerCase();
       return (
         r.rate_id.toLowerCase().includes(q) ||
@@ -263,7 +286,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
         tn.includes(q)
       );
     });
-  }, [rates, query]);
+  }, [rates, query, utilFilter]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -540,6 +563,24 @@ export default function RatesPanel({ token }: { token: string | null }) {
           value={query}
           onChangeText={setQuery}
         />
+
+        {/* >>> ADDED: Utility filter chips <<< */}
+        <View style={styles.chipsRow}>
+          {[
+            { label: "All", val: "" },
+            { label: "Has Electric", val: "has_elec" },
+            { label: "Has Water", val: "has_water" },
+            { label: "Has LPG", val: "has_lpg" },
+            { label: "Missing Any", val: "missing" },
+          ].map(({ label, val }) => (
+            <Chip
+              key={val || "all"}
+              label={label}
+              active={utilFilter === (val as UtilFilter)}
+              onPress={() => setUtilFilter(val as UtilFilter)}
+            />
+          ))}
+        </View>
 
         <View style={styles.chipsRow}>
           <Chip

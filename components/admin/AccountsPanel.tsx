@@ -709,6 +709,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#1f4bd8",
     paddingVertical: 12,
     borderRadius: 12,
+    paddingHorizontal: 12,
     alignItems: "center",
   },
   btnDisabled: { opacity: 0.7 },
