@@ -15,7 +15,7 @@ import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { BASE_API } from "../../constants/api";
 
-type Role = "admin" | "operator" | "biller" | "reader";
+type Role = "admin" | "operator" | "biller";
 type Util = "electric" | "water" | "lpg";
 const UTIL_OPTIONS: Util[] = ["electric", "water", "lpg"];
 
@@ -188,7 +188,7 @@ export default function AccountsPanel({
   }, [users, query]);
 
   const roleNeedsBuilding = (r: Role) => r !== "admin";
-  const roleUsesUtilities = (r: Role) => r === "biller" || r === "reader";
+  const roleUsesUtilities = (r: Role) => r === "biller";
 
   const onCreate = async () => {
     if (!fullname || !password) {
@@ -493,11 +493,6 @@ export default function AccountsPanel({
                 active={level === "biller"}
                 onPress={() => setLevel("biller")}
               />
-              <Chip
-                label="Reader"
-                active={level === "reader"}
-                onPress={() => setLevel("reader")}
-              />
             </View>
 
             {roleNeedsBuilding(level) && (
@@ -589,11 +584,6 @@ export default function AccountsPanel({
                 label="Biller"
                 active={editLevel === "biller"}
                 onPress={() => setEditLevel("biller")}
-              />
-              <Chip
-                label="Reader"
-                active={editLevel === "reader"}
-                onPress={() => setEditLevel("reader")}
               />
             </View>
 

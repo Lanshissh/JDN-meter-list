@@ -1,4 +1,3 @@
-// components/SideNav.tsx
 import React, { useMemo, useState } from "react";
 import { View, TouchableOpacity, StyleSheet, Image, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -29,7 +28,7 @@ function decodeRole(token: string | null): string {
 export default function SideNav({ active, onSelect }: Props) {
   const { token } = useAuth();
   const role = useMemo(() => decodeRole(token), [token]);
-  const canSeeAdmin = role !== "reader";
+  const canSeeAdmin = true;  
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -37,7 +36,7 @@ export default function SideNav({ active, onSelect }: Props) {
       {/* Logo */}
       <TouchableOpacity
         style={[styles.iconBtn, expanded && styles.iconBtnWide]}
-        onPress={() => onSelect(canSeeAdmin ? "admin" : "scanner")}
+        onPress={() => onSelect("admin")}
       >
         <Image
           source={require("../assets/images/jdn.jpg")}
@@ -48,19 +47,19 @@ export default function SideNav({ active, onSelect }: Props) {
       {/* Nav buttons */}
       <View style={styles.navSection}>
         {canSeeAdmin && (
-          <TouchableOpacity
-            style={[
-              styles.iconBtn,
-              expanded && styles.iconBtnWide,
-              active === "admin" && styles.active,
-            ]}
-            onPress={() => onSelect("admin")}
-          >
-            <View style={[styles.row, expanded && styles.rowExpanded]}>
-              <Ionicons name="person-circle-outline" size={28} color="#fff" />
-              {expanded && <Text style={styles.label}>Admin</Text>}
-            </View>
-          </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.iconBtn,
+            expanded && styles.iconBtnWide,
+            active === "admin" && styles.active,
+          ]}
+          onPress={() => onSelect("admin")}
+        >
+          <View style={[styles.row, expanded && styles.rowExpanded]}>
+            <Ionicons name="person-circle-outline" size={28} color="#fff" />
+            {expanded && <Text style={styles.label}>Admin</Text>}
+          </View>+        </TouchableOpacity>
+
         )}
 
         <TouchableOpacity

@@ -84,7 +84,6 @@ export default function AdminScreen() {
         "readings",
       ]),
       operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
-      reader: new Set<PageKey>(["readings"]), // Scanner/Billing are separate screens
       biller: new Set<PageKey>(["rates", "tenants"]), // Tenants read-only enforced inside panel
     }),
     []
@@ -100,7 +99,6 @@ export default function AdminScreen() {
   const roleInitial: Record<string, PageKey> = {
     admin: "accounts",
     operator: "stalls",
-    reader: "readings",
     biller: "rates",
   };
   const initialActive: PageKey = roleInitial[role] ?? "accounts";
