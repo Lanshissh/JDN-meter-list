@@ -60,7 +60,6 @@ export default function SideNav({ active, onSelect }: Props) {
             {expanded && <Text style={styles.label}>Admin</Text>}
           </View>        
         </TouchableOpacity>
-
         )}
 
         <TouchableOpacity

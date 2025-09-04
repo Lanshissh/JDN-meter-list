@@ -142,12 +142,18 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
 
-  // Shared search bars
+  // Separate searches
   const [meterQuery, setMeterQuery] = useState<string>("");
-  const [query, setQuery] = useState<string>("");
+  const [query, setQuery] = useState<string>(""); // used inside modal
 
-  // Selected meter
+  // Selected meter + modal visibility
   const [selectedMeterId, setSelectedMeterId] = useState<string>("");
+  const [readingsModalVisible, setReadingsModalVisible] = useState(false);
+
+  // Pagination for readings modal
+  const PAGE_SIZE = 30;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [selectedMeterId]);
 
   // CREATE modal
   const [createVisible, setCreateVisible] = useState(false);
@@ -350,7 +356,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       console.error("[CREATE READING]", err?.response?.data || err?.message);
       notify("Create failed", errorText(err));
     } finally {
-      setSubmitting(false);
+           setSubmitting(false);
     }
   };
 
@@ -444,13 +450,9 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   };
 
   // ---------- UI ----------
-  const sharedSearchValue = selectedMeterId ? query : meterQuery;
-  const handleSharedSearchChange = (v: string) =>
-    selectedMeterId ? setQuery(v) : setMeterQuery(v);
-
   return (
     <View style={styles.grid}>
-      {/* --- SINGLE CARD: Meters list + filters + (on select) the meter's readings --- */}
+      {/* --- SINGLE CARD: Meters list + filters --- */}
       <View style={styles.card}>
         {/* Header with Create button on the right */}
         <View style={styles.cardHeader}>
@@ -539,16 +541,12 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           )}
         </View>
 
-        {/* SINGLE search bar (controls meter list OR selected-meter readings) */}
+        {/* Search meters only */}
         <TextInput
           style={styles.search}
-          placeholder={
-            selectedMeterId
-              ? `Search readings of ${selectedMeterId} (ID, date, value…)`
-              : "Search meters by ID, SN, stall, status…"
-          }
-          value={sharedSearchValue}
-          onChangeText={handleSharedSearchChange}
+          placeholder="Search meters by ID, SN, stall, status…"
+          value={meterQuery}
+          onChangeText={setMeterQuery}
         />
 
         {/* Meter list */}
@@ -560,12 +558,17 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           <FlatList
             data={metersVisible}
             keyExtractor={(m) => m.meter_id}
-            style={{ maxHeight: selectedMeterId ? 220 : 360, marginTop: 4 }}
+            style={{ maxHeight: 360, marginTop: 4 }}
             nestedScrollEnabled
             ListEmptyComponent={<Text style={styles.empty}>No meters found.</Text>}
             renderItem={({ item }) => (
               <TouchableOpacity
-                onPress={() => setSelectedMeterId(item.meter_id)}
+                onPress={() => {
+                  setSelectedMeterId(item.meter_id);
+                  setQuery("");
+                  setPage(1);
+                  setReadingsModalVisible(true);
+                }}
                 style={styles.listRow}
               >
                 <View style={{ flex: 1 }}>
@@ -577,68 +580,13 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                     SN: {item.meter_sn} • Stall: {item.stall_id} • {item.meter_status}
                   </Text>
                 </View>
-                <View
-                  style={[
-                    styles.badge,
-                    selectedMeterId === item.meter_id && styles.badgeActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.badgeText,
-                      selectedMeterId === item.meter_id && styles.badgeTextActive,
-                    ]}
-                  >
-                    {selectedMeterId === item.meter_id ? "Selected" : "View"}
-                  </Text>
+                <View style={[styles.badge]}>
+                  <Text style={[styles.badgeText]}>View</Text>
                 </View>
               </TouchableOpacity>
             )}
           />
         )}
-
-        {/* Selected meter's readings (only shows after click) */}
-        {selectedMeterId ? (
-          <View style={{ marginTop: 14 }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <Text style={styles.cardTitle}>
-                Readings for <Text style={styles.meterLink}>{selectedMeterId}</Text>
-              </Text>
-              <TouchableOpacity onPress={() => { setSelectedMeterId(""); setQuery(""); }}>
-                <Text style={styles.clearLink}>Clear selection</Text>
-              </TouchableOpacity>
-            </View>
-
-            {busy ? (
-              <View style={styles.loader}>
-                <ActivityIndicator />
-              </View>
-            ) : (
-              <FlatList
-                data={readingsForSelected}
-                keyExtractor={(item) => item.reading_id}
-                ListEmptyComponent={<Text style={styles.empty}>No readings for this meter.</Text>}
-                renderItem={({ item }) => (
-                  <View style={styles.listRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.rowTitle}>
-                        {item.reading_id} • <Text style={styles.meterLink}>{item.meter_id}</Text>
-                      </Text>
-                      <Text style={styles.rowSub}>{item.lastread_date} • Value: {item.reading_value}</Text>
-                      <Text style={styles.rowSub}>Updated {formatDateTime(item.last_updated)} by {item.updated_by}</Text>
-                    </View>
-                    <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
-                      <Text style={styles.linkText}>Update</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)} disabled={submitting}>
-                      {submitting ? <ActivityIndicator color="#fff" /> : <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>}
-                    </TouchableOpacity>
-                  </View>
-                )}
-              />
-            )}
-          </View>
-        ) : null}
       </View>
 
       {/* --- CREATE MODAL --- */}
@@ -756,6 +704,204 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                   {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
                 </TouchableOpacity>
               </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* --- READINGS LIST MODAL (WIDE + PAGINATED) --- */}
+      <Modal
+        visible={readingsModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          setReadingsModalVisible(false);
+          setSelectedMeterId("");
+          setQuery("");
+          setPage(1);
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
+          <View
+            style={[
+              styles.modalCardWide,
+              Platform.OS !== "web" && {
+                maxHeight: Math.round(Dimensions.get("window").height * 0.9),
+              },
+            ]}
+          >
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 12 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={styles.modalTitle}>
+                  Readings for <Text style={styles.meterLink}>{selectedMeterId || "—"}</Text>
+                </Text>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={() => {
+                    setReadingsModalVisible(false);
+                    setSelectedMeterId("");
+                    setQuery("");
+                    setPage(1);
+                  }}
+                >
+                  <Text style={styles.btnGhostText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Search within this meter’s readings */}
+              <TextInput
+                style={[styles.search, { marginTop: 8 }]}
+                placeholder="Search readings (ID, date, value…)"
+                value={query}
+                onChangeText={(v) => { setQuery(v); setPage(1); }}
+              />
+
+              {/* Sort chips */}
+              <View style={{ marginTop: 8 }}>
+                <Text style={styles.dropdownLabel}>Sort readings</Text>
+                <View style={styles.chipsRow}>
+                  {[
+                    { label: "Newest", val: "date_desc" },
+                    { label: "Oldest", val: "date_asc" },
+                    { label: "ID ↑", val: "id_asc" },
+                    { label: "ID ↓", val: "id_desc" },
+                  ].map(({ label, val }) => (
+                    <TouchableOpacity
+                      key={val}
+                      style={[styles.chip, sortBy === (val as any) && styles.chipActive]}
+                      onPress={() => { setSortBy(val as any); setPage(1); }}
+                    >
+                      <Text style={[styles.chipText, sortBy === (val as any) && styles.chipTextActive]}>{label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Page calc + slice */}
+              {(() => {
+                const total = readingsForSelected.length;
+                const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+                const safePage = Math.min(page, totalPages);
+                const start = (safePage - 1) * PAGE_SIZE;
+                const pageData = readingsForSelected.slice(start, start + PAGE_SIZE);
+
+                return (
+                  <>
+                    {/* Page summary + controls (top) */}
+                    <View style={styles.pageBar}>
+                      <Text style={styles.pageInfo}>
+                        Page {safePage} of {totalPages} • {total} item{total === 1 ? "" : "s"}
+                      </Text>
+                      <View style={styles.pageBtns}>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage === 1 && styles.pageBtnDisabled]}
+                          disabled={safePage === 1}
+                          onPress={() => setPage(1)}
+                        >
+                          <Text style={styles.pageBtnText}>First</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage === 1 && styles.pageBtnDisabled]}
+                          disabled={safePage === 1}
+                          onPress={() => setPage(safePage - 1)}
+                        >
+                          <Text style={styles.pageBtnText}>Prev</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage >= totalPages && styles.pageBtnDisabled]}
+                          disabled={safePage >= totalPages}
+                          onPress={() => setPage(safePage + 1)}
+                        >
+                          <Text style={styles.pageBtnText}>Next</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage >= totalPages && styles.pageBtnDisabled]}
+                          disabled={safePage >= totalPages}
+                          onPress={() => setPage(totalPages)}
+                        >
+                          <Text style={styles.pageBtnText}>Last</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {busy ? (
+                      <View style={styles.loader}><ActivityIndicator /></View>
+                    ) : (
+                      <FlatList
+                        data={pageData}
+                        keyExtractor={(item) => item.reading_id}
+                        ListEmptyComponent={<Text style={styles.empty}>No readings for this meter.</Text>}
+                        renderItem={({ item }) => (
+                          <View style={styles.listRow}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.rowTitle}>
+                                {item.reading_id} • <Text style={styles.meterLink}>{item.meter_id}</Text>
+                              </Text>
+                              <Text style={styles.rowSub}>{item.lastread_date} • Value: {item.reading_value}</Text>
+                              <Text style={styles.rowSub}>Updated {formatDateTime(item.last_updated)} by {item.updated_by}</Text>
+                            </View>
+                            <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+                              <Text style={styles.linkText}>Update</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.link, { marginLeft: 8 }]}
+                              onPress={() => onDelete(item)}
+                              disabled={submitting}
+                            >
+                              {submitting ? <ActivityIndicator color="#fff" /> : <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>}
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                        style={{ maxHeight: 520, marginTop: 6 }}
+                        nestedScrollEnabled
+                      />
+                    )}
+
+                    {/* Duplicate controls (bottom) */}
+                    <View style={[styles.pageBar, { marginTop: 10 }]}>
+                      <Text style={styles.pageInfo}>
+                        Page {safePage} of {totalPages}
+                      </Text>
+                      <View style={styles.pageBtns}>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage === 1 && styles.pageBtnDisabled]}
+                          disabled={safePage === 1}
+                          onPress={() => setPage(1)}
+                        >
+                          <Text style={styles.pageBtnText}>First</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage === 1 && styles.pageBtnDisabled]}
+                          disabled={safePage === 1}
+                          onPress={() => setPage(safePage - 1)}
+                        >
+                          <Text style={styles.pageBtnText}>Prev</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage >= totalPages && styles.pageBtnDisabled]}
+                          disabled={safePage >= totalPages}
+                          onPress={() => setPage(safePage + 1)}
+                        >
+                          <Text style={styles.pageBtnText}>Next</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, safePage >= totalPages && styles.pageBtnDisabled]}
+                          disabled={safePage >= totalPages}
+                          onPress={() => setPage(totalPages)}
+                        >
+                          <Text style={styles.pageBtnText}>Last</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </>
+                );
+              })()}
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -990,6 +1136,7 @@ const styles = StyleSheet.create({
   // Modals
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", paddingHorizontal: 16 },
   modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 480 },
+  modalCardWide: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "95%", maxWidth: 960 },
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#102a43", marginBottom: 12 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
 
@@ -1060,7 +1207,7 @@ const styles = StyleSheet.create({
   scanFooter: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 16, alignItems: "center", backgroundColor: "rgba(0,0,0,0.35)" },
   scanCloseBtn: { alignSelf: "stretch" },
 
-  // Badge styles for meter selection
+  // Badge styles
   badge: {
     backgroundColor: "#e5e7eb",
     paddingHorizontal: 10,
@@ -1071,4 +1218,25 @@ const styles = StyleSheet.create({
   badgeActive: { backgroundColor: "#1f4bd8" },
   badgeText: { color: "#102a43", fontSize: 12 },
   badgeTextActive: { color: "#fff", fontSize: 12 },
+
+  // Pagination UI
+  pageBar: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  pageInfo: { color: "#334e68", fontWeight: "600" },
+  pageBtns: { flexDirection: "row", gap: 6, alignItems: "center" },
+  pageBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#fff",
+  },
+  pageBtnDisabled: { opacity: 0.5 },
+  pageBtnText: { color: "#102a43", fontWeight: "700" },
 });
