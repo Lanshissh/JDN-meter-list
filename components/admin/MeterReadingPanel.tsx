@@ -356,7 +356,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       console.error("[CREATE READING]", err?.response?.data || err?.message);
       notify("Create failed", errorText(err));
     } finally {
-           setSubmitting(false);
+      setSubmitting(false);
     }
   };
 
@@ -660,55 +660,6 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* --- EDIT MODAL --- */}
-      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <View
-            style={[
-              styles.modalCard,
-              Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.85) },
-            ]}
-          >
-            <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalTitle}>Edit {editRow?.reading_id}</Text>
-
-              <Dropdown
-                label="Meter"
-                value={editMeterId}
-                onChange={setEditMeterId}
-                options={meters.map((m) => ({
-                    label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
-                    value: m.meter_id,
-                }))}
-              />
-
-              <View style={styles.rowWrap}>
-                <View style={{ flex: 1, marginTop: 8 }}>
-                  <Text style={styles.dropdownLabel}>Reading Value</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={editValue}
-                    onChangeText={setEditValue}
-                    keyboardType="numeric"
-                    placeholder="Reading value"
-                  />
-                </View>
-                <DatePickerField label="Date read" value={editDate} onChange={setEditDate} />
-              </View>
-
-              <View className="modal-actions" style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
-                  <Text style={styles.btnGhostText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
       {/* --- READINGS LIST MODAL (WIDE + PAGINATED) --- */}
       <Modal
         visible={readingsModalVisible}
@@ -902,6 +853,55 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                   </>
                 );
               })()}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* --- EDIT MODAL (moved AFTER readings modal so it’s on top) --- */}
+      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+          <View
+            style={[
+              styles.modalCard,
+              Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.85) },
+            ]}
+          >
+            <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Edit {editRow?.reading_id}</Text>
+
+              <Dropdown
+                label="Meter"
+                value={editMeterId}
+                onChange={setEditMeterId}
+                options={meters.map((m) => ({
+                    label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
+                    value: m.meter_id,
+                }))}
+              />
+
+              <View style={styles.rowWrap}>
+                <View style={{ flex: 1, marginTop: 8 }}>
+                  <Text style={styles.dropdownLabel}>Reading Value</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editValue}
+                    onChangeText={setEditValue}
+                    keyboardType="numeric"
+                    placeholder="Reading value"
+                  />
+                </View>
+                <DatePickerField label="Date read" value={editDate} onChange={setEditDate} />
+              </View>
+
+              <View className="modal-actions" style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
+                  <Text style={styles.btnGhostText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
+                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
+                </TouchableOpacity>
+              </View>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -1136,7 +1136,7 @@ const styles = StyleSheet.create({
   // Modals
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", paddingHorizontal: 16 },
   modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 480 },
-  modalCardWide: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "95%", maxWidth: 960 },
+  modalCardWide: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "95%", maxWidth: 960, height: "95%"},
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#102a43", marginBottom: 12 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
 
