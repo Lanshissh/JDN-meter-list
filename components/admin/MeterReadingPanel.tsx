@@ -129,9 +129,9 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     [authHeader],
   );
 
-  // SEARCH + FILTER + SORT
+  // FILTERS + SORT (in Meters card)
   const [typeFilter, setTypeFilter] = useState<"" | "electric" | "water" | "lpg">("");
-  const [buildingFilter, setBuildingFilter] = useState<string>(""); // "" = ALL
+  const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "id_desc" | "id_asc">("date_desc");
 
   // DATA
@@ -139,11 +139,17 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [submitting, setSubmitting] = useState(false);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [meters, setMeters] = useState<Meter[]>([]);
-  const [stalls, setStalls] = useState<Stall[]>([]);        // NEW
-  const [buildings, setBuildings] = useState<Building[]>([]); // NEW
-  const [query, setQuery] = useState("");
+  const [stalls, setStalls] = useState<Stall[]>([]);
+  const [buildings, setBuildings] = useState<Building[]>([]);
 
-  // CREATE (moved to modal)
+  // Shared search bars
+  const [meterQuery, setMeterQuery] = useState<string>("");
+  const [query, setQuery] = useState<string>("");
+
+  // Selected meter
+  const [selectedMeterId, setSelectedMeterId] = useState<string>("");
+
+  // CREATE modal
   const [createVisible, setCreateVisible] = useState(false);
   const [formMeterId, setFormMeterId] = useState("");
   const [formValue, setFormValue] = useState("");
@@ -156,7 +162,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [editValue, setEditValue] = useState("");
   const [editDate, setEditDate] = useState("");
 
-  // QR scanner modal (unchanged)
+  // QR scanner modal
   const [scanVisible, setScanVisible] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
   const readingInputRef = useRef<TextInput>(null);
@@ -182,14 +188,13 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       const [rRes, mRes, sRes] = await Promise.all([
         api.get<Reading[]>("/readings"),
         api.get<Meter[]>("/meters"),
-        api.get<Stall[]>("/stalls"), // NEW: to map stall -> building
+        api.get<Stall[]>("/stalls"),
       ]);
       setReadings(rRes.data || []);
       setMeters(mRes.data || []);
       setStalls(sRes.data || []);
       if (!formMeterId && mRes.data?.length) setFormMeterId(mRes.data[0].meter_id);
 
-      // Admin can fetch building names
       if (isAdmin) {
         try {
           const bRes = await api.get<Building[]>("/buildings");
@@ -208,12 +213,10 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     }
   };
 
-  // default meter on open
+  // keep Create form's meter synced when selecting from list
   useEffect(() => {
-    if (createVisible && !formMeterId && meters.length) {
-      setFormMeterId(meters[0].meter_id);
-    }
-  }, [createVisible, meters, formMeterId]);
+    if (selectedMeterId) setFormMeterId(selectedMeterId);
+  }, [selectedMeterId]);
 
   const metersById = useMemo(() => {
     const map = new Map<string, Meter>();
@@ -221,7 +224,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     return map;
   }, [meters]);
 
-  // NEW: stall_id -> building_id map
+  // stall_id -> building_id mapping
   const stallToBuilding = useMemo(() => {
     const m = new Map<string, string>();
     stalls.forEach((s) => {
@@ -230,7 +233,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     return m;
   }, [stalls]);
 
-  // NEW: building chips (names for admin)
+  // Building chips (labels for admin)
   const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
       return [
@@ -244,45 +247,57 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           })),
       ];
     }
-    // operator: show assigned building or derive from stalls
     const base = [{ label: "All Buildings", value: "" }];
     if (userBuildingId) return base.concat([{ label: userBuildingId, value: userBuildingId }]);
     const ids = Array.from(new Set(stalls.map((s) => s.building_id).filter(Boolean) as string[])).sort();
     return base.concat(ids.map((id) => ({ label: id, value: id })));
   }, [isAdmin, buildings, stalls, userBuildingId]);
 
-  const searched = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return readings;
-    return readings.filter(
-      (r) =>
-        r.reading_id.toLowerCase().includes(q) ||
-        r.meter_id.toLowerCase().includes(q) ||
-        r.lastread_date.toLowerCase().includes(q) ||
-        String(r.reading_value).toLowerCase().includes(q),
+  // Meter list with filters/search
+  const metersVisible = useMemo(() => {
+    let list = meters;
+    if (typeFilter) {
+      list = list.filter(
+        (m) => (m.meter_type || "").toLowerCase() === typeFilter
+      );
+    }
+    if (buildingFilter) {
+      list = list.filter((m) => stallToBuilding.get(m.stall_id || "") === buildingFilter);
+    }
+    const q = meterQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((m) =>
+        [m.meter_id, m.meter_sn, m.stall_id, m.meter_status, m.meter_type]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q)),
+      );
+    }
+    // numeric sort by meter id
+    const mtrNum = (id: string) => {
+      const m = /^MTR-(\d+)/i.exec(id || "");
+      return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+    };
+    return [...list].sort(
+      (a, b) =>
+        mtrNum(a.meter_id) - mtrNum(b.meter_id) ||
+        a.meter_id.localeCompare(b.meter_id),
     );
-  }, [readings, query]);
+  }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
 
-  const visible = useMemo(() => {
-    // Type filter
-    const typed = searched.filter(
-      (r) =>
-        !typeFilter ||
-        (metersById.get(r.meter_id)?.meter_type || "").toLowerCase() === typeFilter,
-    );
-
-    // NEW: Building filter (reading -> meter -> stall -> building)
-    const byBuilding = buildingFilter
-      ? typed.filter((r) => {
-          const meter = metersById.get(r.meter_id);
-          if (!meter) return false;
-          const b = stallToBuilding.get(meter.stall_id || "");
-          return b === buildingFilter;
-        })
+  // Readings visible ONLY for the selected meter (and reading search/sort)
+  const readingsForSelected = useMemo(() => {
+    if (!selectedMeterId) return [];
+    const typed = readings.filter((r) => r.meter_id === selectedMeterId);
+    const searched = query.trim()
+      ? typed.filter(
+          (r) =>
+            r.reading_id.toLowerCase().includes(query.toLowerCase()) ||
+            r.lastread_date.toLowerCase().includes(query.toLowerCase()) ||
+            String(r.reading_value).toLowerCase().includes(query.toLowerCase()),
+        )
       : typed;
 
-    // Sorting
-    const arr = [...byBuilding];
+    const arr = [...searched];
     switch (sortBy) {
       case "date_asc":
         arr.sort(
@@ -306,9 +321,9 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         );
     }
     return arr;
-  }, [searched, typeFilter, metersById, sortBy, buildingFilter, stallToBuilding]);
+  }, [readings, selectedMeterId, query, sortBy]);
 
-  // --- CREATE (now inside modal) ---
+  // --- CREATE (modal) ---
   const onCreate = async () => {
     if (!formMeterId || !formValue) {
       notify("Missing info", "Please select a meter and enter a reading.");
@@ -392,7 +407,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     }
   };
 
-  // --- QR scanning (unchanged UI) ---
+  // --- QR scanning ---
   const onScan = (data: OnSuccessfulScanProps | string) => {
     const rawScanned = String(
       (data as any)?.code ??
@@ -428,25 +443,27 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     Keyboard.dismiss();
   };
 
+  // ---------- UI ----------
+  const sharedSearchValue = selectedMeterId ? query : meterQuery;
+  const handleSharedSearchChange = (v: string) =>
+    selectedMeterId ? setQuery(v) : setMeterQuery(v);
+
   return (
     <View style={styles.grid}>
-      {/* --- LIST & FILTERS + Create button --- */}
+      {/* --- SINGLE CARD: Meters list + filters + (on select) the meter's readings --- */}
       <View style={styles.card}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-          <Text style={styles.cardTitle}>Manage Meter Readings</Text>
-          <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+        {/* Header with Create button on the right */}
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Meters</Text>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => setCreateVisible(true)}
+          >
             <Text style={styles.btnText}>+ Create Reading</Text>
           </TouchableOpacity>
         </View>
 
-        <TextInput
-          style={styles.search}
-          placeholder="Search by Reading ID, Meter ID, date, value…"
-          value={query}
-          onChangeText={setQuery}
-        />
-
-        {/* NEW — Filters bar: Building (left), Type above Sort (right) */}
+        {/* FILTERS */}
         <View style={styles.filtersBar}>
           {/* Building chips */}
           <View style={styles.filterCol}>
@@ -489,7 +506,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
             </View>
 
             <View>
-              <Text style={styles.dropdownLabel}>Sort</Text>
+              <Text style={styles.dropdownLabel}>Sort readings</Text>
               <View style={styles.chipsRow}>
                 {[
                   { label: "Newest", val: "date_desc" },
@@ -522,32 +539,106 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           )}
         </View>
 
+        {/* SINGLE search bar (controls meter list OR selected-meter readings) */}
+        <TextInput
+          style={styles.search}
+          placeholder={
+            selectedMeterId
+              ? `Search readings of ${selectedMeterId} (ID, date, value…)`
+              : "Search meters by ID, SN, stall, status…"
+          }
+          value={sharedSearchValue}
+          onChangeText={handleSharedSearchChange}
+        />
+
+        {/* Meter list */}
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
           </View>
         ) : (
           <FlatList
-            data={visible}
-            keyExtractor={(item) => item.reading_id}
-            ListEmptyComponent={<Text style={styles.empty}>No readings found.</Text>}
+            data={metersVisible}
+            keyExtractor={(m) => m.meter_id}
+            style={{ maxHeight: selectedMeterId ? 220 : 360, marginTop: 4 }}
+            nestedScrollEnabled
+            ListEmptyComponent={<Text style={styles.empty}>No meters found.</Text>}
             renderItem={({ item }) => (
-              <View style={styles.listRow}>
+              <TouchableOpacity
+                onPress={() => setSelectedMeterId(item.meter_id)}
+                style={styles.listRow}
+              >
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle}>{item.reading_id} • {item.meter_id}</Text>
-                  <Text style={styles.rowSub}>{item.lastread_date} • Value: {item.reading_value}</Text>
-                  <Text style={styles.rowSub}>Updated {formatDateTime(item.last_updated)} by {item.updated_by}</Text>
+                  <Text style={styles.rowTitle}>
+                    <Text style={styles.meterLink}>{item.meter_id}</Text> •{" "}
+                    {item.meter_type.toUpperCase()}
+                  </Text>
+                  <Text style={styles.rowSub}>
+                    SN: {item.meter_sn} • Stall: {item.stall_id} • {item.meter_status}
+                  </Text>
                 </View>
-                <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
-                  <Text style={styles.linkText}>Update</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)} disabled={submitting}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>}
-                </TouchableOpacity>
-              </View>
+                <View
+                  style={[
+                    styles.badge,
+                    selectedMeterId === item.meter_id && styles.badgeActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.badgeText,
+                      selectedMeterId === item.meter_id && styles.badgeTextActive,
+                    ]}
+                  >
+                    {selectedMeterId === item.meter_id ? "Selected" : "View"}
+                  </Text>
+                </View>
+              </TouchableOpacity>
             )}
           />
         )}
+
+        {/* Selected meter's readings (only shows after click) */}
+        {selectedMeterId ? (
+          <View style={{ marginTop: 14 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={styles.cardTitle}>
+                Readings for <Text style={styles.meterLink}>{selectedMeterId}</Text>
+              </Text>
+              <TouchableOpacity onPress={() => { setSelectedMeterId(""); setQuery(""); }}>
+                <Text style={styles.clearLink}>Clear selection</Text>
+              </TouchableOpacity>
+            </View>
+
+            {busy ? (
+              <View style={styles.loader}>
+                <ActivityIndicator />
+              </View>
+            ) : (
+              <FlatList
+                data={readingsForSelected}
+                keyExtractor={(item) => item.reading_id}
+                ListEmptyComponent={<Text style={styles.empty}>No readings for this meter.</Text>}
+                renderItem={({ item }) => (
+                  <View style={styles.listRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.rowTitle}>
+                        {item.reading_id} • <Text style={styles.meterLink}>{item.meter_id}</Text>
+                      </Text>
+                      <Text style={styles.rowSub}>{item.lastread_date} • Value: {item.reading_value}</Text>
+                      <Text style={styles.rowSub}>Updated {formatDateTime(item.last_updated)} by {item.updated_by}</Text>
+                    </View>
+                    <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+                      <Text style={styles.linkText}>Update</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)} disabled={submitting}>
+                      {submitting ? <ActivityIndicator color="#fff" /> : <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>}
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        ) : null}
       </View>
 
       {/* --- CREATE MODAL --- */}
@@ -621,7 +712,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* --- EDIT MODAL (unchanged) --- */}
+      {/* --- EDIT MODAL --- */}
       <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View
@@ -638,8 +729,8 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                 value={editMeterId}
                 onChange={setEditMeterId}
                 options={meters.map((m) => ({
-                  label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
-                  value: m.meter_id,
+                    label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
+                    value: m.meter_id,
                 }))}
               />
 
@@ -670,7 +761,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* --- QR SCANNER (unchanged) --- */}
+      {/* --- QR SCANNER --- */}
       <Modal
         visible={scanVisible}
         animationType="fade"
@@ -860,7 +951,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }),
   },
-  cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43", marginBottom: 12 },
+  cardHeader: {
+    marginBottom: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
   rowWrap: { flexDirection: "row", gap: 12, alignItems: "center", flexWrap: "wrap" },
   input: {
     borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10,
@@ -868,12 +966,11 @@ const styles = StyleSheet.create({
     color: "#102a43", marginTop: 6, minWidth: 160,
   },
   btn: {
-    marginTop: 12, backgroundColor: "#1f4bd8", paddingVertical: 12,
+    marginTop: 0, backgroundColor: "#1f4bd8", paddingVertical: 12,
     borderRadius: 12, alignItems: "center", paddingHorizontal: 14,
   },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
-  hint: { marginTop: 8, color: "#627d98" },
   search: {
     borderWidth: 1, borderColor: "#d9e2ec", backgroundColor: "#fff",
     borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12,
@@ -906,25 +1003,7 @@ const styles = StyleSheet.create({
   datePickersRow: { flexDirection: "row", gap: 12 },
   datePickerCol: { flex: 1 },
 
-  // Scanner
-  scanBtn: { marginTop: 35, backgroundColor: "#0ea5e9", borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14 },
-  scanBtnText: { color: "#fff", fontWeight: "700" },
-  btnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: "#cbd5e1" },
-  btnGhostText: { color: "#102a43", fontWeight: "700" },
-
-  // OLD simple row chips kept (unused)
-  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
-
-  // Chips
-  chip: {
-    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1,
-    borderColor: "#d9e2ec", backgroundColor: "#fff",
-  },
-  chipActive: { backgroundColor: "#1f4bd8", borderColor: "#1f4bd8" },
-  chipText: { color: "#102a43", fontWeight: "700" },
-  chipTextActive: { color: "#fff" },
-
-  // NEW chips bar (matches MeterPanel)
+  // Chips (in this card)
   filtersBar: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -940,12 +1019,29 @@ const styles = StyleSheet.create({
   filterCol: { flex: 1, minWidth: 220 },
   stackCol: { flexDirection: "column" },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1,
+    borderColor: "#d9e2ec", backgroundColor: "#fff",
+  },
+  chipActive: { backgroundColor: "#1f4bd8", borderColor: "#1f4bd8" },
+  chipText: { color: "#102a43", fontWeight: "700" },
+  chipTextActive: { color: "#fff" },
   clearBtn: {
     paddingVertical: 8, paddingHorizontal: 12,
     borderRadius: 10, borderWidth: 1, borderColor: "#cbd5e1",
     backgroundColor: "#fff", alignSelf: "flex-end",
   },
   clearBtnText: { color: "#334e68", fontWeight: "700" },
+
+  // Scanner
+  scanBtn: { marginTop: 35, backgroundColor: "#0ea5e9", borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14 },
+  scanBtnText: { color: "#fff", fontWeight: "700" },
+  btnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: "#cbd5e1" },
+  btnGhostText: { color: "#102a43", fontWeight: "700" },
+
+  // Links/Badges
+  meterLink: { color: "#1f4bd8", textDecorationLine: "underline" },
+  clearLink: { color: "#1f4bd8" },
 
   // Scanner overlay
   scannerScreen: { flex: 1, backgroundColor: "#000" },
@@ -963,4 +1059,16 @@ const styles = StyleSheet.create({
   scanHint: { color: "#e5e7eb", textAlign: "center", marginBottom: 12 },
   scanFooter: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 16, alignItems: "center", backgroundColor: "rgba(0,0,0,0.35)" },
   scanCloseBtn: { alignSelf: "stretch" },
+
+  // Badge styles for meter selection
+  badge: {
+    backgroundColor: "#e5e7eb",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    alignSelf: "center",
+  },
+  badgeActive: { backgroundColor: "#1f4bd8" },
+  badgeText: { color: "#102a43", fontSize: 12 },
+  badgeTextActive: { color: "#fff", fontSize: 12 },
 });
