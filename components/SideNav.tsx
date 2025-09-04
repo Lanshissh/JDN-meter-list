@@ -58,7 +58,8 @@ export default function SideNav({ active, onSelect }: Props) {
           <View style={[styles.row, expanded && styles.rowExpanded]}>
             <Ionicons name="person-circle-outline" size={28} color="#fff" />
             {expanded && <Text style={styles.label}>Admin</Text>}
-          </View>+        </TouchableOpacity>
+          </View>        
+        </TouchableOpacity>
 
         )}
 
