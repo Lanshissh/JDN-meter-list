@@ -23,7 +23,11 @@ import {
   OnSuccessfulScanProps,
 } from "@masumdev/rn-qrcode-scanner";
 import { BASE_API } from "../../constants/api";
+import { LogBox } from "react-native";
 
+LogBox.ignoreLogs([
+  "VirtualizedLists should never be nested",
+]);
 // ------------ ALERT HELPERS (web + mobile) ------------
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
