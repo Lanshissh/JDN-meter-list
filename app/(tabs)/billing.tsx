@@ -18,43 +18,21 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
 import { BASE_API } from "../../constants/api";
 
-// ---------- Types & helpers ----------
+// ---------- helpers ----------
 type Numeric = number | string | null;
 
-type MeterPreview = {
-  meter_id?: string;
-  tenant_id?: string;
-  meter_type?: string;
-  base_latest?: Numeric;
-  vat_latest?: Numeric;
-  bill_latest_total?: Numeric;
-  base_prev?: Numeric;
-  vat_prev?: Numeric;
-  bill_prev_total?: Numeric;
-  consumption_prev?: Numeric;
-  consumption_latest?: Numeric;
-  change_rate?: Numeric;
-  [k: string]: any;
-};
-
-type TenantPreview = {
-  tenant_id?: string;
-  tenant_name?: string;
-  /** computed from payload.totals.bill_latest_total */
-  total_latest?: Numeric;
-  /** computed from sum(payload.meters[].bill_prev_total) */
-  total_prev?: Numeric;
-  /** computed from avg(payload.meters[].change_rate) */
-  avg_change_rate?: Numeric;
-  meters?: any[];
-  [k: string]: any;
+const ymd = (d = new Date()) => {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const Y = d.getFullYear();
+  const M = pad(d.getMonth() + 1);
+  const D = pad(d.getDate());
+  return `${Y}-${M}-${D}`;
 };
 
 // Normalize any API/axios error into a readable string
 const errorToText = (err: any): string => {
   if (!err) return "Failed to load billing preview.";
   const data = err?.response?.data;
-
   const candidates = [data?.error, data?.message, err?.message];
   for (const c of candidates) {
     if (!c) continue;
@@ -62,7 +40,11 @@ const errorToText = (err: any): string => {
     if (typeof c === "object" && typeof c.message === "string") return c.message;
   }
   if (typeof data === "string") return data;
-  try { return JSON.stringify(data || err); } catch { return "Failed to load billing preview."; }
+  try {
+    return JSON.stringify(data || err);
+  } catch {
+    return "Failed to load billing preview.";
+  }
 };
 
 const toNumber = (n: Numeric | undefined): number => {
@@ -78,51 +60,55 @@ const toNumber = (n: Numeric | undefined): number => {
 const fmt = (n: Numeric | undefined, currency = true) => {
   const v = toNumber(n);
   return currency
-    ? Intl.NumberFormat(undefined, { style: "currency", currency: "PHP", maximumFractionDigits: 2 }).format(v)
+    ? Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: "PHP",
+        maximumFractionDigits: 2,
+      }).format(v)
     : Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v);
 };
 
-const pct = (n: Numeric | undefined) =>
-  `${Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(toNumber(n))}%`;
+// ---------- types ----------
+type Period = {
+  start: string;
+  end: string;
+  max_reading_value?: number | null;
+  max_read_date?: string | null;
+};
 
-// Try a list of URLs in order until one succeeds.
-// Continues on 404 (route missing), throws on 401/403, network, or other fatal errors.
-async function getFirstOK(urls: string[], headers: any) {
-  let lastErr: any = null;
-  for (const url of urls) {
-    try {
-      const res = await axios.get(url, { headers });
-      return { data: res.data, url };
-    } catch (e: any) {
-      lastErr = e;
-      const status = e?.response?.status;
-      if (status === 404) continue;
-      if (status === 401 || status === 403) throw e;
-      if (status == null) throw e;
-      throw e;
-    }
-  }
-  throw lastErr || new Error("Not found");
-}
+type MeterPeriodPreview = {
+  meter_id: string;
+  meter_type: "electric" | "water" | "lpg" | string;
+  period_prev: Period;
+  period_curr: Period;
+  prev_consumption_index?: number | null;
+  current_consumption_index?: number | null;
+  consumption?: number | null;
+  base?: number | null;
+  vat?: number | null;
+  total?: number | null;
+};
 
+// ---------- component ----------
 export default function BillingScreen() {
   const { token } = useAuth();
+  const { scans } = useScanHistory();
+
   const authHeader = useMemo(
     () => ({ Authorization: token ? `Bearer ${token}` : "" }),
     [token]
   );
 
-  // "meter" = single meter preview; "tenant" = tenant aggregate (accepts TEN-* or MTR-*)
-  const [mode, setMode] = useState<"meter" | "tenant">("meter");
-  const [inputId, setInputId] = useState<string>("");
+  // Inputs
+  const [meterId, setMeterId] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>(ymd());
+
+  // State
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [meterData, setMeterData] = useState<MeterPreview | null>(null);
-  const [tenantData, setTenantData] = useState<TenantPreview | null>(null);
+  const [data, setData] = useState<MeterPeriodPreview | null>(null);
 
-  const { scans } = useScanHistory();
-
-  // Newest scan first
+  // Newest scan first → try to extract MTR-*
   const lastScannedCandidate = useMemo(() => {
     for (let i = 0; i < scans.length; i++) {
       const raw = String((scans[i] as any)?.data || "").trim();
@@ -130,148 +116,87 @@ export default function BillingScreen() {
       if (/^https?:\/\//i.test(raw)) continue;
       const m = raw.match(/\bMTR-[A-Za-z0-9-]+\b/i);
       if (m) return m[0].toUpperCase();
-      const t = raw.match(/\bTEN-[A-Za-z0-9-]+\b/i);
-      if (t) return t[0].toUpperCase();
       const candidate = raw.replace(/[^A-Za-z0-9-]/g, "").toUpperCase();
-      if (candidate.length >= 3) return candidate;
+      if (candidate.startsWith("MTR-")) return candidate;
     }
     return "";
   }, [scans]);
 
-  // Always sync input to latest scan when screen regains focus
+  // Auto-apply last scan when focusing screen
   useFocusEffect(
     useCallback(() => {
-      if (lastScannedCandidate) setInputId(lastScannedCandidate);
+      if (lastScannedCandidate) setMeterId(lastScannedCandidate);
     }, [lastScannedCandidate])
   );
 
-  // Preview logic (auto, debounced)
-  const lastKeyRef = useRef<string>("");
+  // Validate inputs
+  const isValidMeter = /^MTR-[A-Za-z0-9-]+$/.test(meterId.trim());
+  const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(endDate.trim());
 
-  const onPreview = useCallback(async () => {
-    const raw = inputId.trim();
-    if (!raw) {
-      setMeterData(null);
-      setTenantData(null);
-      setError(null);
-      return;
-    }
-
-    const id = raw.toUpperCase();
+  const fetchPreview = useCallback(async () => {
+    const id = meterId.trim().toUpperCase();
+    const ed = endDate.trim();
+    if (!id || !ed) return;
 
     setLoading(true);
     setError(null);
-    setMeterData(null);
-    setTenantData(null);
+    setData(null);
 
     try {
-      if (mode === "meter") {
-        // BACKEND: /billings/meters/:meter_id  (no /preview)
-        const urls = [
-          `${BASE_API}/billings/meters/${encodeURIComponent(id)}`,
-          // optional fallbacks if your server mounts differently:
-          `${BASE_API}/billing/meters/${encodeURIComponent(id)}`,
-          `${BASE_API}/billings/meter/${encodeURIComponent(id)}`,
-          `${BASE_API}/billing/meter/${encodeURIComponent(id)}`,
-          `${BASE_API}/billings/meters/${encodeURIComponent(id)}/`, // trailing slash variant
-        ];
-        const { data } = await getFirstOK(urls, authHeader);
-        setMeterData(data as MeterPreview);
-      } else {
-        // Tenant aggregate: accepts TEN-* or MTR-*; resolve MTR -> TEN first via meter endpoint
-        const isMeterId = /^MTR-[A-Za-z0-9-]+$/i.test(id);
-        let tenantId = id;
-
-        if (isMeterId) {
-          const mUrls = [
-            `${BASE_API}/billings/meters/${encodeURIComponent(id)}`,
-            `${BASE_API}/billing/meters/${encodeURIComponent(id)}`,
-            `${BASE_API}/billings/meter/${encodeURIComponent(id)}`,
-            `${BASE_API}/billing/meter/${encodeURIComponent(id)}`,
-            `${BASE_API}/billings/meters/${encodeURIComponent(id)}/`,
-          ];
-          const { data: meter } = await getFirstOK(mUrls, authHeader);
-          const resolved = String((meter as MeterPreview)?.tenant_id || "");
-          if (!resolved) throw new Error("This meter is not linked to any tenant.");
-          tenantId = resolved.toUpperCase();
-        }
-
-        // BACKEND: /billings/tenants/:tenant_id/  (trailing slash)
-        const tUrls = [
-          `${BASE_API}/billings/tenants/${encodeURIComponent(tenantId)}/`,
-          // fallbacks
-          `${BASE_API}/billings/tenants/${encodeURIComponent(tenantId)}`,
-          `${BASE_API}/billing/tenants/${encodeURIComponent(tenantId)}/`,
-          `${BASE_API}/billing/tenants/${encodeURIComponent(tenantId)}`,
-          `${BASE_API}/billings/tenant/${encodeURIComponent(tenantId)}/`,
-          `${BASE_API}/billing/tenant/${encodeURIComponent(tenantId)}/`,
-        ];
-        const { data: payload } = await getFirstOK(tUrls, authHeader);
-
-        const meters = Array.isArray(payload?.meters) ? payload.meters : [];
-        const totalLatest = Number(payload?.totals?.bill_latest_total) || 0;
-        const totalPrev = meters.reduce(
-          (s: number, m: any) => s + (Number(m?.bill_prev_total) || 0),
-          0
-        );
-        const changeVals = meters
-          .map((m: any) => (m?.change_rate == null ? null : Number(m.change_rate)))
-          .filter((v: number | null) => v !== null && Number.isFinite(v)) as number[];
-        const avgChange = changeVals.length
-          ? changeVals.reduce((a, b) => a + b, 0) / changeVals.length
-          : 0;
-
-        const shaped: TenantPreview = {
-          tenant_id: payload?.tenant_id ?? tenantId,
-          tenant_name: payload?.tenant_name ?? "",
-          total_latest: totalLatest,
-          total_prev: totalPrev,
-          avg_change_rate: avgChange,
-          meters,
-        };
-
-        setTenantData(shaped);
-      }
+      const url = `${BASE_API}/billings/meters/${encodeURIComponent(
+        id
+      )}/period-end/${encodeURIComponent(ed)}`;
+      const res = await axios.get(url, { headers: authHeader });
+      setData(res.data as MeterPeriodPreview);
     } catch (err: any) {
       setError(errorToText(err));
     } finally {
       setLoading(false);
     }
-  }, [inputId, mode, authHeader]);
+  }, [meterId, endDate, authHeader]);
 
+  // Debounced auto-preview
+  const lastKeyRef = useRef<string>("");
   useEffect(() => {
-    const id = inputId.trim();
-    if (!id) {
+    if (!isValidMeter || !isValidDate) {
+      setData(null);
+      setError(null);
       lastKeyRef.current = "";
       return;
     }
-    const key = `${mode}|${id}`;
+    const key = `${meterId}|${endDate}`;
     if (lastKeyRef.current === key) return;
     const t = setTimeout(() => {
       lastKeyRef.current = key;
-      onPreview();
+      fetchPreview();
     }, 350);
     return () => clearTimeout(t);
-  }, [inputId, mode, onPreview]);
+  }, [meterId, endDate, isValidMeter, isValidDate, fetchPreview]);
 
   // UI helpers
   const applyLastScan = () => {
-    if (lastScannedCandidate) setInputId(lastScannedCandidate);
+    if (lastScannedCandidate) setMeterId(lastScannedCandidate);
   };
-  const clearInput = () => {
-    setInputId("");
-    setMeterData(null);
-    setTenantData(null);
+  const setToday = () => setEndDate(ymd(new Date()));
+  const clearAll = () => {
+    setMeterId("");
+    setEndDate(ymd());
+    setData(null);
     setError(null);
   };
 
-  // ---------- Render ----------
+  // ---------- render ----------
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
         <ScrollView contentContainerStyle={{ gap: 2 }}>
-          {/* Brand header — keep your logo */}
-          <View style={[styles.brandHeader, Platform.OS === "web" && { alignItems: "flex-start", marginTop: -30 }]}>
+          {/* Brand header */}
+          <View
+            style={[
+              styles.brandHeader,
+              Platform.OS === "web" && { alignItems: "flex-start", marginTop: -30 },
+            ]}
+          >
             <Image
               source={require("../../assets/images/logo.png")}
               style={styles.brandLogo}
@@ -279,43 +204,22 @@ export default function BillingScreen() {
             />
           </View>
 
-          {/* Segmented control */}
-          <View style={styles.segment}>
-            <TouchableOpacity
-              onPress={() => setMode("meter")}
-              style={[styles.segmentBtn, mode === "meter" && styles.segmentBtnActive]}
-            >
-              <Text style={[styles.segmentText, mode === "meter" && styles.segmentTextActive]}>
-                Meter Preview
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setMode("tenant")}
-              style={[styles.segmentBtn, mode === "tenant" && styles.segmentBtnActive]}
-            >
-              <Text style={[styles.segmentText, mode === "tenant" && styles.segmentTextActive]}>
-                Tenant Aggregate
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Search card */}
-          <View style={styles.card}>
-            <Text style={styles.label}>
-              {mode === "meter" ? "Meter ID" : "Tenant ID or Meter ID"}
-            </Text>
+          {/* Inputs card */}
+          <View className="card" style={styles.card}>
+            <Text style={styles.title}>Meter Billing Preview</Text>
+            <Text style={styles.label}>Meter ID</Text>
             <View style={styles.inputRow}>
               <TextInput
-                value={inputId}
-                onChangeText={setInputId}
-                placeholder={mode === "meter" ? "e.g. MTR-1" : "e.g. TEN-1 or MTR-1"}
+                value={meterId}
+                onChangeText={setMeterId}
+                placeholder="e.g. MTR-1"
                 placeholderTextColor="#8A8F98"
                 autoCapitalize="characters"
                 autoCorrect={false}
                 style={styles.input}
               />
-              {inputId?.length > 0 ? (
-                <TouchableOpacity onPress={clearInput} style={styles.pillBtn}>
+              {meterId?.length > 0 ? (
+                <TouchableOpacity onPress={clearAll} style={styles.pillBtn}>
                   <Text style={styles.pillText}>Clear</Text>
                 </TouchableOpacity>
               ) : (
@@ -325,6 +229,22 @@ export default function BillingScreen() {
               )}
             </View>
 
+            <Text style={[styles.label, { marginTop: 10 }]}>Period-end date</Text>
+            <View style={styles.inputRow}>
+              <TextInput
+                value={endDate}
+                onChangeText={setEndDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#8A8F98"
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={styles.input}
+              />
+              <TouchableOpacity onPress={setToday} style={styles.pillBtn}>
+                <Text style={styles.pillText}>Today</Text>
+              </TouchableOpacity>
+            </View>
+
             {!!error && (
               <View style={[styles.badge, styles.badgeError]}>
                 <Text style={styles.badgeText}>{error}</Text>
@@ -332,7 +252,7 @@ export default function BillingScreen() {
             )}
           </View>
 
-          {/* Loading state */}
+          {/* Loading */}
           {loading && (
             <View style={styles.card}>
               <View style={[styles.center, { paddingVertical: 16 }]}>
@@ -342,130 +262,79 @@ export default function BillingScreen() {
             </View>
           )}
 
-          {/* Meter preview */}
-          {!loading && !error && mode === "meter" && meterData && (
+          {/* Result */}
+          {!loading && !error && data && (
             <View style={styles.card}>
-              <Text style={styles.title}>Meter {meterData.meter_id}</Text>
-              <View style={styles.kv}>
-                <Text style={styles.k}>Type</Text>
-                <Text style={styles.v}>{String(meterData.meter_type || "").toUpperCase()}</Text>
-              </View>
-              {meterData.tenant_id ? (
-                <View style={styles.kv}>
-                  <Text style={styles.k}>Tenant</Text>
-                  <Text style={styles.v}>{meterData.tenant_id}</Text>
-                </View>
-              ) : null}
+              <Text style={styles.title}>
+                Meter {data.meter_id} ({String(data.meter_type || "").toUpperCase()})
+              </Text>
+
               <View style={styles.divider} />
+
               <View style={styles.grid2}>
                 <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Latest bill</Text>
-                  <Text style={styles.statValue}>{fmt(meterData.bill_latest_total)}</Text>
-                </View>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Prev bill</Text>
-                  <Text style={styles.statValue}>{fmt(meterData.bill_prev_total)}</Text>
-                </View>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Latest kWh/m³</Text>
-                  <Text style={styles.statValue}>{fmt(meterData.consumption_latest, false)}</Text>
-                </View>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Prev kWh/m³</Text>
-                  <Text style={styles.statValue}>{fmt(meterData.consumption_prev, false)}</Text>
-                </View>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Change</Text>
-                  <Text style={[styles.statValue, { fontVariant: ["tabular-nums"] }]}>
-                    {pct(meterData.change_rate)}
+                  <Text style={styles.statLabel}>Prev period</Text>
+                  <Text style={styles.statValue}>
+                    {data.period_prev.start} → {data.period_prev.end}
                   </Text>
+                  <Text style={styles.muted}>
+                    Max idx: {fmt(data.period_prev.max_reading_value, false)}
+                  </Text>
+                </View>
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Current period</Text>
+                  <Text style={styles.statValue}>
+                    {data.period_curr.start} → {data.period_curr.end}
+                  </Text>
+                  <Text style={styles.muted}>
+                    Max idx: {fmt(data.period_curr.max_reading_value, false)}
+                  </Text>
+                </View>
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Prev index</Text>
+                  <Text style={styles.statValue}>
+                    {fmt(data.prev_consumption_index, false)}
+                  </Text>
+                </View>
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Current index</Text>
+                  <Text style={styles.statValue}>
+                    {fmt(data.current_consumption_index, false)}
+                  </Text>
+                </View>
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Consumption</Text>
+                  <Text style={styles.statValue}>{fmt(data.consumption, false)}</Text>
+                </View>
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Base</Text>
+                  <Text style={styles.statValue}>{fmt(data.base)}</Text>
+                </View>
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>VAT</Text>
+                  <Text style={styles.statValue}>{fmt(data.vat)}</Text>
+                </View>
+
+                <View style={styles.stat}>
+                  <Text style={styles.statLabel}>Total</Text>
+                  <Text style={styles.statValue}>{fmt(data.total)}</Text>
                 </View>
               </View>
             </View>
           )}
 
-          {/* Tenant aggregate */}
-          {!loading && !error && mode === "tenant" && tenantData && (
-            <>
-              <View style={styles.card}>
-                <Text style={styles.title}>Tenant {tenantData.tenant_id}</Text>
-                {!!tenantData.tenant_name && (
-                  <Text style={styles.muted}>{tenantData.tenant_name}</Text>
-                )}
-                <View style={styles.divider} />
-                <View style={styles.grid2}>
-                  <View style={styles.stat}>
-                    <Text style={styles.statLabel}>Aggregate (latest)</Text>
-                    <Text style={styles.statValue}>{fmt(tenantData.total_latest)}</Text>
-                  </View>
-                  <View style={styles.stat}>
-                    <Text style={styles.statLabel}>Aggregate (prev)</Text>
-                    <Text style={styles.statValue}>{fmt(tenantData.total_prev)}</Text>
-                  </View>
-                  <View style={styles.stat}>
-                    <Text style={styles.statLabel}>Average change</Text>
-                    <Text style={[styles.statValue, { fontVariant: ["tabular-nums"] }]}>
-                      {pct(tenantData.avg_change_rate)}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* NEW: Per-meter breakdown (electric, water, LPG — all shown) */}
-              <View style={styles.card}>
-                <Text style={styles.title}>Meters (all)</Text>
-                {tenantData.meters && tenantData.meters.length > 0 ? (
-                  <View style={{ gap: 10 }}>
-                    {tenantData.meters.map((m: any) => (
-                      <View key={m.meter_id} style={styles.meterRow}>
-                        <View style={styles.rowHeader}>
-                          <Text style={styles.rowTitle}>
-                            {String(m.meter_type || "").toUpperCase()} — {m.meter_id}
-                          </Text>
-                          <View style={styles.typeBadge}>
-                            <Text style={styles.typeBadgeText}>
-                              {String(m.meter_type || "").toUpperCase()}
-                            </Text>
-                          </View>
-                        </View>
-                        <View style={styles.grid2}>
-                          <View style={styles.stat}>
-                            <Text style={styles.statLabel}>Latest bill</Text>
-                            <Text style={styles.statValue}>{fmt(m.bill_latest_total)}</Text>
-                          </View>
-                          <View style={styles.stat}>
-                            <Text style={styles.statLabel}>Prev bill</Text>
-                            <Text style={styles.statValue}>{fmt(m.bill_prev_total)}</Text>
-                          </View>
-                          <View style={styles.stat}>
-                            <Text style={styles.statLabel}>Latest kWh/m³</Text>
-                            <Text style={styles.statValue}>{fmt(m.consumption_latest, false)}</Text>
-                          </View>
-                          <View style={styles.stat}>
-                            <Text style={styles.statLabel}>Prev kWh/m³</Text>
-                            <Text style={styles.statValue}>{fmt(m.consumption_prev, false)}</Text>
-                          </View>
-                          <View style={styles.stat}>
-                            <Text style={styles.statLabel}>Change</Text>
-                            <Text style={[styles.statValue, { fontVariant: ["tabular-nums"] }]}>
-                              {pct(m.change_rate)}
-                            </Text>
-                          </View>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                  <Text style={styles.muted}>No meters found for this tenant.</Text>
-                )}
-              </View>
-            </>
-          )}
-
           {/* Empty hint */}
-          {!loading && !error && !meterData && !tenantData && inputId.trim().length === 0 && (
+          {!loading && !error && !data && (!meterId || !endDate) && (
             <View style={[styles.card, styles.center]}>
-              <Text style={styles.muted}>Enter an ID or use your last scan to preview billing.</Text>
+              <Text style={styles.muted}>
+                Enter a meter ID and period-end date to preview billing.
+              </Text>
             </View>
           )}
         </ScrollView>
@@ -485,8 +354,6 @@ const styles = StyleSheet.create({
     padding: 18,
     paddingTop: 8,
   },
-
-  // Brand header
   brandHeader: {
     alignItems: "center",
   },
@@ -494,39 +361,6 @@ const styles = StyleSheet.create({
     height: 100,
     width: 100,
   },
-
-  // Segmented control
-  segment: {
-    flexDirection: "row",
-    backgroundColor: "#E9EDF5",
-    borderRadius: 18,
-    padding: 6,
-    marginTop: -10,
-  },
-  segmentBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: "center",
-    borderRadius: 8,
-  },
-  segmentBtnActive: {
-    backgroundColor: "#ffffff",
-    shadowColor: "#000",
-    shadowOpacity: 0.07,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    ...Platform.select({ android: { elevation: 1 } }),
-  },
-  segmentText: {
-    fontSize: 14,
-    color: "#5A6473",
-    fontWeight: "600",
-  },
-  segmentTextActive: {
-    color: "#11181C",
-  },
-
-  // Cards
   card: {
     backgroundColor: "#fff",
     padding: 14,
@@ -575,17 +409,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 12,
   },
-
-  // Key/Value row
-  kv: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 4,
-  },
-  k: { color: "#4B5563" },
-  v: { fontWeight: "600" },
-
-  // Grid stats
   grid2: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -610,8 +433,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#11181C",
   },
-
-  // Misc
   divider: {
     height: 1,
     backgroundColor: "#EEF2F7",
@@ -637,36 +458,5 @@ const styles = StyleSheet.create({
   badgeText: {
     color: "#991B1B",
     fontWeight: "600",
-  },
-
-  // NEW: per-meter list styling
-  meterRow: {
-    padding: 10,
-    backgroundColor: "#FAFBFE",
-    borderWidth: 1,
-    borderColor: "#E6EBF3",
-    borderRadius: 12,
-  },
-  rowHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
-  rowTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#11181C",
-  },
-  typeBadge: {
-    backgroundColor: "#EEF3FF",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  typeBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#1F2A44",
   },
 });
