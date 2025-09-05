@@ -60,6 +60,18 @@ function confirm(title: string, message: string): Promise<boolean> {
 // Date helper
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+// ✅ Number formatter (added)
+function fmtValue(n: number | string | null | undefined, unit?: string) {
+  if (n == null) return "—";
+  const v = typeof n === "string" ? parseFloat(n) : n;
+  if (!isFinite(v)) return String(n);
+  const formatted = Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(v);
+  return unit ? `${formatted} ${unit}` : formatted;
+}
+
 // --- Types ---
 export type Reading = {
   reading_id: string;
@@ -798,7 +810,21 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                               <Text style={styles.rowTitle}>
                                 {item.reading_id} • <Text style={styles.meterLink}>{item.meter_id}</Text>
                               </Text>
-                              <Text style={styles.rowSub}>{item.lastread_date} • Value: {item.reading_value}</Text>
+
+                              {/* ✅ Only this line changed to show formatted value with unit */}
+                              {(() => {
+                                const mType = metersById.get(item.meter_id)?.meter_type;
+                                const unit =
+                                  mType === "electric" ? "" :
+                                  mType === "water"    ? ""  :
+                                  mType === "lpg"      ? ""  : undefined;
+                                return (
+                                  <Text style={[styles.rowSub, styles.centerText]}>
+                                    {item.lastread_date} • Value: {fmtValue(item.reading_value, unit)}
+                                  </Text>
+                                );
+                              })()}
+
                               <Text style={styles.rowSub}>Updated {formatDateTime(item.last_updated)} by {item.updated_by}</Text>
                             </View>
                             <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
@@ -1133,7 +1159,25 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10,
   },
   rowTitle: { fontWeight: "700", color: "#102a43" },
-  rowSub: { color: "#627d98" },
+  rowSub: {
+  fontSize: 13,
+  color: "#2c3e50",
+  textAlign: "left",
+  fontWeight: "600",
+  backgroundColor: "#ffffffff",
+  paddingVertical: 2,
+  paddingHorizontal: 8,
+  marginLeft: -9,
+  borderRadius: 8,
+  },
+  centerText: {
+  textAlign: "center",
+  width: "100%",
+  color: "#1f4bd8",
+  fontWeight: "900",
+  fontSize: 15,
+  marginLeft: 75,
+  },
   link: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eef2ff" },
   linkText: { color: "#1f4bd8", fontWeight: "700" },
 

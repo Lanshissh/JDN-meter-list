@@ -1,4 +1,3 @@
-// app/(tabs)/billing.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
@@ -37,7 +36,7 @@ const errorToText = (err: any): string => {
   for (const c of candidates) {
     if (!c) continue;
     if (typeof c === "string") return c;
-    if (typeof c === "object" && typeof c.message === "string") return c.message;
+    if (typeof c === "object" && typeof (c as any).message === "string") return (c as any).message;
   }
   if (typeof data === "string") return data;
   try {
@@ -68,25 +67,30 @@ const fmt = (n: Numeric | undefined, currency = true) => {
     : Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v);
 };
 
-// ---------- types ----------
-type Period = {
-  start: string;
-  end: string;
-  max_reading_value?: number | null;
-  max_read_date?: string | null;
+// ---------- types (NEW API SHAPE) ----------
+
+type PeriodBill = {
+  prev_index: number | null;
+  curr_index: number | null;
+  consumption: number; // 0 for downtime
+  base: number;        // 0 for downtime
+  vat: number;         // 0 for downtime
+  total: number;       // 0 for downtime
 };
 
-type MeterPeriodPreview = {
+type PeriodOut = {
+  type: "billable" | "downtime";
+  start: string;
+  end: string;
+  reason?: string; // downtime only
+  bill: PeriodBill;
+};
+
+type BillingApiResponse = {
   meter_id: string;
-  meter_type: "electric" | "water" | "lpg" | string;
-  period_prev: Period;
-  period_curr: Period;
-  prev_consumption_index?: number | null;
-  current_consumption_index?: number | null;
-  consumption?: number | null;
-  base?: number | null;
-  vat?: number | null;
-  total?: number | null;
+  meter_type: string; // "electric" | "water" | "lpg" | etc.
+  periods: PeriodOut[];
+  totals: { consumption: number; base: number; vat: number; total: number };
 };
 
 // ---------- component ----------
@@ -106,7 +110,7 @@ export default function BillingScreen() {
   // State
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<MeterPeriodPreview | null>(null);
+  const [data, setData] = useState<BillingApiResponse | null>(null);
 
   // Newest scan first → try to extract MTR-*
   const lastScannedCandidate = useMemo(() => {
@@ -147,7 +151,7 @@ export default function BillingScreen() {
         id
       )}/period-end/${encodeURIComponent(ed)}`;
       const res = await axios.get(url, { headers: authHeader });
-      setData(res.data as MeterPeriodPreview);
+      setData(res.data as BillingApiResponse);
     } catch (err: any) {
       setError(errorToText(err));
     } finally {
@@ -184,6 +188,14 @@ export default function BillingScreen() {
     setData(null);
     setError(null);
   };
+
+  const BillTag = ({ type }: { type: PeriodOut["type"] }) => (
+    <View style={[styles.tag, type === "billable" ? styles.tagOk : styles.tagMuted]}>
+      <Text style={[styles.tagText, type === "billable" ? styles.tagTextOk : styles.tagTextMuted]}>
+        {type === "billable" ? "BILLABLE" : "DOWNTIME"}
+      </Text>
+    </View>
+  );
 
   // ---------- render ----------
   return (
@@ -262,71 +274,87 @@ export default function BillingScreen() {
             </View>
           )}
 
-          {/* Result */}
+          {/* Result (NEW) */}
           {!loading && !error && data && (
-            <View style={styles.card}>
-              <Text style={styles.title}>
-                Meter {data.meter_id} ({String(data.meter_type || "").toUpperCase()})
-              </Text>
+            <>
+              <View style={styles.card}>
+                <Text style={styles.title}>
+                  Meter {data.meter_id} ({String(data.meter_type || "").toUpperCase()})
+                </Text>
+                <View style={styles.divider} />
 
-              <View style={styles.divider} />
+                {data.periods.length === 0 ? (
+                  <Text style={styles.muted}>No segments for this period.</Text>
+                ) : (
+                  <View style={{ gap: 10 }}>
+                    {data.periods.map((p, idx) => (
+                      <View key={`${p.start}-${p.end}-${idx}`} style={styles.segment}>
+                        <View style={styles.segmentHeader}>
+                          <BillTag type={p.type} />
+                          <Text style={styles.segmentDates}>
+                            {p.start} → {p.end}
+                          </Text>
+                        </View>
 
-              <View style={styles.grid2}>
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Prev period</Text>
-                  <Text style={styles.statValue}>
-                    {data.period_prev.start} → {data.period_prev.end}
-                  </Text>
-                  <Text style={styles.muted}>
-                    Max idx: {fmt(data.period_prev.max_reading_value, false)}
-                  </Text>
-                </View>
+                        {p.type === "downtime" ? (
+                          <Text style={styles.muted}>Reason: {p.reason || "zero readings"}</Text>
+                        ) : (
+                          <View style={styles.grid2}>
+                            <View style={styles.stat}>
+                              <Text style={styles.statLabel}>Prev index</Text>
+                              <Text style={styles.statValue}>{fmt(p.bill.prev_index, false)}</Text>
+                            </View>
+                            <View style={styles.stat}>
+                              <Text style={styles.statLabel}>Current index</Text>
+                              <Text style={styles.statValue}>{fmt(p.bill.curr_index, false)}</Text>
+                            </View>
+                            <View style={styles.stat}>
+                              <Text style={styles.statLabel}>Consumption</Text>
+                              <Text style={styles.statValue}>{fmt(p.bill.consumption, false)}</Text>
+                            </View>
+                            <View style={styles.stat}>
+                              <Text style={styles.statLabel}>Base</Text>
+                              <Text style={styles.statValue}>{fmt(p.bill.base)}</Text>
+                            </View>
+                            <View style={styles.stat}>
+                              <Text style={styles.statLabel}>VAT</Text>
+                              <Text style={styles.statValue}>{fmt(p.bill.vat)}</Text>
+                            </View>
+                            <View style={styles.stat}>
+                              <Text style={styles.statLabel}>Total</Text>
+                              <Text style={styles.statValue}>{fmt(p.bill.total)}</Text>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
 
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Current period</Text>
-                  <Text style={styles.statValue}>
-                    {data.period_curr.start} → {data.period_curr.end}
-                  </Text>
-                  <Text style={styles.muted}>
-                    Max idx: {fmt(data.period_curr.max_reading_value, false)}
-                  </Text>
-                </View>
-
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Prev index</Text>
-                  <Text style={styles.statValue}>
-                    {fmt(data.prev_consumption_index, false)}
-                  </Text>
-                </View>
-
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Current index</Text>
-                  <Text style={styles.statValue}>
-                    {fmt(data.current_consumption_index, false)}
-                  </Text>
-                </View>
-
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Consumption</Text>
-                  <Text style={styles.statValue}>{fmt(data.consumption, false)}</Text>
-                </View>
-
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Base</Text>
-                  <Text style={styles.statValue}>{fmt(data.base)}</Text>
-                </View>
-
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>VAT</Text>
-                  <Text style={styles.statValue}>{fmt(data.vat)}</Text>
-                </View>
-
-                <View style={styles.stat}>
-                  <Text style={styles.statLabel}>Total</Text>
-                  <Text style={styles.statValue}>{fmt(data.total)}</Text>
+              {/* Roll-up totals */}
+              <View style={styles.card}>
+                <Text style={styles.title}>Billable totals (this period)</Text>
+                <View style={styles.grid2}>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>Consumption</Text>
+                    <Text style={styles.statValue}>{fmt(data.totals.consumption, false)}</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>Base</Text>
+                    <Text style={styles.statValue}>{fmt(data.totals.base)}</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>VAT</Text>
+                    <Text style={styles.statValue}>{fmt(data.totals.vat)}</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statLabel}>Total</Text>
+                    <Text style={styles.statValue}>{fmt(data.totals.total)}</Text>
+                  </View>
                 </View>
               </View>
-            </View>
+            </>
           )}
 
           {/* Empty hint */}
@@ -458,5 +486,42 @@ const styles = StyleSheet.create({
   badgeText: {
     color: "#991B1B",
     fontWeight: "600",
+  },
+  segment: {
+    borderWidth: 1,
+    borderColor: "#E6EBF3",
+    borderRadius: 10,
+    padding: 10,
+  },
+  segmentHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  segmentDates: {
+    fontWeight: "700",
+    color: "#11181C",
+  },
+  tag: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  tagOk: {
+    backgroundColor: "#E7F6EC",
+  },
+  tagMuted: {
+    backgroundColor: "#EEF2F7",
+  },
+  tagText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  tagTextOk: {
+    color: "#166534",
+  },
+  tagTextMuted: {
+    color: "#334155",
   },
 });
