@@ -24,6 +24,7 @@ type Tenant = {
   tenant_name: string;
   building_id: string;
   bill_start: string; // YYYY-MM-DD
+  tenant_status: "active" | "inactive";
   last_updated: string; // ISO
   updated_by: string;
 };
@@ -158,6 +159,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
   // Filters & state
   const [buildingFilter, setBuildingFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -175,6 +177,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [name, setName] = useState("");
   const [buildingId, setBuildingId] = useState("");
   const [billStart, setBillStart] = useState(today());
+  const [createStatus, setCreateStatus] = useState<"active" | "inactive">("active");
 
   // Edit modal
   const [editVisible, setEditVisible] = useState(false);
@@ -183,11 +186,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [editName, setEditName] = useState("");
   const [editBuildingId, setEditBuildingId] = useState("");
   const [editBillStart, setEditBillStart] = useState(today());
+  const [editStatus, setEditStatus] = useState<"active" | "inactive">("active");
 
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mergedToken]);
+  }, [mergedToken, statusFilter]);
 
   const loadAll = async () => {
     if (!mergedToken) {
@@ -198,8 +202,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     try {
       setBusy(true);
 
-      // Always fetch tenants…
-      const tRes = await api.get<Tenant[]>("/tenants");
+      // Always fetch tenants (use server status filter if set)
+      const params: any = {};
+      if (statusFilter) params.status = statusFilter;
+      const tRes = await api.get<Tenant[]>("/tenants", { params });
       setTenants(tRes.data || []);
 
       // …and only fetch buildings if admin (operators cannot access /buildings)
@@ -209,7 +215,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         bData = bRes.data || [];
         setBuildings(bData);
       } else {
-        setBuildings([]); // keep UI consistent; operators don't need the list
+        setBuildings([]);
       }
 
       // Default building for create form
@@ -233,6 +239,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     if (buildingFilter)
       list = list.filter((t) => t.building_id === buildingFilter);
 
+    if (statusFilter)
+      list = list.filter((t) => t.tenant_status === statusFilter);
+
     if (!q) return list;
     return list.filter(
       (t) =>
@@ -240,9 +249,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         t.tenant_sn.toLowerCase().includes(q) ||
         t.tenant_name.toLowerCase().includes(q) ||
         t.building_id.toLowerCase().includes(q) ||
-        t.bill_start.toLowerCase().includes(q),
+        t.bill_start.toLowerCase().includes(q) ||
+        t.tenant_status.toLowerCase().includes(q),
     );
-  }, [tenants, query, buildingFilter]);
+  }, [tenants, query, buildingFilter, statusFilter]);
 
   /** Sort (chips) */
   const sorted = useMemo(() => {
@@ -275,6 +285,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         tenant_name: name,
         building_id: finalBuildingId,
         bill_start: billStart,
+        tenant_status: createStatus,
       });
       const assignedId: string =
         res?.data?.tenantId ?? res?.data?.tenant_id ?? res?.data?.id ?? "";
@@ -283,6 +294,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       setSn("");
       setName("");
       setBillStart(today());
+      setCreateStatus("active");
       setCreateVisible(false);
 
       await loadAll();
@@ -305,6 +317,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     setEditName(row.tenant_name);
     setEditBuildingId(row.building_id);
     setEditBillStart(row.bill_start);
+    setEditStatus(row.tenant_status);
     setEditVisible(true);
   };
 
@@ -312,15 +325,21 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     if (!editRow) return;
     try {
       setSubmitting(true);
-      await api.put(`/tenants/${encodeURIComponent(editRow.tenant_id)}`, {
+      const res = await api.put(`/tenants/${encodeURIComponent(editRow.tenant_id)}`, {
         tenant_sn: editSn,
         tenant_name: editName,
         building_id: editBuildingId,
         bill_start: editBillStart,
+        tenant_status: editStatus,
       });
       setEditVisible(false);
       await loadAll();
-      notify("Updated", "Tenant updated successfully.");
+
+      const freedInfo =
+        typeof res?.data?.stalls_freed === "number" && res.data.stalls_freed > 0
+          ? `\nFreed stalls: ${res.data.stalls_freed}`
+          : "";
+      notify("Updated", `Tenant updated successfully.${freedInfo}`);
     } catch (err: any) {
       notify("Update failed", errorText(err));
     } finally {
@@ -409,60 +428,80 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
         <TextInput
           style={styles.search}
-          placeholder="Search by ID, SN, name, building, date…"
+          placeholder="Search by ID, SN, name, building, date, status…"
           value={query}
           onChangeText={setQuery}
         />
 
-{/* Filters bar — building chips + sort chips (like Stalls) */}
-<View style={styles.filtersBar}>
-  {/* Building chips */}
-  <View style={styles.filterCol}>
-    <Text style={styles.dropdownLabel}>Filter by Building</Text>
-    <View style={styles.chipsRow}>
-      {filterBuildingOptions.map((opt) => (
-        <Chip
-          key={opt.value || "all"}
-          label={opt.label}
-          active={buildingFilter === opt.value}
-          onPress={() => setBuildingFilter(opt.value)}
-        />
-      ))}
-    </View>
-  </View>
+        {/* Filters bar — building chips + status chips + sort chips */}
+        <View style={styles.filtersBar}>
+          {/* Building chips */}
+          <View style={styles.filterCol}>
+            <Text style={styles.dropdownLabel}>Filter by Building</Text>
+            <View style={styles.chipsRow}>
+              {filterBuildingOptions.map((opt) => (
+                <Chip
+                  key={opt.value || "all"}
+                  label={opt.label}
+                  active={buildingFilter === opt.value}
+                  onPress={() => setBuildingFilter(opt.value)}
+                />
+              ))}
+            </View>
+          </View>
 
-  {/* Sort chips (moved here) */}
-  <View style={styles.filterCol}>
-    <Text style={styles.dropdownLabel}>Sort</Text>
-    <View style={styles.chipsRow}>
-      {[
-        { label: "Newest", val: "newest" },
-        { label: "Oldest", val: "oldest" },
-        { label: "ID ↑", val: "idAsc" },
-        { label: "ID ↓", val: "idDesc" },
-      ].map(({ label, val }) => (
-        <Chip
-          key={val}
-          label={label}
-          active={sortMode === (val as any)}
-          onPress={() => setSortMode(val as any)}
-        />
-      ))}
-    </View>
-  </View>
+          {/* Status chips */}
+          <View style={styles.filterCol}>
+            <Text style={styles.dropdownLabel}>Status</Text>
+            <View style={styles.chipsRow}>
+              {[
+                { label: "All", val: "" },
+                { label: "Active", val: "active" },
+                { label: "Inactive", val: "inactive" },
+              ].map(({ label, val }) => (
+                <Chip
+                  key={label}
+                  label={label}
+                  active={(statusFilter as string) === val}
+                  onPress={() => setStatusFilter(val as any)}
+                />
+              ))}
+            </View>
+          </View>
 
-  {(!!buildingFilter) && (
-    <TouchableOpacity
-      style={styles.clearBtn}
-      onPress={() => {
-        setBuildingFilter("");
-        // sort reset optional — leaving as-is to match your logic
-      }}
-    >
-      <Text style={styles.clearBtnText}>Clear</Text>
-    </TouchableOpacity>
-  )}
-</View>x
+          {/* Sort chips */}
+          <View style={styles.filterCol}>
+            <Text style={styles.dropdownLabel}>Sort</Text>
+            <View style={styles.chipsRow}>
+              {[
+                { label: "Newest", val: "newest" },
+                { label: "Oldest", val: "oldest" },
+                { label: "ID ↑", val: "idAsc" },
+                { label: "ID ↓", val: "idDesc" },
+              ].map(({ label, val }) => (
+                <Chip
+                  key={val}
+                  label={label}
+                  active={sortMode === (val as any)}
+                  onPress={() => setSortMode(val as any)}
+                />
+              ))}
+            </View>
+          </View>
+
+          {(!!buildingFilter || !!statusFilter) && (
+            <TouchableOpacity
+              style={styles.clearBtn}
+              onPress={() => {
+                setBuildingFilter("");
+                setStatusFilter("");
+              }}
+            >
+              <Text style={styles.clearBtnText}>Clear</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
@@ -485,6 +524,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                   <Text style={styles.rowSub}>
                     {item.tenant_sn} • {item.building_id} • Bill start:{" "}
                     {item.bill_start}
+                  </Text>
+                  <Text style={styles.rowSub}>
+                    Status:{" "}
+                    <Text style={{ fontWeight: "700", color: item.tenant_status === "active" ? "#0b8f3a" : "#b00020" }}>
+                      {item.tenant_status.toUpperCase()}
+                    </Text>
                   </Text>
                   <Text style={styles.rowSub}>
                     Updated {formatDateTime(item.last_updated)} by{" "}
@@ -559,6 +604,22 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               onChange={setBillStart}
             />
 
+            <Dropdown
+              label="Status"
+              value={createStatus}
+              onChange={(v) => setCreateStatus(v as "active" | "inactive")}
+              options={[
+                { label: "Active", value: "active" },
+                { label: "Inactive", value: "inactive" },
+              ]}
+            />
+
+            <View style={{ marginTop: 6 }}>
+              <Text style={[styles.rowSub, { fontStyle: "italic" }]}>
+                Setting status to <Text style={{ fontWeight: "700" }}>Inactive</Text> later will free all occupied stalls for this tenant.
+              </Text>
+            </View>
+
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
@@ -628,6 +689,22 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               value={editBillStart}
               onChange={setEditBillStart}
             />
+
+            <Dropdown
+              label="Status"
+              value={editStatus}
+              onChange={(v) => setEditStatus(v as "active" | "inactive")}
+              options={[
+                { label: "Active", value: "active" },
+                { label: "Inactive (frees stalls)", value: "inactive" },
+              ]}
+            />
+
+            <View style={{ marginTop: 6 }}>
+              <Text style={[styles.rowSub, { fontStyle: "italic" }]}>
+                Changing to <Text style={{ fontWeight: "700" }}>Inactive</Text> will free all stalls attached to this tenant.
+              </Text>
+            </View>
 
             <View style={styles.modalActions}>
               <TouchableOpacity
@@ -789,13 +866,6 @@ const styles = StyleSheet.create({
   },
   btnGhostText: { color: "#102a43", fontWeight: "700" },
 
-  filterRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 8,
-    alignItems: "flex-end",
-  },
   chip: {
     paddingVertical: 8,
     paddingHorizontal: 12,
