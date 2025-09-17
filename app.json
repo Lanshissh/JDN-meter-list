@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "qrcode-app",
-    "slug": "qrcode-app",
+    "name": "JDN-METRO",
+    "slug": "JDN-METRO",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -18,8 +18,6 @@
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
@@ -52,6 +50,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "564d4ac9-9ec6-4977-9736-d1f4190aea7c"
+      }
     }
   }
 }
