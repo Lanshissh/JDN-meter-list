@@ -1,20 +1,20 @@
+import { Picker } from "@react-native-picker/picker";
+import axios from "axios";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
-  KeyboardAvoidingView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import axios from "axios";
-import { Picker } from "@react-native-picker/picker";
 import { BASE_API } from "../../constants/api";
 
 /** Types */
@@ -97,7 +97,11 @@ function errorText(err: any, fallback = "Server error.") {
   if (d?.error) return String(d.error);
   if (d?.message) return String(d.message);
   if (err?.message) return String(err.message);
-  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+  try {
+    return JSON.stringify(d ?? err);
+  } catch {
+    return fallback;
+  }
 }
 
 function confirm(title: string, message: string): Promise<boolean> {
@@ -133,11 +137,11 @@ export default function RatesPanel({ token }: { token: string | null }) {
   const [rates, setRates] = useState<Rate[]>([]);
   const [query, setQuery] = useState("");
 
-  // >>> ADDED: utility filter state <<<
+  // utility filter
   type UtilFilter = "" | "has_elec" | "has_water" | "has_lpg" | "missing";
   const [utilFilter, setUtilFilter] = useState<UtilFilter>("");
 
-  // create form fields (now inside a modal)
+  // create/edit modals
   const [createVisible, setCreateVisible] = useState(false);
   const [formTenantId, setFormTenantId] = useState<string>("");
   const [f_erate, setF_erate] = useState<string>("");
@@ -149,7 +153,6 @@ export default function RatesPanel({ token }: { token: string | null }) {
   const [f_wvat, setF_wvat] = useState<string>("");
   const [f_lpg, setF_lpg] = useState<string>("");
 
-  // edit modal state
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<Rate | null>(null);
   const [e_erate, setE_erate] = useState<string>("");
@@ -161,7 +164,6 @@ export default function RatesPanel({ token }: { token: string | null }) {
   const [e_wvat, setE_wvat] = useState<string>("");
   const [e_lpg, setE_lpg] = useState<string>("");
 
-  // sorting
   type SortMode =
     | "newest"
     | "oldest"
@@ -197,8 +199,8 @@ export default function RatesPanel({ token }: { token: string | null }) {
       try {
         setBusy(true);
 
-        // 1) Always load tenants (biller is allowed; server will scope to their building)
-        // 2) Admin only: load buildings list (biller cannot call /buildings — it's admin-only)
+        // 1) Always load all tenants (server scopes by role/building)
+        // 2) Admin only: load buildings list
         const [tenantsRes, buildingsRes] = await Promise.all([
           api.get<Tenant[]>("/tenants"),
           isAdmin
@@ -209,7 +211,7 @@ export default function RatesPanel({ token }: { token: string | null }) {
         setTenants(tenantsRes.data || []);
         if (isAdmin) setBuildings(buildingsRes.data || []);
 
-        // pick buildingId:
+        // Keep existing buildingId if set; otherwise lock or pick first building if admin
         setBuildingId((prev) => {
           if (prev) return prev;
           if (!isAdmin && lockedBuildingId) return lockedBuildingId;
@@ -242,21 +244,36 @@ export default function RatesPanel({ token }: { token: string | null }) {
       }
     };
     run();
-
-    // default tenant for form
-    const firstTenant =
-      tenants.find((t) => t.building_id === buildingId)?.tenant_id ?? "";
-    setFormTenantId(firstTenant);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildingId]);
 
   /** Derived lists */
-  const tenantsInBuilding = useMemo(
-    () => tenants.filter((t) => t.building_id === buildingId),
-    [tenants, buildingId],
-  );
 
-  // >>> UPDATED: include utilFilter in filtering <<<
+  // Show ALL tenants in the dropdown (labels include building)
+  const tenantOptionsAll = useMemo(() => {
+    return tenants
+      .slice()
+      .sort((a, b) => {
+        const byBldg = cmp(a.building_id, b.building_id);
+        if (byBldg !== 0) return byBldg;
+        return cmp(a.tenant_name || a.tenant_sn, b.tenant_name || b.tenant_sn);
+      })
+      .map((t) => ({
+        label: `${t.tenant_name} (${t.tenant_id}) · ${t.building_id}`,
+        value: t.tenant_id,
+      }));
+  }, [tenants]);
+
+  // admin-only building options
+  const buildingOptions = useMemo(() => {
+    if (!isAdmin) return [];
+    return buildings.map((b) => ({
+      label: `${b.building_name} (${b.building_id})`,
+      value: b.building_id,
+    }));
+  }, [isAdmin, buildings]);
+
+  // filter + search for the rate list
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = rates;
@@ -268,11 +285,16 @@ export default function RatesPanel({ token }: { token: string | null }) {
         const hasLpg = r.lrate_perKg != null;
 
         switch (utilFilter) {
-          case "has_elec": return hasElec;
-          case "has_water": return hasWater;
-          case "has_lpg": return hasLpg;
-          case "missing": return !hasElec || !hasWater || !hasLpg;
-          default: return true;
+          case "has_elec":
+            return hasElec;
+          case "has_water":
+            return hasWater;
+          case "has_lpg":
+            return hasLpg;
+          case "missing":
+            return !hasElec || !hasWater || !hasLpg;
+          default:
+            return true;
         }
       });
     }
@@ -320,12 +342,35 @@ export default function RatesPanel({ token }: { token: string | null }) {
     }
   }, [filtered, sortMode]);
 
-  /** Create (PUT) */
+  /** Handlers */
+
+  // When choosing a tenant in the create modal, auto-set buildingId to the tenant's building.
+  const onSelectTenantForForm = (tenantId: string) => {
+    setFormTenantId(tenantId);
+    const t = tenants.find((x) => x.tenant_id === tenantId);
+    if (t) {
+      // Admin can switch buildings; operators/billers are already scoped
+      setBuildingId((prev) => (isAdmin ? t.building_id : prev));
+    }
+  };
+
+  /** Create or Update (PUT) */
   const onCreateOrUpdate = async () => {
-    if (!buildingId || !formTenantId) {
-      notify("Missing info", "Please select a building and tenant.");
+    if (!formTenantId) {
+      notify("Missing info", "Please select a tenant.");
       return;
     }
+    // Use the tenant's actual building so the API path is always correct
+    const t = tenants.find((x) => x.tenant_id === formTenantId);
+    const targetBuildingId = t?.building_id || buildingId;
+    if (!targetBuildingId) {
+      notify(
+        "Missing building",
+        "Could not determine building for the selected tenant.",
+      );
+      return;
+    }
+
     try {
       setSubmitting(true);
       const body = {
@@ -339,7 +384,9 @@ export default function RatesPanel({ token }: { token: string | null }) {
         lrate_perKg: toNum(f_lpg),
       };
       const res = await api.put(
-        `/rates/buildings/${encodeURIComponent(buildingId)}/tenants/${encodeURIComponent(formTenantId)}`,
+        `/rates/buildings/${encodeURIComponent(
+          targetBuildingId,
+        )}/tenants/${encodeURIComponent(formTenantId)}`,
         body,
       );
       const rid = res?.data?.rate_id ? ` (ID: ${res.data.rate_id})` : "";
@@ -355,12 +402,15 @@ export default function RatesPanel({ token }: { token: string | null }) {
       setF_wvat("");
       setF_lpg("");
 
-      // refresh list & close modal
+      // refresh list based on the actual building we wrote to
       const rRes = await api.get<Rate[]>(
-        `/rates/buildings/${encodeURIComponent(buildingId)}`,
+        `/rates/buildings/${encodeURIComponent(targetBuildingId)}`,
       );
       setRates(rRes.data || []);
       setCreateVisible(false);
+
+      // ensure the UI building matches the tenant's building after save
+      if (isAdmin) setBuildingId(targetBuildingId);
     } catch (err: any) {
       notify("Save failed", errorText(err));
     } finally {
@@ -396,8 +446,11 @@ export default function RatesPanel({ token }: { token: string | null }) {
         w_vat: toNum(e_wvat),
         lrate_perKg: toNum(e_lpg),
       };
+      // keep current buildingId context for edits
       await api.put(
-        `/rates/buildings/${encodeURIComponent(buildingId)}/tenants/${encodeURIComponent(editRow.tenant_id)}`,
+        `/rates/buildings/${encodeURIComponent(
+          buildingId,
+        )}/tenants/${encodeURIComponent(editRow.tenant_id)}`,
         body,
       );
       setEditVisible(false);
@@ -413,132 +466,37 @@ export default function RatesPanel({ token }: { token: string | null }) {
     }
   };
 
-  /** Delete */
-  const onDelete = async (r: Rate) => {
-    const ok = await confirm(
-      "Delete rate",
-      `Are you sure you want to delete the rate for ${r.tenant_name || r.tenant_id}?`,
-    );
-    if (!ok) return;
-    try {
-      setSubmitting(true);
-      await api.delete(
-        `/rates/buildings/${encodeURIComponent(buildingId)}/tenants/${encodeURIComponent(r.tenant_id)}`,
-      );
-      const rRes = await api.get<Rate[]>(
-        `/rates/buildings/${encodeURIComponent(buildingId)}`,
-      );
-      setRates(rRes.data || []);
-      notify("Deleted", "Tenant rate deleted.");
-    } catch (err: any) {
-      notify("Delete failed", errorText(err));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  /** UI helpers */
-  const Dropdown = ({
-    label,
-    value,
-    onChange,
-    options,
-    disabled,
-  }: {
-    label: string;
-    value: string;
-    onChange: (v: string) => void;
-    options: { label: string; value: string }[];
-    disabled?: boolean;
-  }) => (
-    <View style={{ marginTop: 8, opacity: disabled ? 0.6 : 1 }}>
-      <Text style={styles.dropdownLabel}>{label}</Text>
-      <View style={styles.pickerWrapper}>
-        <Picker
-          enabled={!disabled}
-          selectedValue={value}
-          onValueChange={(val) => onChange(String(val))}
-          style={styles.picker}
-        >
-          {options.map((opt) => (
-            <Picker.Item key={opt.value} label={opt.label} value={opt.value} />
-          ))}
-        </Picker>
+  /** UI */
+  const RateRow = ({ item }: { item: Rate }) => (
+    <View style={styles.row}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowTitle}>
+          {item.tenant_name || item.tenant_id}
+        </Text>
+        <Text style={styles.rowSub}>
+          {item.rate_id}
+          {item.last_updated ? ` • ${fmtDate(item.last_updated)}` : ""}
+          {item.updated_by ? ` • ${item.updated_by}` : ""}
+        </Text>
       </View>
+      <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+        <Text style={styles.linkText}>Update</Text>
+      </TouchableOpacity>
     </View>
   );
 
-  const LabeledInput = ({
-    label,
-    value,
-    setValue,
-    keyboardType = "decimal-pad",
-  }: {
-    label: string;
-    value: string;
-    setValue: (s: string) => void;
-    keyboardType?: "default" | "numeric" | "decimal-pad";
-  }) => (
-    <View style={{ marginTop: 8 }}>
-      <Text style={styles.inputLabel}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={setValue}
-        keyboardType={keyboardType}
-        placeholder="0.00"
-        style={styles.input}
-      />
-    </View>
-  );
+  /** 🔧 NEW: ensure a real selection exists (RN Web Picker doesn’t emit change for the first item) */
+  useEffect(() => {
+    if (!formTenantId && tenantOptionsAll.length) {
+      onSelectTenantForForm(tenantOptionsAll[0].value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantOptionsAll.length]);
 
-  const Chip = ({
-    label,
-    active,
-    onPress,
-  }: {
-    label: string;
-    active?: boolean;
-    onPress?: () => void;
-  }) => (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
-    >
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-
-  /** Render */
   return (
     <View style={styles.grid}>
-      {/* SCOPE BAR */}
+      {/* Manage Rates */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Scope</Text>
-        <Dropdown
-          label="Building"
-          value={buildingId}
-          onChange={setBuildingId}
-          disabled={!isAdmin}
-          options={
-            isAdmin
-              ? buildings.map((b) => ({
-                  label: `${b.building_name} (${b.building_id})`,
-                  value: b.building_id,
-                }))
-              : [
-                  {
-                    label: lockedBuildingId || "No Building",
-                    value: lockedBuildingId || "",
-                  },
-                ]
-          }
-        />
-      </View>
-
-      {/* LIST + Create button */}
-      <View className="list-card" style={styles.card}>
         <View
           style={{
             flexDirection: "row",
@@ -547,74 +505,98 @@ export default function RatesPanel({ token }: { token: string | null }) {
             marginBottom: 6,
           }}
         >
-          <Text style={styles.cardTitle}>Tenant Rates in Building</Text>
+          <Text style={styles.cardTitle}>Manage Rates</Text>
           <TouchableOpacity
             style={styles.btn}
-            onPress={() => setCreateVisible(true)}
-            disabled={!buildingId}
+            onPress={() => {
+              if (!formTenantId && tenantOptionsAll.length) {
+                onSelectTenantForForm(tenantOptionsAll[0].value);
+              }
+              setCreateVisible(true);
+            }}
           >
-            <Text style={styles.btnText}>+ Create Rate</Text>
+            <Text style={styles.btnText}>+ Create / Update</Text>
           </TouchableOpacity>
         </View>
 
+        {/* Admin can choose building; operators/billers see their locked one */}
+        <View style={styles.filtersBar}>
+          <View style={styles.filterCol}>
+            <Text style={styles.dropdownLabel}>Building</Text>
+            {isAdmin ? (
+              <View style={styles.pickerWrapper}>
+                <Picker
+                  selectedValue={buildingId}
+                  onValueChange={(v) => setBuildingId(String(v))}
+                  style={styles.picker}
+                >
+                  {buildingOptions.map((b) => (
+                    <Picker.Item key={b.value} label={b.label} value={b.value} />
+                  ))}
+                </Picker>
+              </View>
+            ) : (
+              <Text style={styles.lockedText}>
+                {buildingId || "(no building assigned)"}
+              </Text>
+            )}
+          </View>
+
+          {/* Utility filter chips */}
+          <View style={[styles.filterCol, styles.stackCol]}>
+            <Text style={styles.dropdownLabel}>Utility filter</Text>
+            <View style={styles.chipsRow}>
+              {[
+                { label: "ALL", val: "" },
+                { label: "ELECTRIC", val: "has_elec" },
+                { label: "WATER", val: "has_water" },
+                { label: "LPG", val: "has_lpg" },
+                { label: "MISSING ANY", val: "missing" },
+              ].map(({ label, val }) => (
+                <TouchableOpacity
+                  key={val || "all"}
+                  style={[styles.chip, utilFilter === (val as any) && styles.chipActive]}
+                  onPress={() => setUtilFilter(val as any)}
+                >
+                  <Text style={[styles.chipText, utilFilter === (val as any) && styles.chipTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Sort */}
+          <View style={[styles.filterCol, styles.stackCol]}>
+            <Text style={styles.dropdownLabel}>Sort</Text>
+            <View style={styles.chipsRow}>
+              {[
+                { label: "Newest", val: "newest" },
+                { label: "Oldest", val: "oldest" },
+                { label: "Rate ID ↑", val: "idAsc" },
+                { label: "Rate ID ↓", val: "idDesc" },
+                { label: "Tenant ↑", val: "tenantAsc" },
+                { label: "Tenant ↓", val: "tenantDesc" },
+              ].map(({ label, val }) => (
+                <TouchableOpacity
+                  key={val}
+                  style={[styles.chip, sortMode === (val as any) && styles.chipActive]}
+                  onPress={() => setSortMode(val as any)}
+                >
+                  <Text style={[styles.chipText, sortMode === (val as any) && styles.chipTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        {/* Search */}
         <TextInput
           style={styles.search}
-          placeholder="Search tenant name, SN, tenant_id, or rate_id…"
+          placeholder="Search by rate ID or tenant…"
           value={query}
           onChangeText={setQuery}
         />
 
-        {/* >>> ADDED: Utility filter chips <<< */}
-        <View style={styles.chipsRow}>
-          {[
-            { label: "All", val: "" },
-            { label: "Has Electric", val: "has_elec" },
-            { label: "Has Water", val: "has_water" },
-            { label: "Has LPG", val: "has_lpg" },
-            { label: "Missing Any", val: "missing" },
-          ].map(({ label, val }) => (
-            <Chip
-              key={val || "all"}
-              label={label}
-              active={utilFilter === (val as UtilFilter)}
-              onPress={() => setUtilFilter(val as UtilFilter)}
-            />
-          ))}
-        </View>
-
-        <View style={styles.chipsRow}>
-          <Chip
-            label="Newest"
-            active={sortMode === "newest"}
-            onPress={() => setSortMode("newest")}
-          />
-          <Chip
-            label="Oldest"
-            active={sortMode === "oldest"}
-            onPress={() => setSortMode("oldest")}
-          />
-          <Chip
-            label="Rate ID ↑"
-            active={sortMode === "idAsc"}
-            onPress={() => setSortMode("idAsc")}
-          />
-          <Chip
-            label="Rate ID ↓"
-            active={sortMode === "idDesc"}
-            onPress={() => setSortMode("idDesc")}
-          />
-          <Chip
-            label="Tenant ↑"
-            active={sortMode === "tenantAsc"}
-            onPress={() => setSortMode("tenantAsc")}
-          />
-          <Chip
-            label="Tenant ↓"
-            active={sortMode === "tenantDesc"}
-            onPress={() => setSortMode("tenantDesc")}
-          />
-        </View>
-
+        {/* List */}
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
@@ -622,431 +604,416 @@ export default function RatesPanel({ token }: { token: string | null }) {
         ) : (
           <FlatList
             data={sorted}
-            keyExtractor={(item) => item.tenant_id}
-            scrollEnabled={Platform.OS === "web"}
-            nestedScrollEnabled={false}
-            ListEmptyComponent={
-              <Text style={styles.empty}>
-                No rates found for this building.
-              </Text>
-            }
-            renderItem={({ item }) => (
-              <View style={styles.row}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle}>
-                    {item.tenant_name || item.tenant_id}{" "}
-                    <Text style={styles.muted}>({item.tenant_id})</Text>
-                  </Text>
-                  <Text style={styles.rowSub}>
-                    Rate ID: <Text style={styles.mono}>{item.rate_id}</Text> •
-                    Updated: {fmtDate(item.last_updated)} • By:{" "}
-                    {item.updated_by}
-                  </Text>
-                  <Text style={styles.rowSub}>
-                    E[rate/vat/min]: {item.erate_perKwH ?? "-"} /{" "}
-                    {item.e_vat ?? "-"} / {item.emin_con ?? "-"} •
-                    W[min/rate/netvat/vat]: {item.wmin_con ?? "-"} /{" "}
-                    {item.wrate_perCbM ?? "-"} / {item.wnet_vat ?? "-"} /{" "}
-                    {item.w_vat ?? "-"} • LPG/kg: {item.lrate_perKg ?? "-"}
-                  </Text>
-                </View>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <TouchableOpacity
-                    style={styles.link}
-                    onPress={() => openEdit(item)}
-                  >
-                    <Text style={styles.linkText}>Update</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.link, { marginLeft: 8 }]}
-                    onPress={() => onDelete(item)}
-                  >
-                    <Text style={[styles.linkText, { color: "#e53935" }]}>
-                      Delete
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+            keyExtractor={(r) => r.rate_id}
+            style={{ marginTop: 4 }}
+            ListEmptyComponent={<Text style={styles.empty}>No rates found.</Text>}
+            renderItem={({ item }) => <RateRow item={item} />}
           />
         )}
       </View>
 
-      {/* CREATE MODAL */}
-      <Modal
-        visible={createVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setCreateVisible(false)}
-      >
-        <View style={styles.modalWrap}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-          >
-            <View style={styles.modalCard}>
-              <Text style={styles.cardTitle}>Create Tenant Rate</Text>
-
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingBottom: 8 }}
-              >
-                <Dropdown
-                  label="Tenant"
-                  value={formTenantId}
-                  onChange={setFormTenantId}
-                  options={tenantsInBuilding.map((t) => ({
-                    label: `${t.tenant_name} (${t.tenant_sn})`,
-                    value: t.tenant_id,
-                  }))}
-                />
-
-                {/* Electric */}
-                <Text style={styles.sectionTitle}>Electric</Text>
-                <View style={[styles.gridCols, styles.stackOnMobile]}>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="Electric Rate per KwH"
-                      value={f_erate}
-                      setValue={setF_erate}
-                    />
-                  </View>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="Electric VAT"
-                      value={f_evat}
-                      setValue={setF_evat}
-                    />
-                  </View>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="Electric Min Consumption"
-                      value={f_emin}
-                      setValue={setF_emin}
-                    />
-                  </View>
-                </View>
-
-                {/* Water */}
-                <Text style={styles.sectionTitle}>Water</Text>
-                <View style={[styles.gridCols, styles.stackOnMobile]}>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="Water Min Consumption"
-                      value={f_wmin}
-                      setValue={setF_wmin}
-                    />
-                  </View>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="Water Rate per CbM"
-                      value={f_wrate}
-                      setValue={setF_wrate}
-                    />
-                  </View>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="Water Net VAT"
-                      value={f_wnet}
-                      setValue={setF_wnet}
-                    />
-                  </View>
-                </View>
-                <View style={[styles.gridCols, styles.stackOnMobile]}>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="Water VAT"
-                      value={f_wvat}
-                      setValue={setF_wvat}
-                    />
-                  </View>
-                </View>
-
-                {/* LPG */}
-                <Text style={styles.sectionTitle}>LPG</Text>
-                <View style={[styles.gridCols, styles.stackOnMobile]}>
-                  <View style={styles.field}>
-                    <LabeledInput
-                      label="LPG Rate per Kg"
-                      value={f_lpg}
-                      setValue={setF_lpg}
-                    />
-                  </View>
-                </View>
-              </ScrollView>
-
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "flex-end",
-                  marginTop: 10,
-                }}
-              >
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnLight]}
-                  onPress={() => setCreateVisible(false)}
-                >
-                  <Text style={[styles.btnText, { color: "#082cac" }]}>
-                    Cancel
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.btn, { marginLeft: 8 }]}
-                  onPress={onCreateOrUpdate}
-                  disabled={submitting || !formTenantId}
-                >
-                  {submitting ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.btnText}>Create Rate</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
-
-      {/* EDIT MODAL */}
-      <Modal
-        visible={editVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setEditVisible(false)}
-      >
-        <View style={styles.modalWrap}>
+      {/* Create/Update Modal */}
+      <Modal visible={createVisible} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View style={styles.modalCard}>
-            <Text style={styles.cardTitle}>Edit Rate</Text>
+            <Text style={styles.modalTitle}>Create / Update Rate</Text>
+            <View style={styles.modalDivider} />
 
-            <Text style={styles.sectionTitle}>Electric</Text>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Electric Rate per KwH"
-                  value={e_erate}
-                  setValue={setE_erate}
-                />
-              </View>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Electric VAT"
-                  value={e_evat}
-                  setValue={setE_evat}
-                />
-              </View>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Electric Min Consumption"
-                  value={e_emin}
-                  setValue={setE_emin}
-                />
-              </View>
-            </View>
-
-            <Text style={styles.sectionTitle}>Water</Text>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Water Min Consumption"
-                  value={e_wmin}
-                  setValue={setE_wmin}
-                />
-              </View>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Water Rate per CbM"
-                  value={e_wrate}
-                  setValue={setE_wrate}
-                />
-              </View>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Water Net VAT"
-                  value={e_wnet}
-                  setValue={setE_wnet}
-                />
-              </View>
-            </View>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="Water VAT"
-                  value={e_wvat}
-                  setValue={setE_wvat}
-                />
-              </View>
-            </View>
-
-            <Text style={styles.sectionTitle}>LPG</Text>
-            <View style={[styles.gridCols, styles.stackOnMobile]}>
-              <View style={styles.field}>
-                <LabeledInput
-                  label="LPG Rate per Kg"
-                  value={e_lpg}
-                  setValue={setE_lpg}
-                />
-              </View>
-            </View>
-
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "flex-end",
-                marginTop: 16,
-              }}
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 8 }}
             >
+              {/* Tenant (ALL tenants shown, labeled with building) */}
+              <View style={{ marginTop: 8 }}>
+                <Text style={styles.dropdownLabel}>Tenant</Text>
+                <View style={styles.pickerWrapper}>
+                  <Picker
+                    selectedValue={formTenantId}
+                    onValueChange={(v) => onSelectTenantForForm(String(v))}
+                    style={styles.picker}
+                  >
+                    {tenantOptionsAll.map((t) => (
+                      <Picker.Item key={t.value} label={t.label} value={t.value} />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+
+              {/* If admin, show which building will be used (auto-updates after tenant selection) */}
+              {isAdmin && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={styles.dropdownLabel}>
+                    Target Building (auto from tenant)
+                  </Text>
+                  <View style={styles.pickerWrapper}>
+                    <Picker
+                      selectedValue={buildingId}
+                      onValueChange={(v) => setBuildingId(String(v))}
+                      style={styles.picker}
+                    >
+                      {buildingOptions.map((b) => (
+                        <Picker.Item key={b.value} label={b.label} value={b.value} />
+                      ))}
+                    </Picker>
+                  </View>
+                </View>
+              )}
+
+              {/* Electric */}
+              <Text style={styles.sectionLabel}>Electric</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Rate per kWh (erate_perKwH)"
+                keyboardType="decimal-pad"
+                value={f_erate}
+                onChangeText={setF_erate}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="VAT (e_vat) e.g. 0.12"
+                keyboardType="decimal-pad"
+                value={f_evat}
+                onChangeText={setF_evat}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Minimum consumption (emin_con)"
+                keyboardType="decimal-pad"
+                value={f_emin}
+                onChangeText={setF_emin}
+              />
+
+              {/* Water */}
+              <Text style={styles.sectionLabel}>Water</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Minimum consumption (wmin_con)"
+                keyboardType="decimal-pad"
+                value={f_wmin}
+                onChangeText={setF_wmin}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Rate per m³ (wrate_perCbM)"
+                keyboardType="decimal-pad"
+                value={f_wrate}
+                onChangeText={setF_wrate}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Net VAT factor (wnet_vat) e.g. 0.88"
+                keyboardType="decimal-pad"
+                value={f_wnet}
+                onChangeText={setF_wnet}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="VAT (w_vat) e.g. 0.12"
+                keyboardType="decimal-pad"
+                value={f_wvat}
+                onChangeText={setF_wvat}
+              />
+
+              {/* LPG */}
+              <Text style={styles.sectionLabel}>LPG</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Rate per Kg (lrate_perKg)"
+                keyboardType="decimal-pad"
+                value={f_lpg}
+                onChangeText={setF_lpg}
+              />
+            </ScrollView>
+
+            <View style={styles.modalActions}>
               <TouchableOpacity
-                style={[styles.btn, styles.btnLight]}
-                onPress={() => setEditVisible(false)}
+                onPress={() => setCreateVisible(false)}
+                style={[styles.btn, styles.btnGhost]}
               >
-                <Text style={[styles.btnText, { color: "#082cac" }]}>
-                  Cancel
-                </Text>
+                <Text style={[styles.btnText, styles.btnGhostText]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.btn, { marginLeft: 8 }]}
-                onPress={onUpdate}
+                onPress={onCreateOrUpdate}
+                style={[styles.btn, submitting && styles.btnDisabled]}
                 disabled={submitting}
               >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.btnText}>Save</Text>
-                )}
+                <Text style={styles.btnText}>
+                  {submitting ? "Saving…" : "Save"}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Edit Modal */}
+      <Modal visible={editVisible} animationType="fade" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Update Rate</Text>
+            <View style={styles.modalDivider} />
+
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 8 }}
+            >
+              <Text style={styles.readonly}>
+                Tenant: {editRow?.tenant_name || editRow?.tenant_id}
+              </Text>
+
+              <Text style={styles.sectionLabel}>Electric</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Rate per kWh (erate_perKwH)"
+                keyboardType="decimal-pad"
+                value={e_erate}
+                onChangeText={setE_erate}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="VAT (e_vat)"
+                keyboardType="decimal-pad"
+                value={e_evat}
+                onChangeText={setE_evat}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Minimum consumption (emin_con)"
+                keyboardType="decimal-pad"
+                value={e_emin}
+                onChangeText={setE_emin}
+              />
+
+              <Text style={styles.sectionLabel}>Water</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Minimum consumption (wmin_con)"
+                keyboardType="decimal-pad"
+                value={e_wmin}
+                onChangeText={setE_wmin}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Rate per m³ (wrate_perCbM)"
+                keyboardType="decimal-pad"
+                value={e_wrate}
+                onChangeText={setE_wrate}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Net VAT factor (wnet_vat)"
+                keyboardType="decimal-pad"
+                value={e_wnet}
+                onChangeText={setE_wnet}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="VAT (w_vat)"
+                keyboardType="decimal-pad"
+                value={e_wvat}
+                onChangeText={setE_wvat}
+              />
+
+              <Text style={styles.sectionLabel}>LPG</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Rate per Kg (lrate_perKg)"
+                keyboardType="decimal-pad"
+                value={e_lpg}
+                onChangeText={setE_lpg}
+              />
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => setEditVisible(false)}
+                style={[styles.btn, styles.btnGhost]}
+              >
+                <Text style={[styles.btnText, styles.btnGhostText]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={onUpdate}
+                style={[styles.btn, submitting && styles.btnDisabled]}
+                disabled={submitting}
+              >
+                <Text style={styles.btnText}>
+                  {submitting ? "Saving…" : "Save"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
+/** Styles */
 const styles = StyleSheet.create({
-  grid: { gap: 16 },
+  grid: {
+    padding: 10,
+    gap: 10,
+  },
   card: {
-    borderWidth: 1,
-    borderColor: "#edf2f7",
-    borderRadius: 12,
-    padding: 12,
     backgroundColor: "#fff",
-    ...Platform.select({
-      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any },
-      default: { elevation: 1 },
-    }),
+    borderRadius: 10,
+    padding: 12,
+    ...(Platform.select({
+      web: { boxShadow: "0 10px 30px rgba(0,0,0,0.05)" as any },
+      default: { elevation: 2 },
+    }) as any),
   },
   cardTitle: {
     fontSize: 18,
     fontWeight: "700",
     color: "#102a43",
-    marginBottom: 12,
   },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
+  filtersBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
     marginTop: 8,
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  inputLabel: { fontSize: 12, color: "#374151", marginBottom: 4 },
-  input: {
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    borderRadius: 8,
+  filterCol: {
+    minWidth: 220,
+    flexShrink: 0,
+  },
+  stackCol: {
+    minWidth: 260,
+  },
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 6,
+  },
+  chip: {
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#cbd2d9",
+    backgroundColor: "#fff",
+  },
+  chipActive: {
+    backgroundColor: "#082cac",
+    borderColor: "#082cac",
+  },
+  chipText: { color: "#102a43", fontSize: 12, fontWeight: "600" },
+  chipTextActive: { color: "#fff" },
+
+  dropdownLabel: {
+    fontSize: 12,
+    color: "#627d98",
+    marginBottom: 4,
   },
   pickerWrapper: {
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#d9e2ec",
     borderRadius: 8,
     overflow: "hidden",
   },
   picker: { height: 40 },
-  formContainer: { paddingBottom: 8 },
-  gridCols: { flexDirection: "row", gap: 8 },
-  stackOnMobile: { flexWrap: "wrap" },
-  field: { flex: 1, minWidth: 180 },
 
-  chipsRow: {
-    flexDirection: "row",
-    gap: 8,
-    flexWrap: "wrap",
-    marginBottom: 12,
+  lockedText: {
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#102a43",
   },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    backgroundColor: "#fff",
-  },
-  chipActive: { backgroundColor: "#1f4bd8", borderColor: "#1f4bd8" },
-  chipText: { color: "#102a43", fontWeight: "700" },
-  chipTextActive: { color: "#fff" },
 
   search: {
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#d9e2ec",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    marginBottom: 8,
+    marginTop: 6,
   },
+
+  loader: { padding: 20, alignItems: "center" },
+  empty: { color: "#627d98", padding: 12 },
 
   row: {
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
+    borderBottomColor: "#f0f4f8",
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
   },
-  rowTitle: { fontSize: 14, fontWeight: "700" },
-  rowSub: { fontSize: 12, color: "#334155", marginTop: 2 },
-  muted: { color: "#6b7280" },
-  mono: {
-    fontFamily: Platform.select({ web: "monospace", default: "System" }),
-  },
+  rowTitle: { fontSize: 14, fontWeight: "700", color: "#102a43" },
+  rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
 
-  link: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: "#f3f4f6",
-  },
-  linkText: { fontSize: 12, color: "#082cac", fontWeight: "700" },
+  link: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6 },
+  linkText: { color: "#1f73b7", fontWeight: "700" },
 
   btn: {
     backgroundColor: "#082cac",
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
-  btnLight: { backgroundColor: "#eef2ff" },
   btnText: { color: "#fff", fontWeight: "700" },
+  btnGhost: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#cbd2d9",
+  },
+  btnGhostText: { color: "#102a43" },
   btnDisabled: { opacity: 0.6 },
-  btnWide: { marginTop: 12, alignSelf: "flex-start" },
-
-  hint: { marginTop: 8, color: "#64748b", fontSize: 12 },
-
-  loader: { paddingVertical: 20 },
-  empty: { paddingVertical: 20, textAlign: "center", color: "#6b7280" },
 
   modalWrap: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: "rgba(0,0,0,0.25)",
     justifyContent: "center",
-    padding: 16,
+    padding: 12,
   },
   modalCard: {
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
+    maxHeight: "90%",
   },
-  dropdownLabel: {
-    fontSize: 12,
-    color: "#374151",
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#102a43",
     marginBottom: 4,
-    fontWeight: "600",
+  },
+  modalDivider: {
+    height: 1,
+    backgroundColor: "#edf2f7",
+    marginBottom: 10,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 10,
+  },
+
+  sectionLabel: {
+    marginTop: 10,
+    marginBottom: 4,
+    fontWeight: "800",
+    color: "#243b53",
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#d9e2ec",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 6,
+  },
+  readonly: {
+    paddingVertical: 6,
+    color: "#486581",
   },
 });

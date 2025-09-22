@@ -1,18 +1,18 @@
+import { Picker } from "@react-native-picker/picker";
+import axios from "axios";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
   ActivityIndicator,
   Alert,
   FlatList,
   Modal,
   Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import axios from "axios";
-import { Picker } from "@react-native-picker/picker";
 import { BASE_API } from "../../constants/api";
 
 type Role = "admin" | "operator" | "biller";

@@ -5,10 +5,10 @@ import {
   ThemeProvider,
 } from "@react-navigation/native";
 import { useFonts } from "expo-font";
-import { Stack, Redirect } from "expo-router";
+import { Redirect, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import "react-native-reanimated";
 import { Platform } from "react-native";
+import "react-native-reanimated";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
 import { ScanHistoryProvider } from "../contexts/ScanHistoryContext";
 
