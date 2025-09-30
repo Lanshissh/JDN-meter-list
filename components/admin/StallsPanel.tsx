@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
+import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -145,7 +146,7 @@ function ModalShell({
   );
 }
 
-/** ---------- Chip helper for filter UI ---------- */
+/** ---------- Chip helper for filter/sort UI ---------- */
 function Chip({
   label,
   active,
@@ -158,9 +159,9 @@ function Chip({
   return (
     <TouchableOpacity
       onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
+      style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
     >
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>
+      <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -233,7 +234,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
     try {
       setBusy(true);
 
-      // Always get stalls + tenants; only admins fetch /buildings (some backends keep this admin-only)
+      // Always get stalls + tenants; only admins fetch /buildings
       const reqs: Promise<any>[] = [
         api.get<Stall[]>("/stalls"),
         api.get<Tenant[]>("/tenants"),
@@ -403,14 +404,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
     <View style={styles.grid}>
       {/* LIST & FILTERS + Create button */}
       <View style={styles.card}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
+        <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Manage Stalls</Text>
           {canCreate && (
             <TouchableOpacity
@@ -422,17 +416,22 @@ export default function StallsPanel({ token }: { token: string | null }) {
           )}
         </View>
 
-        <TextInput
-          style={styles.search}
-          placeholder="Search by ID, SN, tenant, building, status…"
-          value={query}
-          onChangeText={setQuery}
-        />
-
-        {/* --- Chip-based filter bar --- */}
+        {/* Filters row */}
         <View style={styles.filtersBar}>
+          {/* Search */}
+          <View style={[styles.searchWrap, Platform.OS === "web" && { flex: 1.4 }]}>
+            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+            <TextInput
+              style={styles.search}
+              placeholder="Search by ID, SN, tenant, building, status…"
+              placeholderTextColor="#9aa5b1"
+              value={query}
+              onChangeText={setQuery}
+            />
+          </View>
+
           {/* Building chips */}
-          <View className="filter-building" style={styles.filterCol}>
+          <View style={[styles.filterCol, { flex: 1 }]}>
             <Text style={styles.dropdownLabel}>Filter by Building</Text>
             <View style={styles.chipsRow}>
               {[
@@ -457,7 +456,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
           </View>
 
           {/* Status chips */}
-          <View className="filter-status" style={styles.filterCol}>
+          <View style={[styles.filterCol, { flex: 1 }]}>
             <Text style={styles.dropdownLabel}>Filter by Status</Text>
             <View style={styles.chipsRow}>
               {[
@@ -476,17 +475,25 @@ export default function StallsPanel({ token }: { token: string | null }) {
             </View>
           </View>
 
-          {(!!buildingFilter || !!statusFilter) && (
-            <TouchableOpacity
-              style={styles.clearBtn}
-              onPress={() => {
-                setBuildingFilter("");
-                setStatusFilter("");
-              }}
-            >
-              <Text style={styles.clearBtnText}>Clear</Text>
-            </TouchableOpacity>
-          )}
+          {/* Sort chips */}
+          <View style={[styles.filterCol, { flex: 1 }]}>
+            <Text style={styles.dropdownLabel}>Sort</Text>
+            <View style={styles.chipsRow}>
+              {([
+                { label: "Newest", val: "newest" },
+                { label: "Oldest", val: "oldest" },
+                { label: "ID ↑", val: "idAsc" },
+                { label: "ID ↓", val: "idDesc" },
+              ] as const).map(({ label, val }) => (
+                <Chip
+                  key={label}
+                  label={label}
+                  active={sortMode === (val as any)}
+                  onPress={() => setSortMode(val as any)}
+                />
+              ))}
+            </View>
+          </View>
         </View>
 
         {busy ? (
@@ -507,7 +514,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowTitle}>{item.stall_sn}</Text>
                   <Text style={styles.rowSub}>
-                    {item.stall_id} • {item.stall_status} • {item.building_id}
+                    {item.stall_id}  •  {item.stall_status}  •  {item.building_id}
                   </Text>
                   {item.tenant_id && (
                     <Text style={styles.rowSub}>Tenant: {item.tenant_id}</Text>
@@ -515,7 +522,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                 </View>
 
                 {(canEdit || canDelete) && (
-                  <>
+                  <View style={{ flexDirection: "row" }}>
                     {canEdit && (
                       <TouchableOpacity
                         style={styles.link}
@@ -529,12 +536,10 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         style={[styles.link, { marginLeft: 8 }]}
                         onPress={() => onDelete(item)}
                       >
-                        <Text style={[styles.linkText, { color: "#e53935" }]}>
-                          Delete
-                        </Text>
+                        <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
                       </TouchableOpacity>
                     )}
-                  </>
+                  </View>
                 )}
               </View>
             )}
@@ -570,9 +575,10 @@ export default function StallsPanel({ token }: { token: string | null }) {
               </>
             }
           >
+            <Text style={styles.dropdownLabel}>Stall SN</Text>
             <TextInput
               style={styles.input}
-              placeholder="Stall SN"
+              placeholder="e.g. ST-001"
               value={stallSn}
               onChangeText={setStallSn}
             />
@@ -650,6 +656,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
         >
           {editStall && (
             <>
+              <Text style={styles.dropdownLabel}>Stall SN</Text>
               <TextInput
                 style={styles.input}
                 value={editStall.stall_sn}
@@ -750,167 +757,142 @@ function Dropdown({
   );
 }
 
+// ---------------- Styles (aligned across admin panels) ----------------
 const styles = StyleSheet.create({
-  grid: { gap: 16 },
+  grid: { flex: 1, padding: 12, gap: 12 },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 16,
-    ...Platform.select({
-      web: { boxShadow: "0 10px 30px rgba(0,0,0,0.15)" as any },
-      default: { elevation: 3 },
-    }),
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#102a43",
-    marginBottom: 12,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#fff",
-    color: "#102a43",
-    marginTop: 6,
-  },
-  btn: {
-    marginTop: 12,
-    backgroundColor: "#1f4bd8",
-    paddingVertical: 12,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    alignItems: "center",
-  },
-  btnDisabled: { opacity: 0.7 },
-  btnGhost: { backgroundColor: "#e6efff" },
-  btnText: { color: "#fff", fontWeight: "700" },
-
-  search: {
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-
-  chipsRow: {
-    flexDirection: "row",
-    gap: 8,
-    flexWrap: "wrap",
-    marginBottom: 12,
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    backgroundColor: "#fff",
-  },
-  chipActive: { backgroundColor: "#1f4bd8", borderColor: "#1f4bd8" },
-  chipText: { color: "#102a43", fontWeight: "700" },
-  chipTextActive: { color: "#fff" },
-
-  loader: { paddingVertical: 20, alignItems: "center" },
-  empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
-
-  row: {
-    borderWidth: 1,
-    borderColor: "#edf2f7",
-    backgroundColor: "#fdfefe",
     borderRadius: 12,
     padding: 12,
-    marginBottom: 10,
+    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(2,10,50,0.06)" as any }, default: { elevation: 1 } }) as any),
+  },
+  cardHeader: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
   },
-  rowTitle: { fontWeight: "700", color: "#102a43" },
-  rowSub: { color: "#627d98", marginTop: 2, fontSize: 12 },
-  link: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: "#eef2ff",
-  },
-  linkText: { color: "#1f4bd8", fontWeight: "700" },
+  cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
 
-  modalWrap: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+  // Filters
+  filtersBar: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    marginBottom: 8,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  filterCol: { flex: 1 },
+
+  // Search
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
+  },
+  search: { flex: 1, fontSize: 14, color: "#0b1f33" },
+
+  // Buttons
+  btn: {
+    backgroundColor: "#0f62fe",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    padding: 16,
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnGhost: {
+    backgroundColor: "#eef2ff",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  btnGhostText: { color: "#3b5bdb", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
+
+  // Chips
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
+  chip: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
+  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
+  chipText: { fontSize: 12, fontWeight: "700" },
+  chipTextIdle: { color: "#475569" },
+  chipTextActive: { color: "#fff" },
+
+  // List row
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#edf2f7",
+  },
+  rowTitle: { fontSize: 15, fontWeight: "700", color: "#102a43" },
+  rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
+  link: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#f1f5f9",
+  },
+  linkText: { color: "#0b1f33", fontWeight: "700" },
+
+  // Modal base
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
   },
   modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 14,
     width: "100%",
-    maxWidth: 720, // unified width (matches Edit modal look)
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 16,
-    ...Platform.select({
-      web: { boxShadow: "0 20px 60px rgba(0,0,0,0.35)" as any },
-      default: { elevation: 6 },
-    }),
+    maxWidth: 720,
+    ...(Platform.select({ web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any }, default: { elevation: 4 } }) as any),
   },
-  modalTitle: {
-    fontWeight: "800",
-    fontSize: 18,
-    color: "#102a43",
-  },
-  modalDivider: {
-    height: 1,
-    backgroundColor: "#edf2f7",
-    marginVertical: 10,
-  },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 8,
-    marginTop: 12,
-  },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0b1f33" },
+  modalDivider: { height: 1, backgroundColor: "#edf2f7", marginVertical: 10 },
+  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 },
 
-  dropdownLabel: {
-    color: "#334e68ff",
-    fontWeight: "600",
-    marginBottom: 6,
-    marginTop: 6,
-  },
+  // Inputs
+  dropdownLabel: { fontSize: 12, color: "#486581", marginTop: 8 },
   pickerWrapper: {
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
+    backgroundColor: "#f8fafc",
     borderRadius: 10,
-    backgroundColor: "#fff",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
+    overflow: "hidden",
   },
-  picker: { height: 55, width: "100%" },
-
-  filtersBar: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "flex-end",
-    gap: 12,
-    padding: 12,
-    marginBottom: 12,
-    backgroundColor: "#f7f9ff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e6efff",
-  },
-  filterCol: { flex: 1, minWidth: 220 },
-  clearBtn: {
-    alignSelf: "flex-end",
+  picker: { height: 44 },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 12,
     paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: "#eef2ff",
-    borderWidth: 1,
-    borderColor: "#d6e0ff",
+    color: "#0b1f33",
+    fontSize: 14,
+    marginTop: 4,
   },
-  clearBtnText: { color: "#1f4bd8", fontWeight: "700" },
+
+  // Misc
+  loader: { paddingVertical: 20, alignItems: "center" },
+  empty: { textAlign: "center", color: "#627d98", paddingVertical: 12 },
 });

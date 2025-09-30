@@ -1,20 +1,24 @@
-import { Picker } from "@react-native-picker/picker";
-import axios from "axios";
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
   ActivityIndicator,
   Alert,
   FlatList,
   Modal,
   Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+  KeyboardAvoidingView,
+  ScrollView,
 } from "react-native";
+import axios from "axios";
+import { Picker } from "@react-native-picker/picker";
+import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 
+// ---------------- Types ----------------
 type Role = "admin" | "operator" | "biller";
 type Util = "electric" | "water" | "lpg";
 const UTIL_OPTIONS: Util[] = ["electric", "water", "lpg"];
@@ -25,15 +29,16 @@ type User = {
   user_level: Role;
   building_id: string | null;
   utility_role?: Util[] | null;
+  last_updated?: string;
+  updated_by?: string;
 };
 
 type Building = {
   building_id: string;
   building_name: string;
-  rate_id: string;
 };
 
-/** ------------ ALERT HELPERS (web + mobile) ------------ */
+// ---------------- Alert helpers ----------------
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -66,8 +71,8 @@ function confirm(title: string, message: string): Promise<boolean> {
     ]);
   });
 }
-/** ------------------------------------------------------ */
 
+// ---------------- Component ----------------
 export default function AccountsPanel({
   token,
   apiBase = `${BASE_API}`,
@@ -77,11 +82,20 @@ export default function AccountsPanel({
 }) {
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
   const [users, setUsers] = useState<User[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-  const [query, setQuery] = useState("");
 
-  // --- create form state (now shown in a modal) ---
+  // search + sort
+  const [query, setQuery] = useState("");
+  type SortMode = "newest" | "oldest" | "name" | "role" | "id";
+  const [sortMode, setSortMode] = useState<SortMode>("newest");
+
+  // role filter
+  type RoleFilter = "" | Role;
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("");
+
+  // --- create form (modal) ---
   const [createVisible, setCreateVisible] = useState(false);
   const [fullname, setFullname] = useState("");
   const [password, setPassword] = useState("");
@@ -89,7 +103,7 @@ export default function AccountsPanel({
   const [buildingId, setBuildingId] = useState("");
   const [utilRoles, setUtilRoles] = useState<Util[]>([]);
 
-  // --- edit form state ---
+  // --- edit form (modal) ---
   const [editVisible, setEditVisible] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [editFullname, setEditFullname] = useState("");
@@ -170,12 +184,18 @@ export default function AccountsPanel({
 
   useEffect(() => {
     loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // ---------- Derived lists ----------
   const filteredUsers = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) => {
+    let list = users;
+
+    if (roleFilter) list = list.filter((u) => u.user_level === roleFilter);
+
+    if (!q) return list;
+    return list.filter((u) => {
       const utils = (u.utility_role || []).join(",");
       return (
         u.user_id.toLowerCase().includes(q) ||
@@ -185,8 +205,32 @@ export default function AccountsPanel({
         utils.includes(q)
       );
     });
-  }, [users, query]);
+  }, [users, query, roleFilter]);
 
+  const sortedUsers = useMemo(() => {
+    const arr = [...filteredUsers];
+    switch (sortMode) {
+      case "name":
+        arr.sort((a, b) => a.user_fullname.localeCompare(b.user_fullname));
+        break;
+      case "role":
+        arr.sort((a, b) => a.user_level.localeCompare(b.user_level) || a.user_fullname.localeCompare(b.user_fullname));
+        break;
+      case "id":
+        arr.sort((a, b) => a.user_id.localeCompare(b.user_id));
+        break;
+      case "oldest":
+        arr.sort((a, b) => (Date.parse(a.last_updated || "") || 0) - (Date.parse(b.last_updated || "") || 0));
+        break;
+      case "newest":
+      default:
+        arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
+        break;
+    }
+    return arr;
+  }, [filteredUsers, sortMode]);
+
+  // ---------- Actions ----------
   const roleNeedsBuilding = (r: Role) => r !== "admin";
   const roleUsesUtilities = (r: Role) => r === "biller";
 
@@ -298,7 +342,7 @@ export default function AccountsPanel({
     }
   };
 
-  /** UI helpers */
+  // ---------- UI helpers ----------
   const Chip = ({
     label,
     active,
@@ -313,34 +357,20 @@ export default function AccountsPanel({
       style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
     >
       <Text
-        style={[
-          styles.chipText,
-          active ? styles.chipTextActive : styles.chipTextIdle,
-        ]}
+        style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}
       >
         {label}
       </Text>
     </TouchableOpacity>
   );
 
-  const UtilChip = ({
-    util,
-    selected,
-    onToggle,
-  }: {
-    util: Util;
-    selected: boolean;
-    onToggle: () => void;
-  }) => (
+  const UtilChip = ({ util, selected, onToggle }: { util: Util; selected: boolean; onToggle: () => void }) => (
     <TouchableOpacity
       onPress={onToggle}
       style={[styles.chip, selected ? styles.chipActive : styles.chipIdle]}
     >
       <Text
-        style={[
-          styles.chipText,
-          selected ? styles.chipTextActive : styles.chipTextIdle,
-        ]}
+        style={[styles.chipText, selected ? styles.chipTextActive : styles.chipTextIdle]}
       >
         {util.toUpperCase()}
       </Text>
@@ -352,16 +382,19 @@ export default function AccountsPanel({
     value,
     onChange,
     options,
+    disabled,
   }: {
     label: string;
     value: string;
     onChange: (v: string) => void;
     options: { label: string; value: string }[];
+    disabled?: boolean;
   }) => (
-    <View style={{ marginTop: 8 }}>
+    <View style={{ marginTop: 8, opacity: disabled ? 0.6 : 1 }}>
       <Text style={styles.dropdownLabel}>{label}</Text>
       <View style={styles.pickerWrapper}>
         <Picker
+          enabled={!disabled}
           selectedValue={value}
           onValueChange={(itemValue) => onChange(String(itemValue))}
           style={styles.picker}
@@ -377,74 +410,103 @@ export default function AccountsPanel({
   const toggleArrayValue = <T,>(arr: T[], v: T): T[] =>
     arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
 
+  const Empty = ({ title, note }: { title: string; note?: string }) => (
+    <View style={styles.emptyWrap}>
+      <Ionicons name="people-outline" size={28} color="#94a3b8" />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      {!!note && <Text style={styles.emptyNote}>{note}</Text>}
+    </View>
+  );
+
+  // ---------- Render ----------
   return (
     <View style={styles.grid}>
-      {/* MANAGE ACCOUNTS (with Create button) */}
+      {/* CARD: Manage Accounts */}
       <View style={styles.card}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
+        <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Manage Accounts</Text>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => setCreateVisible(true)}
-          >
-            <Text style={styles.btnText}>+ Create Account</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+              <Text style={styles.btnText}>+ Create Account</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        <TextInput
-          style={styles.search}
-          placeholder="Search by ID, name, role, building, utility…"
-          value={query}
-          onChangeText={setQuery}
-        />
-
-        {busy ? (
-          <View style={styles.loader}>
-            <ActivityIndicator />
+        {/* Filters row */}
+        <View style={styles.filtersBar}>
+          {/* Search */}
+          <View style={[styles.searchWrap, Platform.OS === "web" && { flex: 1.4 }] }>
+            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+            <TextInput
+              style={styles.search}
+              placeholder="Search by ID, name, role, building, utilities…"
+              placeholderTextColor="#9aa5b1"
+              value={query}
+              onChangeText={setQuery}
+            />
           </View>
+
+          {/* Role filter chips */}
+          <View style={[styles.filterCol, { flex: 1 }] }>
+            <Text style={styles.dropdownLabel}>Filter by Role</Text>
+            <View style={styles.chipsRow}>
+              {([
+                { label: "ALL", val: "" },
+                { label: "ADMIN", val: "admin" },
+                { label: "OPERATOR", val: "operator" },
+                { label: "BILLER", val: "biller" },
+              ] as const).map(({ label, val }) => (
+                <Chip key={label} label={label} active={roleFilter === (val as any)} onPress={() => setRoleFilter(val as any)} />
+              ))}
+            </View>
+          </View>
+
+          {/* Sort chips */}
+          <View style={[styles.filterCol, { flex: 1 }] }>
+            <Text style={styles.dropdownLabel}>Sort</Text>
+            <View style={styles.chipsRow}>
+              {([
+                { label: "Newest", val: "newest" },
+                { label: "Oldest", val: "oldest" },
+                { label: "Name", val: "name" },
+                { label: "Role", val: "role" },
+                { label: "ID", val: "id" },
+              ] as const).map(({ label, val }) => (
+                <Chip key={label} label={label} active={sortMode === (val as any)} onPress={() => setSortMode(val as any)} />
+              ))}
+            </View>
+          </View>
+        </View>
+
+        {/* List */}
+        {busy ? (
+          <View style={styles.loader}><ActivityIndicator /></View>
         ) : (
           <FlatList
-            data={filteredUsers}
+            data={sortedUsers}
             keyExtractor={(item) => item.user_id}
-            scrollEnabled={Platform.OS === "web"}
-            nestedScrollEnabled={false}
-            ListEmptyComponent={
-              <Text style={styles.empty}>No users found.</Text>
-            }
+            style={{ marginTop: 4 }}
+            ListEmptyComponent={<Empty title="No users found" note="Try adjusting filters or create a new account." />}
             renderItem={({ item }) => {
-              const utils = (item.utility_role || [])
-                .map((u) => u.toUpperCase())
-                .join(", ");
+              const meta = [
+                item.user_level?.toUpperCase(),
+                item.building_id || "—",
+                item.utility_role?.length ? `UTIL: ${item.utility_role.join("/").toUpperCase()}` : undefined,
+              ].filter(Boolean).join("  •  ");
               return (
-                <View className="row" style={styles.row}>
+                <View style={styles.row}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.rowTitle}>{item.user_fullname}</Text>
                     <Text style={styles.rowSub}>
-                      {item.user_id} • {item.user_level.toUpperCase()} •{" "}
-                      {item.building_id ?? "—"}
-                      {utils ? ` • ${utils}` : ""}
+                      {item.user_id}
+                      {meta ? `  •  ${meta}` : ""}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={styles.link}
-                    onPress={() => openEdit(item)}
-                  >
+                  <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
                     <Text style={styles.linkText}>Update</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.link, { marginLeft: 8 }]}
-                    onPress={() => onDelete(item)}
-                  >
-                    <Text style={[styles.linkText, { color: "#e53935" }]}>
-                      Delete
-                    </Text>
+                  <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
+                    <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
                   </TouchableOpacity>
                 </View>
               );
@@ -454,334 +516,277 @@ export default function AccountsPanel({
       </View>
 
       {/* CREATE MODAL */}
-      <Modal visible={createVisible} animationType="slide" transparent>
-        <View style={styles.modalWrap}>
+      <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Create User</Text>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+              <Text style={styles.modalTitle}>Create Account</Text>
 
-            <Text style={styles.modalLabel}>Full name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Full name"
-              value={fullname}
-              onChangeText={setFullname}
-            />
+              <Text style={styles.dropdownLabel}>Full name</Text>
+              <TextInput style={styles.input} placeholder="e.g. Juan Dela Cruz" value={fullname} onChangeText={setFullname} />
 
-            <Text style={styles.modalLabel}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-            />
+              <Text style={styles.dropdownLabel}>Password</Text>
+              <TextInput style={styles.input} placeholder="Set a password" value={password} onChangeText={setPassword} secureTextEntry />
 
-            <Text style={styles.modalLabel}>Role</Text>
-            <View style={styles.formRow}>
-              <Chip
-                label="Admin"
-                active={level === "admin"}
-                onPress={() => setLevel("admin")}
-              />
-              <Chip
-                label="Operator"
-                active={level === "operator"}
-                onPress={() => setLevel("operator")}
-              />
-              <Chip
-                label="Biller"
-                active={level === "biller"}
-                onPress={() => setLevel("biller")}
-              />
-            </View>
+              <Text style={styles.dropdownLabel}>Role</Text>
+              <View style={styles.chipsRow}>
+                {(["admin", "operator", "biller"] as Role[]).map((r) => (
+                  <Chip key={r} label={r.toUpperCase()} active={level === r} onPress={() => setLevel(r)} />
+                ))}
+              </View>
 
-            {roleNeedsBuilding(level) && (
+              {/* Building (disabled for admin selection optional) */}
               <Dropdown
                 label="Building"
                 value={buildingId}
                 onChange={setBuildingId}
-                options={buildings.map((b) => ({
-                  label: `${b.building_name} (${b.building_id})`,
-                  value: b.building_id,
-                }))}
+                disabled={!roleNeedsBuilding(level)}
+                options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
               />
-            )}
 
-            {roleUsesUtilities(level) && (
-              <View style={{ marginTop: 10 }}>
-                <Text style={styles.modalLabel}>Utility Role</Text>
-                <View style={styles.formRow}>
-                  {UTIL_OPTIONS.map((u) => (
-                    <UtilChip
-                      key={u}
-                      util={u}
-                      selected={utilRoles.includes(u)}
-                      onToggle={() => setUtilRoles(toggleArrayValue(utilRoles, u))}
-                    />
-                  ))}
+              {/* Utility chips (only for biller) */}
+              {level === "biller" && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={styles.dropdownLabel}>Utility Access</Text>
+                  <View style={styles.chipsRow}>
+                    {UTIL_OPTIONS.map((u) => (
+                      <UtilChip
+                        key={u}
+                        util={u}
+                        selected={utilRoles.includes(u)}
+                        onToggle={() => setUtilRoles((cur) => toggleArrayValue(cur, u))}
+                      />
+                    ))}
+                  </View>
                 </View>
-              </View>
-            )}
+              )}
+            </ScrollView>
 
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => setCreateVisible(false)}
-              >
-                <Text style={[styles.btnText, { color: "#102a43" }]}>
-                  Cancel
-                </Text>
+              <TouchableOpacity style={[styles.btnGhost]} onPress={() => setCreateVisible(false)}>
+                <Text style={styles.btnGhostText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.btn}
-                onPress={onCreate}
+                style={[styles.btn, submitting && styles.btnDisabled]}
                 disabled={submitting}
+                onPress={onCreate}
               >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.btnText}>Create Account</Text>
-                )}
+                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create</Text>}
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* EDIT MODAL */}
-      <Modal visible={editVisible} animationType="slide" transparent>
-        <View style={styles.modalWrap}>
+      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Edit User</Text>
-            <Text style={styles.modalLabel}>Full name</Text>
-            <TextInput
-              style={styles.input}
-              value={editFullname}
-              onChangeText={setEditFullname}
-            />
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+              <Text style={styles.modalTitle}>Update Account</Text>
 
-            <Text style={styles.modalLabel}>New password (optional)</Text>
-            <TextInput
-              style={styles.input}
-              value={editPassword}
-              onChangeText={setEditPassword}
-              secureTextEntry
-            />
+              <Text style={styles.dropdownLabel}>Full name</Text>
+              <TextInput style={styles.input} value={editFullname} onChangeText={setEditFullname} />
 
-            <Text style={styles.modalLabel}>Role</Text>
-            <View style={styles.formRow}>
-              <Chip
-                label="Admin"
-                active={editLevel === "admin"}
-                onPress={() => setEditLevel("admin")}
-              />
-              <Chip
-                label="Operator"
-                active={editLevel === "operator"}
-                onPress={() => setEditLevel("operator")}
-              />
-              <Chip
-                label="Biller"
-                active={editLevel === "biller"}
-                onPress={() => setEditLevel("biller")}
-              />
-            </View>
+              <Text style={styles.dropdownLabel}>New password (optional)</Text>
+              <TextInput style={styles.input} placeholder="Leave blank to keep" value={editPassword} onChangeText={setEditPassword} secureTextEntry />
 
-            {roleNeedsBuilding(editLevel) && (
+              <Text style={styles.dropdownLabel}>Role</Text>
+              <View style={styles.chipsRow}>
+                {(["admin", "operator", "biller"] as Role[]).map((r) => (
+                  <Chip key={r} label={r.toUpperCase()} active={editLevel === r} onPress={() => setEditLevel(r)} />
+                ))}
+              </View>
+
               <Dropdown
                 label="Building"
                 value={editBuildingId}
                 onChange={setEditBuildingId}
-                options={buildings.map((b) => ({
-                  label: `${b.building_name} (${b.building_id})`,
-                  value: b.building_id,
-                }))}
+                disabled={!roleNeedsBuilding(editLevel)}
+                options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
               />
-            )}
 
-            {roleUsesUtilities(editLevel) && (
-              <View style={{ marginTop: 10 }}>
-                <Text style={styles.modalLabel}>Utility Role</Text>
-                <View style={styles.formRow}>
-                  {UTIL_OPTIONS.map((u) => (
-                    <UtilChip
-                      key={u}
-                      util={u}
-                      selected={editUtilRoles.includes(u)}
-                      onToggle={() =>
-                        setEditUtilRoles(toggleArrayValue(editUtilRoles, u))
-                      }
-                    />
-                  ))}
+              {editLevel === "biller" && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={styles.dropdownLabel}>Utility Access</Text>
+                  <View style={styles.chipsRow}>
+                    {UTIL_OPTIONS.map((u) => (
+                      <UtilChip
+                        key={u}
+                        util={u}
+                        selected={editUtilRoles.includes(u)}
+                        onToggle={() => setEditUtilRoles((cur) => toggleArrayValue(cur, u))}
+                      />
+                    ))}
+                  </View>
                 </View>
-              </View>
-            )}
+              )}
+            </ScrollView>
 
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => setEditVisible(false)}
-              >
-                <Text style={[styles.btnText, { color: "#102a43" }]}>
-                  Cancel
-                </Text>
+              <TouchableOpacity style={[styles.btnGhost]} onPress={() => setEditVisible(false)}>
+                <Text style={styles.btnGhostText}>Close</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.btn}
-                onPress={onUpdate}
+                style={[styles.btn, submitting && styles.btnDisabled]}
                 disabled={submitting}
+                onPress={onUpdate}
               >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.btnText}>Save changes</Text>
-                )}
+                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save</Text>}
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
+// ---------------- Styles ----------------
 const styles = StyleSheet.create({
-  grid: { gap: 16 },
+  grid: {
+    flex: 1,
+    padding: 12,
+    gap: 12,
+  },
   card: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 16,
-    ...Platform.select({
-      web: { boxShadow: "0 10px 30px rgba(0,0,0,0.15)" as any },
-      default: { elevation: 3 },
-    }),
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 12,
+    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(2,10,50,0.06)" as any }, default: { elevation: 1 } }) as any),
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
   },
   cardTitle: {
     fontSize: 18,
     fontWeight: "700",
     color: "#102a43",
-    marginBottom: 12,
   },
 
-  formRow: { flexDirection: "row", gap: 12, flexWrap: "wrap", marginTop: 10 },
-  input: {
-    flexGrow: 1,
-    minWidth: 160,
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#fff",
-    color: "#102a43",
+  // Filters
+  filtersBar: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    marginBottom: 8,
+  },
+  filterCol: {
+    flex: 1,
   },
 
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  chipActive: { backgroundColor: "#2f6fed", borderColor: "#2f6fed" },
-  chipIdle: { backgroundColor: "#fff", borderColor: "#bcccdc" },
-  chipText: { fontSize: 14, fontWeight: "600" },
-  chipTextActive: { color: "#fff" },
-  chipTextIdle: { color: "#334e68" },
-
-  dropdownLabel: {
-    color: "#334e68ff",
-    fontWeight: "600",
-    marginBottom: 6,
-    marginTop: 6,
-  },
-  btn: {
-    marginTop: 12,
-    backgroundColor: "#1f4bd8",
-    paddingVertical: 12,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    alignItems: "center",
-  },
-  btnDisabled: { opacity: 0.7 },
-  btnGhost: { backgroundColor: "#e6efff" },
-  btnText: { color: "#fff", fontWeight: "700" },
-
-  hint: { marginTop: 8, color: "#486581" },
-
-  search: {
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
-  },
-  loader: { paddingVertical: 20, alignItems: "center" },
-  empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
-
-  row: {
-    borderWidth: 1,
-    borderColor: "#edf2f7",
-    backgroundColor: "#fdfefe",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
+  // Search
+  searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-  },
-  rowTitle: { fontWeight: "700", color: "#102a43" },
-  rowSub: { color: "#627d98", marginTop: 2, fontSize: 12 },
-  link: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    backgroundColor: "#f8fafc",
     borderRadius: 10,
-    backgroundColor: "#eef2ff",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
   },
-  linkText: { color: "#1f4bd8", fontWeight: "700" },
-
-  modalWrap: {
+  search: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    fontSize: 14,
+    color: "#0b1f33",
+  },
+
+  // Buttons
+  btn: {
+    backgroundColor: "#0f62fe",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    padding: 16,
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnGhost: {
+    backgroundColor: "#eef2ff",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  btnGhostText: { color: "#3b5bdb", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
+
+  // Chips
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
+  chip: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
+  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
+  chipText: { fontSize: 12, fontWeight: "700" },
+  chipTextIdle: { color: "#0b1f33" },
+  chipTextActive: { color: "#fff" },
+
+  // Row
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#edf2f7",
+  },
+  rowTitle: { fontSize: 15, fontWeight: "700", color: "#102a43" },
+  rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
+  link: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: "#f1f5f9" },
+  linkText: { color: "#0b1f33", fontWeight: "700" },
+
+  // Modal base
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
   },
   modalCard: {
-    width: "100%",
-    maxWidth: 560,
     backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 16,
-    ...Platform.select({
-      web: { boxShadow: "0 20px 60px rgba(0,0,0,0.35)" as any },
-      default: { elevation: 6 },
-    }),
+    borderRadius: 16,
+    padding: 14,
+    width: "100%",
+    maxWidth: 640,
+    maxHeight: Platform.OS === "web" ? 700 : undefined,
+    ...(Platform.select({ web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any }, default: { elevation: 4 } }) as any),
   },
-  modalTitle: {
-    fontWeight: "800",
-    fontSize: 18,
-    color: "#102a43",
-    marginBottom: 10,
+  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0b1f33", marginBottom: 4 },
+  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 },
+
+  // Inputs
+  dropdownLabel: { fontSize: 12, color: "#486581", marginTop: 8 },
+  pickerWrapper: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
+    overflow: "hidden",
   },
-  modalLabel: {
-    color: "#334e68",
-    marginTop: 6,
-    marginBottom: 6,
-    fontWeight: "600",
-  },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 8,
-    marginTop: 12,
+  picker: { height: 44 },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#0b1f33",
+    fontSize: 14,
+    marginTop: 4,
   },
 
-  pickerWrapper: {
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    borderRadius: 10,
-    backgroundColor: "#fff",
-  },
-  picker: { height: 55, width: "100%" },
+  // Misc
+  loader: { paddingVertical: 20, alignItems: "center" },
+  emptyWrap: { alignItems: "center", justifyContent: "center", paddingVertical: 30, gap: 8 },
+  emptyTitle: { color: "#486581", fontWeight: "700" },
+  emptyNote: { color: "#7b8794", fontSize: 12 },
 });

@@ -1,7 +1,6 @@
 // app/(tabs)/admin.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -14,10 +13,11 @@ import {
   KeyboardAvoidingView,
   Dimensions,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { SafeAreaView } from "react-native-safe-area-context";
+
 import { Ionicons } from "@expo/vector-icons";
 import { jwtDecode } from "jwt-decode";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { useAuth } from "../../contexts/AuthContext";
 import AccountsPanel from "../../components/admin/AccountsPanel";
@@ -28,7 +28,7 @@ import TenantsPanel from "../../components/admin/TenantsPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
 
-type PageKey =
+export type PageKey =
   | "accounts"
   | "buildings"
   | "rates"
@@ -37,7 +37,7 @@ type PageKey =
   | "meters"
   | "readings";
 
-type Page = {
+export type Page = {
   label: string;
   key: PageKey;
   icon: keyof typeof Ionicons.glyphMap;
@@ -46,6 +46,8 @@ type Page = {
 export default function AdminScreen() {
   const router = useRouter();
   const { token, logout } = useAuth();
+  // Accept both `panel` (from dashboard deep-link) and legacy `tab`
+  const params = useLocalSearchParams<{ panel?: string; tab?: string }>();
 
   const pages = useMemo<Page[]>(
     () => [
@@ -101,24 +103,41 @@ export default function AdminScreen() {
     operator: "stalls",
     biller: "rates",
   };
-  const initialActive: PageKey = roleInitial[role] ?? "accounts";
-  const [active, setActive] = useState<PageKey>(initialActive);
 
-  // ensure current tab stays allowed when role/token changes
+  // Resolve initial active tab from URL param (if valid & allowed), else role default
+  const resolveInitial = (): PageKey => {
+    const wantedParam = String(
+      params?.panel || params?.tab || ""
+    ).toLowerCase() as PageKey;
+    if (wantedParam && allowed.has(wantedParam)) return wantedParam;
+    return roleInitial[role] ?? "accounts";
+  };
+
+  const [active, setActive] = useState<PageKey>(resolveInitial());
+
+  // keep active in sync if role/visibility/URL param changes
   useEffect(() => {
-    if (!visiblePages.length) return;
-    if (!visiblePages.some((p) => p.key === active)) {
-      setActive(visiblePages[0].key);
+    const wantedParam = String(
+      params?.panel || params?.tab || ""
+    ).toLowerCase() as PageKey;
+    const allowedSet = roleAllowed[role] ?? roleAllowed.admin;
+
+    if (wantedParam && allowedSet.has(wantedParam)) {
+      setActive(wantedParam);
+    } else if (!allowedSet.has(active)) {
+      setActive(roleInitial[role] ?? "accounts");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, token, visiblePages.length]);
+  }, [role, token, params?.panel, params?.tab, allowed.size]);
 
   // only render content once we know the active tab is allowed
   const ready = visiblePages.some((p) => p.key === active);
 
   // Welcome modal (first login per user)
   const [welcomeVisible, setWelcomeVisible] = useState(false);
-  const [userInfo, setUserInfo] = useState<{ name?: string; level?: string }>({});
+  const [userInfo, setUserInfo] = useState<{ name?: string; level?: string }>(
+    {}
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -130,19 +149,8 @@ export default function AdminScreen() {
       // ignore
     }
 
-    (async () => {
-      try {
-        const decoded: any = jwtDecode(token);
-        const key = `welcome_shown_${decoded?.sub || "user"}_${decoded?.exp || "exp"}`;
-        const already = await AsyncStorage.getItem(key);
-        if (!already) {
-          setWelcomeVisible(true);
-          await AsyncStorage.setItem(key, "1");
-        }
-      } catch {
-        // ignore
-      }
-    })();
+    // Simple “first time” welcome per session
+    setWelcomeVisible((prev) => prev);
   }, [token]);
 
   // Drawer (mobile)
@@ -170,8 +178,18 @@ export default function AdminScreen() {
     });
   };
 
+  const applyRouteParam = (key: PageKey) => {
+    // Keep URL/search params in sync for deep linking/back/refresh
+    try {
+      router.setParams({ panel: key });
+    } catch {
+      // noop
+    }
+  };
+
   const handleSelect = (key: PageKey) => {
     setActive(key);
+    applyRouteParam(key);
     if (drawerOpen) closeDrawer();
   };
 
@@ -197,7 +215,9 @@ export default function AdminScreen() {
   };
 
   const Header = () => (
-    <View style={[styles.header, Platform.OS !== "web" && styles.headerLowerMobile]}>
+    <View
+      style={[styles.header, Platform.OS !== "web" && styles.headerLowerMobile]}
+    >
       {Platform.OS !== "web" && (
         <TouchableOpacity onPress={openDrawer} style={styles.hamburger}>
           <Ionicons name="menu" size={22} color="#102a43" />
@@ -294,7 +314,13 @@ export default function AdminScreen() {
 
           {/* Guard: don’t render any panel until the active tab is allowed */}
           {!ready ? (
-            <View style={[styles.content, styles.contentWeb, { alignItems: "center", justifyContent: "center" }]}>
+            <View
+              style={[
+                styles.content,
+                styles.contentWeb,
+                { alignItems: "center", justifyContent: "center" },
+              ]}
+            >
               <Text style={{ color: "#486581" }}>Loading…</Text>
             </View>
           ) : Platform.OS === "web" ? (
@@ -322,7 +348,9 @@ export default function AdminScreen() {
       {Platform.OS !== "web" && drawerOpen && (
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={styles.backdrop} onPress={closeDrawer} />
-          <Animated.View style={[styles.drawer, { left: slideX, width: drawerWidth }]}>
+          <Animated.View
+            style={[styles.drawer, { left: slideX, width: drawerWidth }]}
+          >
             <View style={styles.drawerHeader}>
               <Image
                 source={require("../../assets/images/jdn.jpg")}
@@ -391,7 +419,8 @@ export default function AdminScreen() {
             <Text style={styles.welcomeTitle}>Welcome!</Text>
             {userInfo?.name ? (
               <Text style={styles.welcomeText}>
-                Hi {userInfo.name}. Use the tabs to manage what your role allows.
+                Hi {userInfo.name}. Use the tabs to manage what your role
+                allows.
               </Text>
             ) : (
               <Text style={styles.welcomeText}>

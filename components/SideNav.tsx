@@ -3,7 +3,7 @@ import { View, TouchableOpacity, StyleSheet, Image, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
 
-export type TabKey = "admin" | "scanner" | "billing" | "logout";
+export type TabKey = "dashboard" | "admin" | "scanner" | "billing" | "logout";
 
 type Props = {
   active: TabKey;
@@ -92,7 +92,19 @@ export default function SideNav({ active, onSelect }: Props) {
       </View>
 
       <View style={{ flex: 1 }} />
-
+      <TouchableOpacity
+        style={[
+          styles.iconBtn,
+          expanded && styles.iconBtnWide,
+          active === "dashboard" && styles.active,
+        ]}
+        onPress={() => onSelect("dashboard")}
+      >
+        <View style={[styles.row, expanded && styles.rowExpanded]}>
+          <Ionicons name="stats-chart-outline" size={28} color="#fff" />
+          {expanded && <Text style={styles.label}>Dashboard</Text>}
+        </View>
+      </TouchableOpacity>
       {/* Expand / Collapse toggle (replaces logout) */}
       <TouchableOpacity
         style={[styles.iconBtn, expanded && styles.iconBtnWide]}

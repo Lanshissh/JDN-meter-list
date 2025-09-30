@@ -10,18 +10,25 @@ import {
   FlatList,
   Modal,
   Platform,
+  KeyboardAvoidingView,
+  ScrollView,
 } from "react-native";
 import axios from "axios";
+import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 
 type Building = {
   building_id: string;
   building_name: string;
+  erate_perKwH?: number | null;
+  emin_con?: number | null;
+  wrate_perCbM?: number | null;
+  wmin_con?: number | null;
+  lrate_perKg?: number | null;
   last_updated?: string;
   updated_by?: string;
 };
 
-/** ------------ ALERT HELPERS (web + mobile) ------------ */
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -36,7 +43,11 @@ function errorText(err: any, fallback = "Server error.") {
   if (d?.error) return String(d.error);
   if (d?.message) return String(d.message);
   if (err?.message) return String(err.message);
-  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+  try {
+    return JSON.stringify(d ?? err);
+  } catch {
+    return fallback;
+  }
 }
 
 function confirm(title: string, message: string): Promise<boolean> {
@@ -50,22 +61,47 @@ function confirm(title: string, message: string): Promise<boolean> {
     ]);
   });
 }
-/** ------------------------------------------------------ */
+
+const toNum = (s: string): number | null => {
+  const t = s.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+};
+
+const fmt = (n: number | null | undefined, unit?: string) => {
+  if (n == null || !isFinite(Number(n))) return "—";
+  const out = Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(n));
+  return unit ? `${out} ${unit}` : out;
+};
 
 export default function BuildingPanel({ token }: { token: string | null }) {
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [query, setQuery] = useState("");
+  type SortMode = "newest" | "oldest" | "name" | "id";
+  const [sortMode, setSortMode] = useState<SortMode>("newest");
 
-  // create form (now in a modal)
   const [createVisible, setCreateVisible] = useState(false);
   const [name, setName] = useState("");
+  const [c_eRate, setC_eRate] = useState("");
+  const [c_eMin, setC_eMin] = useState("");
+  const [c_wRate, setC_wRate] = useState("");
+  const [c_wMin, setC_wMin] = useState("");
+  const [c_lRate, setC_lRate] = useState("");
 
-  // edit form
   const [editVisible, setEditVisible] = useState(false);
   const [editBuilding, setEditBuilding] = useState<Building | null>(null);
   const [editName, setEditName] = useState("");
+  const [e_eRate, setE_eRate] = useState("");
+  const [e_eMin, setE_eMin] = useState("");
+  const [e_wRate, setE_wRate] = useState("");
+  const [e_wMin, setE_wMin] = useState("");
+  const [e_lRate, setE_lRate] = useState("");
 
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
@@ -90,8 +126,8 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     }
     try {
       setBusy(true);
-      const buildingsRes = await api.get<Building[]>("/buildings");
-      setBuildings(buildingsRes.data || []);
+      const res = await api.get<Building[]>("/buildings");
+      setBuildings(res.data || []);
     } catch (err: any) {
       notify("Load failed", errorText(err, "Connection error."));
     } finally {
@@ -105,13 +141,40 @@ export default function BuildingPanel({ token }: { token: string | null }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return buildings;
-    return buildings.filter(
-      (b) =>
-        b.building_id.toLowerCase().includes(q) ||
-        b.building_name.toLowerCase().includes(q),
-    );
-  }, [buildings, query]);
+    let list = buildings;
+    if (q) {
+      list = list.filter((b) =>
+        [b.building_id, b.building_name]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q)),
+      );
+    }
+    const arr = [...list];
+    switch (sortMode) {
+      case "name":
+        arr.sort((a, b) => a.building_name.localeCompare(b.building_name));
+        break;
+      case "id":
+        arr.sort((a, b) => a.building_id.localeCompare(b.building_id));
+        break;
+      case "oldest":
+        arr.sort(
+          (a, b) =>
+            (Date.parse(a.last_updated || "") || 0) -
+            (Date.parse(b.last_updated || "") || 0),
+        );
+        break;
+      case "newest":
+      default:
+        arr.sort(
+          (a, b) =>
+            (Date.parse(b.last_updated || "") || 0) -
+            (Date.parse(a.last_updated || "") || 0),
+        );
+        break;
+    }
+    return arr;
+  }, [buildings, query, sortMode]);
 
   const onCreate = async () => {
     const building_name = name.trim();
@@ -121,19 +184,24 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     }
     try {
       setSubmitting(true);
-      const res = await api.post("/buildings", { building_name });
-      // backend returns { message, buildingId } (or similar)
-      const assignedId: string =
-        res?.data?.buildingId ?? res?.data?.building_id ?? res?.data?.id ?? "";
-
+      const body: any = {
+        building_name,
+        erate_perKwH: toNum(c_eRate),
+        emin_con: toNum(c_eMin),
+        wrate_perCbM: toNum(c_wRate),
+        wmin_con: toNum(c_wMin),
+        lrate_perKg: toNum(c_lRate),
+      };
+      await api.post("/buildings", body);
       setName("");
+      setC_eRate("");
+      setC_eMin("");
+      setC_wRate("");
+      setC_wMin("");
+      setC_lRate("");
       setCreateVisible(false);
       await loadAll();
-
-      const msg = assignedId
-        ? `Building created.\nID assigned: ${assignedId}`
-        : "Building created.";
-      notify("Success", msg);
+      notify("Success", "Building created.");
     } catch (err: any) {
       notify("Create failed", errorText(err));
     } finally {
@@ -144,6 +212,11 @@ export default function BuildingPanel({ token }: { token: string | null }) {
   const openEdit = (b: Building) => {
     setEditBuilding(b);
     setEditName(b.building_name);
+    setE_eRate(b.erate_perKwH != null ? String(b.erate_perKwH) : "");
+    setE_eMin(b.emin_con != null ? String(b.emin_con) : "");
+    setE_wRate(b.wrate_perCbM != null ? String(b.wrate_perCbM) : "");
+    setE_wMin(b.wmin_con != null ? String(b.wmin_con) : "");
+    setE_lRate(b.lrate_perKg != null ? String(b.lrate_perKg) : "");
     setEditVisible(true);
   };
 
@@ -156,9 +229,18 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     }
     try {
       setSubmitting(true);
-      await api.put(`/buildings/${encodeURIComponent(editBuilding.building_id)}`, {
+      const body: any = {
         building_name,
-      });
+        erate_perKwH: toNum(e_eRate),
+        emin_con: toNum(e_eMin),
+        wrate_perCbM: toNum(e_wRate),
+        wmin_con: toNum(e_wMin),
+        lrate_perKg: toNum(e_lRate),
+      };
+      await api.put(
+        `/buildings/${encodeURIComponent(editBuilding.building_id)}`,
+        body,
+      );
       setEditVisible(false);
       await loadAll();
       notify("Updated", "Building updated successfully.");
@@ -175,61 +257,119 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       `Are you sure you want to delete ${b.building_name}?`,
     );
     if (!ok) return;
-
     try {
       setSubmitting(true);
       await api.delete(`/buildings/${encodeURIComponent(b.building_id)}`);
       await loadAll();
       notify("Deleted", "Building removed.");
     } catch (err: any) {
-      // Surfaces dependency errors like:
-      // "Cannot delete building. It is still referenced by: ..."
       notify("Delete failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const Row = ({ item }: { item: Building }) => {
-    const meta =
-      (item.updated_by ? item.updated_by : "—") +
-      (item.last_updated ? ` • ${new Date(item.last_updated).toLocaleString()}` : "");
-    return (
-      <View style={styles.row}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowTitle}>{item.building_name}</Text>
-          <Text style={styles.rowSub}>
-            {item.building_id}
-            {meta ? ` • ${meta}` : ""}
-          </Text>
-        </View>
-        <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
-          <Text style={styles.linkText}>Update</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
-          <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
-        </TouchableOpacity>
+  const Chip = ({
+    label,
+    active,
+    onPress,
+  }: {
+    label: string;
+    active: boolean;
+    onPress: () => void;
+  }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
+    >
+      <Text
+        style={[
+          styles.chipText,
+          active ? styles.chipTextActive : styles.chipTextIdle,
+        ]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const Empty = ({ title, note }: { title: string; note?: string }) => (
+    <View style={styles.emptyWrap}>
+      <Ionicons name="business-outline" size={28} color="#94a3b8" />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      {!!note && <Text style={styles.emptyNote}>{note}</Text>}
+    </View>
+  );
+
+  const Row = ({ item }: { item: Building }) => (
+    <View style={styles.row}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowTitle}>{item.building_name}</Text>
+        <Text style={styles.rowSub}>{item.building_id}</Text>
       </View>
-    );
-  };
+      <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+        <Text style={styles.linkText}>Update</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.link, { marginLeft: 8 }]}
+        onPress={() => onDelete(item)}
+      >
+        <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <View style={styles.grid}>
-      {/* Manage Buildings + Create button */}
       <View style={styles.card}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Manage Buildings</Text>
-          <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => setCreateVisible(true)}
+          >
             <Text style={styles.btnText}>+ Create Building</Text>
           </TouchableOpacity>
         </View>
 
-        <TextInput
-          style={styles.search}
-          placeholder="Search by ID or name…"
-          value={query}
-          onChangeText={setQuery}
-        />
+        <View style={styles.filtersBar}>
+          <View
+            style={[styles.searchWrap, Platform.OS === "web" && { flex: 1.4 }]}
+          >
+            <Ionicons
+              name="search"
+              size={16}
+              color="#94a3b8"
+              style={{ marginRight: 6 }}
+            />
+            <TextInput
+              style={styles.search}
+              placeholder="Search by ID or name…"
+              placeholderTextColor="#9aa5b1"
+              value={query}
+              onChangeText={setQuery}
+            />
+          </View>
+
+          <View style={[styles.filterCol, { flex: 1 }]}>
+            <Text style={styles.dropdownLabel}>Sort</Text>
+            <View className="chips" style={styles.chipsRow}>
+              {([
+                { label: "Newest", val: "newest" },
+                { label: "Oldest", val: "oldest" },
+                { label: "Name", val: "name" },
+                { label: "ID", val: "id" },
+              ] as const).map(({ label, val }) => (
+                <Chip
+                  key={label}
+                  label={label}
+                  active={sortMode === (val as any)}
+                  onPress={() => setSortMode(val as any)}
+                />
+              ))}
+            </View>
+          </View>
+        </View>
 
         {busy ? (
           <View style={styles.loader}>
@@ -238,158 +378,386 @@ export default function BuildingPanel({ token }: { token: string | null }) {
         ) : (
           <FlatList
             data={filtered}
-            keyExtractor={(item) => item.building_id}
-            scrollEnabled={Platform.OS === "web"}
-            nestedScrollEnabled={false}
-            ListEmptyComponent={<Text style={styles.empty}>No buildings found.</Text>}
-            renderItem={({ item }) => <Row item={item} />}
+            keyExtractor={(b) => b.building_id}
+            style={{ marginTop: 4 }}
+            ListEmptyComponent={
+              <Empty
+                title="No buildings found"
+                note="Try adjusting filters or create a new building."
+              />
+            }
+            renderItem={Row}
           />
         )}
       </View>
 
-      {/* Create Modal */}
-      <Modal visible={createVisible} animationType="slide" transparent>
-        <View style={styles.modalWrap}>
+      {/* CREATE MODAL */}
+      <Modal
+        visible={createVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCreateVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Create Building</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Building name"
-              value={name}
-              onChangeText={setName}
-            />
+
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 12 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={{ marginTop: 8 }}>
+                <Text style={styles.dropdownLabel}>Building name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. Building A"
+                  placeholderTextColor="#9aa5b1"
+                  value={name}
+                  onChangeText={setName}
+                />
+              </View>
+
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.dropdownLabel}>Electric</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Rate per kWh"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={c_eRate}
+                    onChangeText={setC_eRate}
+                  />
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Min. consumption"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={c_eMin}
+                    onChangeText={setC_eMin}
+                  />
+                </View>
+              </View>
+
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.dropdownLabel}>Water (optional)</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Rate per m³"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={c_wRate}
+                    onChangeText={setC_wRate}
+                  />
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Min. consumption"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={c_wMin}
+                    onChangeText={setC_wMin}
+                  />
+                </View>
+              </View>
+
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.dropdownLabel}>LPG (optional)</Text>
+                <TextInput
+                  style={[styles.input, { marginTop: 6 }]}
+                  placeholder="Rate per kg"
+                  placeholderTextColor="#9aa5b1"
+                  keyboardType="numeric"
+                  value={c_lRate}
+                  onChangeText={setC_lRate}
+                />
+              </View>
+            </ScrollView>
+
             <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
-                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
+              <TouchableOpacity
+                style={styles.link}
+                onPress={() => setCreateVisible(false)}
+              >
+                <Text style={styles.linkText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={onCreate} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Building</Text>}
+
+              <TouchableOpacity
+                style={[styles.btn, submitting && styles.btnDisabled]}
+                onPress={onCreate}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnText}>Create</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
-      {/* Edit Modal */}
-      <Modal visible={editVisible} animationType="slide" transparent>
-        <View style={styles.modalWrap}>
+      {/* UPDATE MODAL */}
+      <Modal
+        visible={editVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Edit Building</Text>
-            <TextInput style={styles.input} value={editName} onChangeText={setEditName} />
+            <Text style={styles.modalTitle}>Update Building</Text>
+
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 12 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={{ marginTop: 8 }}>
+                <Text style={styles.dropdownLabel}>Building name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Building name"
+                  placeholderTextColor="#9aa5b1"
+                  value={editName}
+                  onChangeText={setEditName}
+                />
+              </View>
+
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.dropdownLabel}>Electric</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Rate per kWh"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={e_eRate}
+                    onChangeText={setE_eRate}
+                  />
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Min. consumption"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={e_eMin}
+                    onChangeText={setE_eMin}
+                  />
+                </View>
+              </View>
+
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.dropdownLabel}>Water (optional)</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Rate per m³"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={e_wRate}
+                    onChangeText={setE_wRate}
+                  />
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Min. consumption"
+                    placeholderTextColor="#9aa5b1"
+                    keyboardType="numeric"
+                    value={e_wMin}
+                    onChangeText={setE_wMin}
+                  />
+                </View>
+              </View>
+
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.dropdownLabel}>LPG (optional)</Text>
+                <TextInput
+                  style={[styles.input, { marginTop: 6 }]}
+                  placeholder="Rate per kg"
+                  placeholderTextColor="#9aa5b1"
+                  keyboardType="numeric"
+                  value={e_lRate}
+                  onChangeText={setE_lRate}
+                />
+              </View>
+            </ScrollView>
+
             <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
-                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
+              <TouchableOpacity
+                style={styles.link}
+                onPress={() => setEditVisible(false)}
+              >
+                <Text style={styles.linkText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
+
+              <TouchableOpacity
+                style={[styles.btn, submitting && styles.btnDisabled]}
+                onPress={onUpdate}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnText}>Update</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  grid: { gap: 16 },
+  grid: { flex: 1, padding: 12, gap: 12 },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 16,
-    ...Platform.select({
-      web: { boxShadow: "0 10px 30px rgba(0,0,0,0.15)" as any },
-      default: { elevation: 3 },
-    }),
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#102a43",
-    marginBottom: 12,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#fff",
-    color: "#102a43",
-    marginTop: 6,
-  },
-  btn: {
-    marginTop: 12,
-    backgroundColor: "#1f4bd8",
-    paddingVertical: 12,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    alignItems: "center",
-  },
-  btnDisabled: { opacity: 0.7 },
-  btnGhost: { backgroundColor: "#e6efff" },
-  btnText: { color: "#fff", fontWeight: "700" },
-
-  search: {
-    borderWidth: 1,
-    borderColor: "#d9e2ec",
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
-  },
-  loader: { paddingVertical: 20, alignItems: "center" },
-  empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
-
-  row: {
-    borderWidth: 1,
-    borderColor: "#edf2f7",
-    backgroundColor: "#fdfefe",
     borderRadius: 12,
     padding: 12,
-    marginBottom: 10,
+    ...(Platform.select({
+      web: { boxShadow: "0 8px 24px rgba(2,10,50,0.06)" as any },
+      default: { elevation: 1 },
+    }) as any),
+  },
+  cardHeader: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
   },
-  rowTitle: { fontWeight: "700", color: "#102a43" },
-  rowSub: { color: "#627d98", marginTop: 2, fontSize: 12 },
-  link: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+  cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
+  filtersBar: {
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    gap: 12,
+    marginBottom: 8,
+    alignItems: "center",
+  },
+  filterCol: { flex: 1 },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
     borderRadius: 10,
-    backgroundColor: "#eef2ff",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
   },
-  linkText: { color: "#1f4bd8", fontWeight: "700" },
-
-  modalWrap: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+  search: { flex: 1, fontSize: 14, color: "#0b1f33" },
+  btn: {
+    backgroundColor: "#0f62fe",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    padding: 16,
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
+  chip: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
+  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
+  chipText: { fontSize: 12, fontWeight: "700" },
+  chipTextActive: { color: "#fff" },
+  chipTextIdle: { color: "#475569" },
+
+  // Row
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#edf2f7",
+  },
+  rowTitle: { fontSize: 15, fontWeight: "700", color: "#102a43" },
+  rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
+  link: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#f1f5f9",
+  },
+  linkText: { color: "#0b1f33", fontWeight: "700" },
+
+  // Modal base
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
   },
   modalCard: {
-    width: "100%",
-    maxWidth: 560,
     backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 16,
-    ...Platform.select({
-      web: { boxShadow: "0 20px 60px rgba(0,0,0,0.35)" as any },
-      default: { elevation: 6 },
-    }),
+    borderRadius: 16,
+    padding: 14,
+    width: "100%",
+    maxWidth: 640,
+    maxHeight: Platform.OS === "web" ? 700 : undefined,
+    ...(Platform.select({
+      web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any },
+      default: { elevation: 4 },
+    }) as any),
   },
   modalTitle: {
-    fontWeight: "800",
     fontSize: 18,
-    color: "#102a43",
-    marginBottom: 10,
+    fontWeight: "800",
+    color: "#0b1f33",
+    marginBottom: 4,
   },
   modalActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    gap: 8,
-    marginTop: 12,
+    gap: 10,
+    marginTop: 10,
   },
+
+  // Inputs
+  dropdownLabel: { fontSize: 12, color: "#486581", marginTop: 8 },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#0b1f33",
+    fontSize: 14,
+    marginTop: 4,
+  },
+  rowWrap: {
+    flexDirection: "row",
+    gap: 10,
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+  },
+
+  // Rates summary
+  rateRow: { flexDirection: "row", gap: 10, marginTop: 6, flexWrap: "wrap" },
+  rateCol: { flexDirection: "row", gap: 6, alignItems: "center" },
+  rateLabel: { fontSize: 12, fontWeight: "700", color: "#475569" },
+  rateVal: { fontSize: 12, color: "#1f2937" },
+
+  // Misc
+  loader: { paddingVertical: 20, alignItems: "center" },
+  emptyWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 30,
+    gap: 8,
+  },
+  emptyTitle: { color: "#486581", fontWeight: "700" },
+  emptyNote: { color: "#7b8794", fontSize: 12 },
 });

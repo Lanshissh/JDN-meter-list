@@ -1,6 +1,6 @@
+// app/(tabs)/billing.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -11,13 +11,14 @@ import {
   Platform,
   Image,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import axios from "axios";
 import { useFocusEffect } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
 import { BASE_API } from "../../constants/api";
 
-// ---------- helpers ----------
+/** -------- helpers -------- */
 type Numeric = number | string | null;
 
 const ymd = (d = new Date()) => {
@@ -67,8 +68,7 @@ const fmt = (n: Numeric | undefined, currency = true) => {
     : Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v);
 };
 
-// ---------- types (NEW API SHAPE) ----------
-
+/** -------- types (aligned with routes/billings.js) -------- */
 type PeriodBill = {
   prev_index: number | null;
   curr_index: number | null;
@@ -80,20 +80,20 @@ type PeriodBill = {
 
 type PeriodOut = {
   type: "billable" | "downtime";
-  start: string;
-  end: string;
-  reason?: string; // downtime only
+  start: string; // YYYY-MM-DD
+  end: string;   // YYYY-MM-DD
+  reason?: string; // for downtime segments
   bill: PeriodBill;
 };
 
 type BillingApiResponse = {
   meter_id: string;
-  meter_type: string; // "electric" | "water" | "lpg" | etc.
+  meter_type: "electric" | "water" | "lpg";
   periods: PeriodOut[];
   totals: { consumption: number; base: number; vat: number; total: number };
 };
 
-// ---------- component ----------
+/** -------- component -------- */
 export default function BillingScreen() {
   const { token } = useAuth();
   const { scans } = useScanHistory();
@@ -147,9 +147,7 @@ export default function BillingScreen() {
     setData(null);
 
     try {
-      const url = `${BASE_API}/billings/meters/${encodeURIComponent(
-        id
-      )}/period-end/${encodeURIComponent(ed)}`;
+      const url = `${BASE_API}/billings/meters/${encodeURIComponent(id)}/period-end/${encodeURIComponent(ed)}`;
       const res = await axios.get(url, { headers: authHeader });
       setData(res.data as BillingApiResponse);
     } catch (err: any) {
@@ -197,7 +195,7 @@ export default function BillingScreen() {
     </View>
   );
 
-  // ---------- render ----------
+  /** -------- render -------- */
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
@@ -217,8 +215,9 @@ export default function BillingScreen() {
           </View>
 
           {/* Inputs card */}
-          <View className="card" style={styles.card}>
+          <View style={styles.card}>
             <Text style={styles.title}>Meter Billing Preview</Text>
+
             <Text style={styles.label}>Meter ID</Text>
             <View style={styles.inputRow}>
               <TextInput
@@ -268,102 +267,108 @@ export default function BillingScreen() {
           {loading && (
             <View style={styles.card}>
               <View style={[styles.center, { paddingVertical: 16 }]}>
-                <ActivityIndicator size="large" />
-                <Text style={styles.muted}>Computing…</Text>
+                <ActivityIndicator />
+                <Text style={{ color: "#6b7280", marginTop: 8 }}>Loading preview…</Text>
               </View>
             </View>
           )}
 
-          {/* Result (NEW) */}
-          {!loading && !error && data && (
+          {/* No data yet */}
+          {!loading && !error && !data && (
+            <View style={styles.card}>
+              <Text style={{ color: "#6b7280" }}>Enter a valid Meter ID and date to preview.</Text>
+            </View>
+          )}
+
+          {/* Preview */}
+          {!loading && data && (
             <>
+              {/* Summary */}
               <View style={styles.card}>
-                <Text style={styles.title}>
-                  Meter {data.meter_id} ({String(data.meter_type || "").toUpperCase()})
-                </Text>
-                <View style={styles.divider} />
+                <View style={styles.summaryHeader}>
+                  <Text style={styles.summaryTitle}>
+                    {data.meter_id} · {String(data.meter_type || "").toUpperCase()}
+                  </Text>
+                  <TouchableOpacity onPress={fetchPreview} style={[styles.pillBtn, { paddingVertical: 6 }]}>
+                    <Text style={styles.pillText}>Refresh</Text>
+                  </TouchableOpacity>
+                </View>
 
-                {data.periods.length === 0 ? (
-                  <Text style={styles.muted}>No segments for this period.</Text>
-                ) : (
-                  <View style={{ gap: 10 }}>
-                    {data.periods.map((p, idx) => (
-                      <View key={`${p.start}-${p.end}-${idx}`} style={styles.segment}>
-                        <View style={styles.segmentHeader}>
-                          <BillTag type={p.type} />
-                          <Text style={styles.segmentDates}>
-                            {p.start} → {p.end}
-                          </Text>
-                        </View>
-
-                        {p.type === "downtime" ? (
-                          <Text style={styles.muted}>Reason: {p.reason || "zero readings"}</Text>
-                        ) : (
-                          <View style={styles.grid2}>
-                            <View style={styles.stat}>
-                              <Text style={styles.statLabel}>Prev index</Text>
-                              <Text style={styles.statValue}>{fmt(p.bill.prev_index, false)}</Text>
-                            </View>
-                            <View style={styles.stat}>
-                              <Text style={styles.statLabel}>Current index</Text>
-                              <Text style={styles.statValue}>{fmt(p.bill.curr_index, false)}</Text>
-                            </View>
-                            <View style={styles.stat}>
-                              <Text style={styles.statLabel}>Consumption</Text>
-                              <Text style={styles.statValue}>{fmt(p.bill.consumption, false)}</Text>
-                            </View>
-                            <View style={styles.stat}>
-                              <Text style={styles.statLabel}>Base</Text>
-                              <Text style={styles.statValue}>{fmt(p.bill.base)}</Text>
-                            </View>
-                            <View style={styles.stat}>
-                              <Text style={styles.statLabel}>VAT</Text>
-                              <Text style={styles.statValue}>{fmt(p.bill.vat)}</Text>
-                            </View>
-                            <View style={styles.stat}>
-                              <Text style={styles.statLabel}>Total</Text>
-                              <Text style={styles.statValue}>{fmt(p.bill.total)}</Text>
-                            </View>
-                          </View>
-                        )}
-                      </View>
-                    ))}
+                <View style={styles.summaryRow}>
+                  <View style={styles.sumCol}>
+                    <Text style={styles.sumLabel}>Consumption</Text>
+                    <Text style={styles.sumValue}>{fmt(data.totals.consumption, false)}</Text>
                   </View>
-                )}
-              </View>
-
-              {/* Roll-up totals */}
-              <View style={styles.card}>
-                <Text style={styles.title}>Billable totals (this period)</Text>
-                <View style={styles.grid2}>
-                  <View style={styles.stat}>
-                    <Text style={styles.statLabel}>Consumption</Text>
-                    <Text style={styles.statValue}>{fmt(data.totals.consumption, false)}</Text>
+                  <View style={styles.sumCol}>
+                    <Text style={styles.sumLabel}>Base</Text>
+                    <Text style={styles.sumValue}>{fmt(data.totals.base)}</Text>
                   </View>
-                  <View style={styles.stat}>
-                    <Text style={styles.statLabel}>Base</Text>
-                    <Text style={styles.statValue}>{fmt(data.totals.base)}</Text>
+                  <View style={styles.sumCol}>
+                    <Text style={styles.sumLabel}>VAT</Text>
+                    <Text style={styles.sumValue}>{fmt(data.totals.vat)}</Text>
                   </View>
-                  <View style={styles.stat}>
-                    <Text style={styles.statLabel}>VAT</Text>
-                    <Text style={styles.statValue}>{fmt(data.totals.vat)}</Text>
-                  </View>
-                  <View style={styles.stat}>
-                    <Text style={styles.statLabel}>Total</Text>
-                    <Text style={styles.statValue}>{fmt(data.totals.total)}</Text>
+                  <View style={styles.sumCol}>
+                    <Text style={styles.sumLabel}>Total</Text>
+                    <Text style={[styles.sumValue, styles.sumEm]}>{fmt(data.totals.total)}</Text>
                   </View>
                 </View>
               </View>
-            </>
-          )}
 
-          {/* Empty hint */}
-          {!loading && !error && !data && (!meterId || !endDate) && (
-            <View style={[styles.card, styles.center]}>
-              <Text style={styles.muted}>
-                Enter a meter ID and period-end date to preview billing.
-              </Text>
-            </View>
+              {/* Periods */}
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Period breakdown</Text>
+
+                {data.periods.length === 0 ? (
+                  <Text style={{ color: "#6b7280", marginTop: 6 }}>No data in range.</Text>
+                ) : (
+                  data.periods.map((p, i) => (
+                    <View key={`${p.start}_${p.end}_${i}`} style={styles.periodRow}>
+                      <View style={styles.periodHeader}>
+                        <BillTag type={p.type} />
+                        <Text style={styles.periodDates}>
+                          {p.start} → {p.end}
+                        </Text>
+                      </View>
+
+                      {p.type === "downtime" && !!p.reason && (
+                        <View style={[styles.badge, styles.badgeMuted]}>
+                          <Text style={[styles.badgeText, { color: "#374151" }]}>
+                            {p.reason}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={styles.grid2}>
+                        <View style={styles.kv}>
+                          <Text style={styles.k}>Prev index</Text>
+                          <Text style={styles.v}>{p.bill.prev_index ?? "—"}</Text>
+                        </View>
+                        <View style={styles.kv}>
+                          <Text style={styles.k}>Current index</Text>
+                          <Text style={styles.v}>{p.bill.curr_index ?? "—"}</Text>
+                        </View>
+                        <View style={styles.kv}>
+                          <Text style={styles.k}>Consumption</Text>
+                          <Text style={styles.v}>{fmt(p.bill.consumption, false)}</Text>
+                        </View>
+                        <View style={styles.kv}>
+                          <Text style={styles.k}>Base</Text>
+                          <Text style={styles.v}>{fmt(p.bill.base)}</Text>
+                        </View>
+                        <View style={styles.kv}>
+                          <Text style={styles.k}>VAT</Text>
+                          <Text style={styles.v}>{fmt(p.bill.vat)}</Text>
+                        </View>
+                        <View style={styles.kv}>
+                          <Text style={styles.k}>Total</Text>
+                          <Text style={[styles.v, { fontWeight: "700" }]}>{fmt(p.bill.total)}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            </>
           )}
         </ScrollView>
       </View>
@@ -371,157 +376,122 @@ export default function BillingScreen() {
   );
 }
 
-// ---------- Styles ----------
+/** -------- styles -------- */
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: "#F4F6FA",
-  },
-  container: {
-    flex: 1,
-    padding: 18,
-    paddingTop: 8,
-  },
-  brandHeader: {
-    alignItems: "center",
-  },
-  brandLogo: {
-    height: 100,
-    width: 100,
-  },
+  safe: { flex: 1, backgroundColor: "#f5f7fb" },
+  container: { flex: 1, padding: 12, gap: 8 },
+
+  brandHeader: { width: "100%", alignItems: "center", marginBottom: 2 },
+  brandLogo: { width: 90, height: 90, opacity: 0.95 },
+
   card: {
     backgroundColor: "#fff",
+    borderRadius: 12,
     padding: 14,
-    borderRadius: 14,
-    marginTop: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    ...Platform.select({ android: { elevation: 1 } }),
+    ...(Platform.select({
+      web: { boxShadow: "0 4px 16px rgba(0,0,0,0.06)" as any },
+      default: { elevation: 2 },
+    }) as any),
   },
-  title: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#11181C",
-    marginBottom: 2,
-  },
-  label: {
-    fontSize: 13,
-    color: "#4B5563",
-    marginBottom: 6,
-  },
-  inputRow: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-  },
+
+  title: { fontSize: 18, fontWeight: "700", color: "#0f172a", marginBottom: 8 },
+  label: { fontSize: 12, color: "#6b7280", marginTop: 2 },
+
+  inputRow: { flexDirection: "row", gap: 8, alignItems: "center", marginTop: 6 },
   input: {
     flex: 1,
-    backgroundColor: "#F8FAFF",
+    height: 42,
     borderWidth: 1,
-    borderColor: "#E6EBF3",
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f9fafb",
     borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: Platform.OS === "ios" ? 12 : 10,
-    fontSize: 15,
+    paddingHorizontal: 12,
+    color: "#111827",
   },
   pillBtn: {
-    backgroundColor: "#11181C",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 999,
-  },
-  pillText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 12,
-  },
-  grid2: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  stat: {
-    flexGrow: 1,
-    flexBasis: "48%",
-    padding: 10,
-    backgroundColor: "#FAFBFE",
-    borderWidth: 1,
-    borderColor: "#E6EBF3",
-    borderRadius: 10,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: "#6B7280",
-  },
-  statValue: {
-    marginTop: 2,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#11181C",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#EEF2F7",
-    marginVertical: 8,
-  },
-  center: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  muted: {
-    color: "#6B7280",
-    fontSize: 13,
-  },
-  badge: {
-    marginTop: 10,
-    paddingVertical: 8,
     paddingHorizontal: 10,
-    borderRadius: 8,
-  },
-  badgeError: {
-    backgroundColor: "#FEE2E2",
-  },
-  badgeText: {
-    color: "#991B1B",
-    fontWeight: "600",
-  },
-  segment: {
-    borderWidth: 1,
-    borderColor: "#E6EBF3",
-    borderRadius: 10,
-    padding: 10,
-  },
-  segmentHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  segmentDates: {
-    fontWeight: "700",
-    color: "#11181C",
-  },
-  tag: {
+    paddingVertical: 8,
+    backgroundColor: "#0ea5e9",
     borderRadius: 999,
+  },
+  pillText: { color: "#fff", fontWeight: "600" },
+
+  badge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginTop: 10,
+  },
+  badgeError: { backgroundColor: "#fee2e2" },
+  badgeMuted: { backgroundColor: "#f3f4f6" },
+  badgeText: { color: "#b91c1c", fontWeight: "600" },
+
+  center: { alignItems: "center", justifyContent: "center" },
+
+  summaryHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  summaryTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  summaryRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  sumCol: {
+    flexGrow: 1,
+    minWidth: 140,
+    backgroundColor: "#f9fafb",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+  },
+  sumLabel: { fontSize: 12, color: "#6b7280" },
+  sumValue: { fontSize: 16, fontWeight: "700", color: "#111827", marginTop: 4 },
+  sumEm: { color: "#082cac" },
+
+  sectionTitle: { fontWeight: "700", color: "#111827" },
+
+  periodRow: {
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 8,
+    backgroundColor: "#fafafa",
+  },
+  periodHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  periodDates: { color: "#374151", fontWeight: "600" },
+
+  tag: {
     paddingHorizontal: 10,
     paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
   },
-  tagOk: {
-    backgroundColor: "#E7F6EC",
+  tagOk: { backgroundColor: "#e8f5e9", borderColor: "#b6e3be" },
+  tagMuted: { backgroundColor: "#eef2ff", borderColor: "#c7d2fe" },
+  tagText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
+  tagTextOk: { color: "#1b5e20" },
+  tagTextMuted: { color: "#3730a3" },
+
+  grid2: {
+    marginTop: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    columnGap: 10,
+    rowGap: 8,
   },
-  tagMuted: {
-    backgroundColor: "#EEF2F7",
+  kv: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    minWidth: 150,
+    flexGrow: 1,
   },
-  tagText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  tagTextOk: {
-    color: "#166534",
-  },
-  tagTextMuted: {
-    color: "#334155",
-  },
+  k: { fontSize: 11, color: "#6b7280" },
+  v: { fontSize: 14, color: "#111827", fontWeight: "600", marginTop: 2 },
 });
