@@ -175,6 +175,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
     return list.filter((m) => [m.meter_id, m.meter_sn, m.meter_type, m.stall_id, m.meter_status].some((v) => String(v).toLowerCase().includes(q)));
   }, [meters, query, filterType, buildingFilter, stallToBuilding]);
 
+  const filterBuildingOptions = useMemo(() => (
+    [ { label: "All Buildings", value: "" }, ...(isAdmin ? buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id })) : userBuildingId ? [{ label: userBuildingId, value: userBuildingId }] : []) ]
+  ), [isAdmin, buildings, userBuildingId]);
+
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortBy) {
@@ -216,29 +220,80 @@ export default function MeterPanel({ token }: { token: string | null }) {
           <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}><Text style={styles.btnText}>+ Create Meter</Text></TouchableOpacity>
         </View>
 
-        {/* Search + Filters */}
+        {/* Search bar */}
+        <View style={styles.searchWrap}>
+          <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+          <TextInput
+            placeholder="Search meters…"
+            placeholderTextColor="#94a3b8"
+            value={query}
+            onChangeText={setQuery}
+            style={styles.search}
+          />
+        </View>
+
+        {/* Filters (moved below search bar) */}
         <View style={styles.filtersBar}>
-          <View style={[styles.searchWrap, { flex: 1.5 }]}>
-            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-            <TextInput value={query} onChangeText={setQuery} placeholder="Search by ID, SN, type, stall, status…" placeholderTextColor="#9aa5b1" style={styles.search} />
-          </View>
+
+          {/* Building filter */}
+          {/* Building filter chips */}
           <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Building</Text>
+            <Text style={styles.dropdownLabel}>Filter by Building</Text>
             <View style={styles.chipsRow}>
-              {buildingChipOptions.map((opt) => (<Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />))}
+              {filterBuildingOptions.map((opt) => (
+                <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />
+              ))}
             </View>
           </View>
+
+          {/* Type filter */}
           <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Type</Text>
+            <Text style={styles.dropdownLabel}>Status</Text>
             <View style={styles.chipsRow}>
-              {([ { label: "All", val: "all" }, { label: "Electric", val: "electric" }, { label: "Water", val: "water" }, { label: "LPG", val: "lpg" } ] as const).map(({ label, val }) => (<Chip key={val} label={label} active={filterType === (val as any)} onPress={() => setFilterType(val as any)} />))}
+              {["all", "electric", "water", "lpg"].map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  onPress={() => setFilterType(t as any)}
+                  style={[styles.chip, filterType === t ? styles.chipActive : styles.chipIdle]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      filterType === t ? styles.chipTextActive : styles.chipTextIdle,
+                    ]}
+                  >
+                    {t.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
+
+          {/* Sort filter */}
           <View style={[styles.filterCol, { flex: 1 }]}>
             <Text style={styles.dropdownLabel}>Sort</Text>
             <View style={styles.chipsRow}>
-              {([ { label: "ID ↑", val: "id_asc" }, { label: "ID ↓", val: "id_desc" }, { label: "Type", val: "type" }, { label: "Stall", val: "stall" }, { label: "Status", val: "status" } ] as const).map(({ label, val }) => (
-                <Chip key={val} label={label} active={sortBy === (val as any)} onPress={() => setSortBy(val as any)} />
+              {[
+                { label: "ID ↑", val: "id_asc" },
+                { label: "ID ↓", val: "id_desc" },
+                { label: "Type", val: "type" },
+                { label: "Stall", val: "stall" },
+                { label: "Status", val: "status" },
+              ].map(({ label, val }) => (
+                <TouchableOpacity
+                  key={val}
+                  onPress={() => setSortBy(val as any)}
+                  style={[styles.chip, sortBy === val ? styles.chipActive : styles.chipIdle]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      sortBy === val ? styles.chipTextActive : styles.chipTextIdle,
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
               ))}
             </View>
           </View>
@@ -313,19 +368,44 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e2e8f0" },
   search: { flex: 1, fontSize: 14, color: "#0b1f33" },
-  filtersBar: { flexDirection: Platform.OS === "web" ? "row" : "column", gap: 12, marginBottom: 8, alignItems: "center", flexWrap: "wrap" },
-  filterCol: { flex: 1 },
   btn: { backgroundColor: "#0f62fe", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   btnText: { color: "#fff", fontWeight: "700" },
   btnGhost: { backgroundColor: "#eef2ff", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   btnGhostText: { color: "#3b5bdb", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
-  chip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, borderWidth: StyleSheet.hairlineWidth },
-  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
-  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
-  chipText: { fontSize: 12, fontWeight: "700" },
-  chipTextIdle: { color: "#475569" },
+  filtersBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    alignItems: "flex-start",
+    marginTop: 6,
+  },
+
+  filterCol: { minWidth: 220, flexShrink: 1 },
+
+  dropdownLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#486581",
+    marginBottom: 6,
+  },
+
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
+  chipActive: { borderColor: "#2563eb", backgroundColor: "#2563eb" },
+  chipText: { fontSize: 12 },
+  chipTextIdle: { color: "#334e68" },
   chipTextActive: { color: "#fff" },
   row: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#edf2f7" },
   rowTitle: { fontSize: 15, fontWeight: "700", color: "#102a43" },
@@ -336,7 +416,6 @@ const styles = StyleSheet.create({
   modalCard: { backgroundColor: "#fff", borderRadius: 16, padding: 14, width: "100%", maxWidth: 560, ...(Platform.select({ web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any }, default: { elevation: 4 } }) as any) },
   modalTitle: { fontSize: 18, fontWeight: "800", color: "#0b1f33", marginBottom: 4 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 },
-  dropdownLabel: { color: "#486581", fontSize: 12, marginTop: 8 },
   pickerWrapper: { backgroundColor: "#f8fafc", borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e2e8f0", overflow: "hidden" },
   picker: { height: 44 },
   input: { backgroundColor: "#f8fafc", borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e2e8f0", paddingHorizontal: 12, paddingVertical: 10, color: "#0b1f33", fontSize: 14, marginTop: 4 },

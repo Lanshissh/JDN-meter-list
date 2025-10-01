@@ -57,7 +57,6 @@ function decodeJwtPayload(token: string | null): any | null {
     const base64 = (part || "").replace(/-/g, "+").replace(/_/g, "/");
     const padLen = (4 - (base64.length % 4)) % 4;
     const padded = base64 + "=".repeat(padLen);
-    // atob polyfill
     const chars =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
     let str = "";
@@ -120,7 +119,6 @@ function confirm(title: string, message: string): Promise<boolean> {
     ]);
   });
 }
-/** ------------------------------------------------------ */
 
 // A tiny wrapper so CREATE & EDIT modals look EXACTLY the same
 function ModalShell({
@@ -416,9 +414,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
           )}
         </View>
 
-        {/* Filters row */}
-        <View style={styles.filtersBar}>
-          {/* Search */}
           <View style={[styles.searchWrap, Platform.OS === "web" && { flex: 1.4 }]}>
             <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
             <TextInput
@@ -430,6 +425,9 @@ export default function StallsPanel({ token }: { token: string | null }) {
             />
           </View>
 
+
+        {/* Filters row */}
+        <View style={styles.filtersBar}>
           {/* Building chips */}
           <View style={[styles.filterCol, { flex: 1 }]}>
             <Text style={styles.dropdownLabel}>Filter by Building</Text>
@@ -521,40 +519,34 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   )}
                 </View>
 
-                {(canEdit || canDelete) && (
-                  <View style={{ flexDirection: "row" }}>
-                    {canEdit && (
-                      <TouchableOpacity
-                        style={styles.link}
-                        onPress={() => openEdit(item)}
-                      >
-                        <Text style={styles.linkText}>Update</Text>
-                      </TouchableOpacity>
-                    )}
-                    {canDelete && (
-                      <TouchableOpacity
-                        style={[styles.link, { marginLeft: 8 }]}
-                        onPress={() => onDelete(item)}
-                      >
-                        <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
+                <View style={styles.rowActions}>
+                  {canEdit && (
+      <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}><Text style={styles.linkText}>Update</Text></TouchableOpacity>
+                  )}
+
+                  {canDelete && (
+      <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}><Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text></TouchableOpacity>
+
+                  )}
+                </View>
               </View>
             )}
+            style={{ maxHeight: 360, marginTop: 4 }}
           />
         )}
       </View>
 
-      {/* CREATE MODAL */}
+      {/* CREATE modal */}
       <Modal
         visible={createVisible}
         animationType="slide"
         transparent
         onRequestClose={() => setCreateVisible(false)}
       >
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <ModalShell
             title="Create Stall"
             footer={
@@ -563,336 +555,386 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   style={[styles.btn, styles.btnGhost]}
                   onPress={() => setCreateVisible(false)}
                 >
-                  <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
+                  <Text style={styles.btnGhostText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.btn} onPress={onCreate} disabled={submitting}>
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  disabled={submitting}
+                  onPress={onCreate}
+                >
                   {submitting ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
-                    <Text style={styles.btnText}>Create Stall</Text>
+                    <Text style={styles.btnText}>Create</Text>
                   )}
                 </TouchableOpacity>
               </>
             }
           >
-            <Text style={styles.dropdownLabel}>Stall SN</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. ST-001"
-              value={stallSn}
-              onChangeText={setStallSn}
-            />
+            {/* Admins can select Building; operators are locked to their building */}
+            <View style={{ marginTop: 8, opacity: isAdmin ? 1 : 0.7 }}>
+              <Text style={styles.dropdownLabel}>Building</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker
+                  enabled={isAdmin}
+                  selectedValue={isAdmin ? buildingId : userBuildingId || buildingId}
+                  onValueChange={(v) => setBuildingId(String(v))}
+                  style={styles.picker}
+                >
+                  {(isAdmin ? buildings : buildings.filter((b) => b.building_id === userBuildingId)).map(
+                    (b) => (
+                      <Picker.Item
+                        key={b.building_id}
+                        label={`${b.building_name} (${b.building_id})`}
+                        value={b.building_id}
+                      />
+                    ),
+                  )}
+                </Picker>
+              </View>
+            </View>
 
-            {isAdmin ? (
-              <Dropdown
-                label="Building"
-                value={buildingId}
-                onChange={setBuildingId}
-                options={buildings.map((b) => ({
-                  label: `${b.building_name} (${b.building_id})`,
-                  value: b.building_id,
-                }))}
+            <View style={{ marginTop: 8 }}>
+              <Text style={styles.dropdownLabel}>Stall SN</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. S-100"
+                placeholderTextColor="#9aa5b1"
+                value={stallSn}
+                onChangeText={setStallSn}
               />
-            ) : (
-              <ReadOnlyField label="Building" value={userBuildingId || "(none)"} />
-            )}
+            </View>
 
-            <Dropdown
-              label="Status"
-              value={status}
-              onChange={(v) => {
-                const s = v as Stall["stall_status"];
-                setStatus(s);
-                if (s === "available") setTenantId("");
-              }}
-              options={[
-                { label: "Available", value: "available" },
-                { label: "Occupied", value: "occupied" },
-                { label: "Under Maintenance", value: "under maintenance" },
-              ]}
-            />
+            <View style={{ marginTop: 8 }}>
+              <Text style={styles.dropdownLabel}>Status</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker
+                  selectedValue={status}
+                  onValueChange={(v) => setStatus(String(v) as any)}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Available" value="available" />
+                  <Picker.Item label="Occupied" value="occupied" />
+                  <Picker.Item label="Under Maintenance" value="under maintenance" />
+                </Picker>
+              </View>
+            </View>
 
+            {/* Tenant only if not available */}
             {status !== "available" && (
-              <Dropdown
-                label="Tenant"
-                value={tenantId}
-                onChange={setTenantId}
-                options={[
-                  { label: "None", value: "" },
-                  ...tenantsForCreate.map((t) => ({
-                    label: `${t.tenant_name} (${t.tenant_id})`,
-                    value: t.tenant_id,
-                  })),
-                ]}
-              />
+              <View style={{ marginTop: 8 }}>
+                <Text style={styles.dropdownLabel}>Tenant</Text>
+                <View style={styles.pickerWrapper}>
+                  <Picker
+                    selectedValue={tenantId}
+                    onValueChange={(v) => setTenantId(String(v))}
+                    style={styles.picker}
+                  >
+                    {tenantsForCreate.map((t) => (
+                      <Picker.Item
+                        key={t.tenant_id}
+                        label={`${t.tenant_name} (${t.tenant_id})`}
+                        value={t.tenant_id}
+                      />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
             )}
           </ModalShell>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* EDIT MODAL */}
-      <Modal visible={editVisible} animationType="slide" transparent>
-        <ModalShell
-          title={`Edit Stall ${editStall?.stall_id ?? ""}`}
-          footer={
-            <>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => setEditVisible(false)}
-              >
-                <Text style={[styles.btnText, { color: "#102a43" }]}>Cancel</Text>
-              </TouchableOpacity>
-              {canEdit && (
-                <TouchableOpacity style={styles.btn} onPress={onUpdate} disabled={submitting}>
+      {/* EDIT modal */}
+      <Modal
+        visible={editVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
+          <ModalShell
+            title="Edit Stall"
+            footer={
+              <>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={() => setEditVisible(false)}
+                >
+                  <Text style={styles.btnGhostText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  disabled={submitting}
+                  onPress={onUpdate}
+                >
                   {submitting ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
-                    <Text style={styles.btnText}>Save changes</Text>
+                    <Text style={styles.btnText}>Save</Text>
                   )}
                 </TouchableOpacity>
-              )}
-            </>
-          }
-        >
-          {editStall && (
-            <>
-              <Text style={styles.dropdownLabel}>Stall SN</Text>
-              <TextInput
-                style={styles.input}
-                value={editStall.stall_sn}
-                onChangeText={(v) => setEditStall({ ...editStall, stall_sn: v })}
-              />
-              <Dropdown
-                label="Building"
-                value={editStall.building_id}
-                onChange={(v) => setEditStall({ ...editStall, building_id: v })}
-                options={buildings.map((b) => ({
-                  label: `${b.building_name} (${b.building_id})`,
-                  value: b.building_id,
-                }))}
-                disabled={!isAdmin}
-              />
-              <Dropdown
-                label="Status"
-                value={editStall.stall_status}
-                onChange={(v) => {
-                  const s = v as Stall["stall_status"];
-                  setEditStall({
-                    ...editStall,
-                    stall_status: s,
-                    tenant_id: s === "available" ? null : editStall.tenant_id,
-                  });
-                }}
-                options={[
-                  { label: "Available", value: "available" },
-                  { label: "Occupied", value: "occupied" },
-                  { label: "Under Maintenance", value: "under maintenance" },
-                ]}
-              />
-              {editStall.stall_status !== "available" && (
-                <Dropdown
-                  label="Tenant"
-                  value={editStall.tenant_id ?? ""}
-                  onChange={(v) => setEditStall({ ...editStall, tenant_id: v || null })}
-                  options={[
-                    { label: "None", value: "" },
-                    ...tenantsForEdit.map((t) => ({
-                      label: `${t.tenant_name} (${t.tenant_id})`,
-                      value: t.tenant_id,
-                    })),
-                  ]}
-                />
-              )}
-            </>
-          )}
-        </ModalShell>
+              </>
+            }
+          >
+            {editStall && (
+              <>
+                {/* Building (admin can change; operator is locked) */}
+                <View style={{ marginTop: 8, opacity: isAdmin ? 1 : 0.7 }}>
+                  <Text style={styles.dropdownLabel}>Building</Text>
+                  <View style={styles.pickerWrapper}>
+                    <Picker
+                      enabled={isAdmin}
+                      selectedValue={isAdmin ? editStall.building_id : userBuildingId || editStall.building_id}
+                      onValueChange={(v) =>
+                        setEditStall((s) => (s ? { ...s, building_id: String(v) } : s))
+                      }
+                      style={styles.picker}
+                    >
+                      {(isAdmin ? buildings : buildings.filter((b) => b.building_id === userBuildingId)).map(
+                        (b) => (
+                          <Picker.Item
+                            key={b.building_id}
+                            label={`${b.building_name} (${b.building_id})`}
+                            value={b.building_id}
+                          />
+                        ),
+                      )}
+                    </Picker>
+                  </View>
+                </View>
+
+                <View style={{ marginTop: 8 }}>
+                  <Text style={styles.dropdownLabel}>Stall SN</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editStall.stall_sn}
+                    onChangeText={(v) =>
+                      setEditStall((s) => (s ? { ...s, stall_sn: v } : s))
+                    }
+                  />
+                </View>
+
+                <View style={{ marginTop: 8 }}>
+                  <Text style={styles.dropdownLabel}>Status</Text>
+                  <View style={styles.pickerWrapper}>
+                    <Picker
+                      selectedValue={editStall.stall_status}
+                      onValueChange={(v) =>
+                        setEditStall((s) =>
+                          s ? { ...s, stall_status: String(v) as any } : s,
+                        )
+                      }
+                      style={styles.picker}
+                    >
+                      <Picker.Item label="Available" value="available" />
+                      <Picker.Item label="Occupied" value="occupied" />
+                      <Picker.Item label="Under Maintenance" value="under maintenance" />
+                    </Picker>
+                  </View>
+                </View>
+
+                {/* Tenant only if not available */}
+                {editStall.stall_status !== "available" && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={styles.dropdownLabel}>Tenant</Text>
+                    <View style={styles.pickerWrapper}>
+                      <Picker
+                        selectedValue={editStall.tenant_id || ""}
+                        onValueChange={(v) =>
+                          setEditStall((s) => (s ? { ...s, tenant_id: String(v) } : s))
+                        }
+                        style={styles.picker}
+                      >
+                        {tenantsForEdit.map((t) => (
+                          <Picker.Item
+                            key={t.tenant_id}
+                            label={`${t.tenant_name} (${t.tenant_id})`}
+                            value={t.tenant_id}
+                          />
+                        ))}
+                      </Picker>
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+          </ModalShell>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={{ marginTop: 8 }}>
-      <Text style={styles.dropdownLabel}>{label}</Text>
-      <View style={[styles.input, { justifyContent: "center" }]}>
-        <Text style={{ color: "#0b2239", fontWeight: "600" }}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-function Dropdown({
-  label,
-  value,
-  onChange,
-  options,
-  disabled = false,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { label: string; value: string }[];
-  disabled?: boolean;
-}) {
-  const onValueChange = disabled
-    ? () => {}
-    : (itemValue: any) => onChange(String(itemValue));
-  return (
-    <View style={{ marginTop: 8, opacity: disabled ? 0.6 : 1 }}>
-      <Text style={styles.dropdownLabel}>{label}</Text>
-      <View style={styles.pickerWrapper} pointerEvents={disabled ? "none" : "auto"}>
-        <Picker
-          selectedValue={value}
-          onValueChange={onValueChange}
-          style={styles.picker}
-          enabled={Platform.OS === "android" ? !disabled : true}
-        >
-          {options.map((opt) => (
-            <Picker.Item key={opt.value} label={opt.label} value={opt.value} />
-          ))}
-        </Picker>
-      </View>
-    </View>
-  );
-}
-
-// ---------------- Styles (aligned across admin panels) ----------------
+/* -------------------- styles (UNCHANGED) -------------------- */
 const styles = StyleSheet.create({
-  grid: { flex: 1, padding: 12, gap: 12 },
+  grid: {
+    padding: 12,
+    gap: 12,
+  },
+
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
-    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(2,10,50,0.06)" as any }, default: { elevation: 1 } }) as any),
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    ...(Platform.select({
+      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.05)" as any },
+      default: { elevation: 2 },
+    }) as any),
   },
+
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 6,
   },
-  cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
+  cardTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
 
-  // Filters
+  // top filters + search layout
   filtersBar: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 12,
-    marginBottom: 8,
-    alignItems: "center",
+    flexDirection: "row",
     flexWrap: "wrap",
+    gap: 10,
+    alignItems: "flex-start",
+    marginTop: 6,
   },
-  filterCol: { flex: 1 },
 
-  // Search
+  filterCol: { minWidth: 220, flexShrink: 1 },
+
+  dropdownLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#486581",
+    marginBottom: 6,
+  },
+
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
+  chipActive: { borderColor: "#2563eb", backgroundColor: "#2563eb" },
+  chipText: { fontSize: 12 },
+  chipTextIdle: { color: "#334e68" },
+  chipTextActive: { color: "#fff" },
+
+  // search
   searchWrap: {
+    marginTop: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8fafc",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#e2e8f0",
+    backgroundColor: "#fafbfc",
   },
-  search: { flex: 1, fontSize: 14, color: "#0b1f33" },
+  search: { flex: 1, fontSize: 14, color: "#0f172a" },
 
-  // Buttons
-  btn: {
-    backgroundColor: "#0f62fe",
-    paddingHorizontal: 12,
+  // list
+  row: {
     paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
+    borderTopWidth: 1,
+    borderColor: "#f1f5f9",
+    flexDirection: "row",
+    gap: 12,
+  },
+  rowTitle: { fontWeight: "700", color: "#102a43", fontSize: 14 },
+  rowSub: { color: "#708094", fontSize: 12, marginTop: 3 },
+  rowActions: { flexDirection: "row", gap: 8, alignItems: "center" },
+
+  // buttons
+  btn: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnGhost: {
-    backgroundColor: "#eef2ff",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
   },
-  btnGhostText: { color: "#3b5bdb", fontWeight: "700" },
+  btnGhostText: { color: "#334155", fontWeight: "700" },
+  btnDanger: { backgroundColor: "#ef4444" },
   btnDisabled: { opacity: 0.6 },
 
-  // Chips
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
-  chip: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
-  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
-  chipText: { fontSize: 12, fontWeight: "700" },
-  chipTextIdle: { color: "#475569" },
-  chipTextActive: { color: "#fff" },
+  // empty + loader
+  empty: { textAlign: "center", color: "#94a3b8", paddingVertical: 30 },
+  loader: { padding: 18, alignItems: "center" },
 
-  // List row
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#edf2f7",
-  },
-  rowTitle: { fontSize: 15, fontWeight: "700", color: "#102a43" },
-  rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
-  link: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+  // picker + inputs
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: "#dbe2ea",
     borderRadius: 8,
-    backgroundColor: "#f1f5f9",
+    overflow: "hidden",
   },
-  linkText: { color: "#0b1f33", fontWeight: "700" },
+  picker: { height: 40 },
 
-  // Modal base
+  input: {
+    borderWidth: 1,
+    borderColor: "#dbe2ea",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+
+  // modals
   modalWrap: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.25)",
     justifyContent: "center",
-    padding: 12,
+    padding: 16,
   },
   modalCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    ...(Platform.select({
+      web: { boxShadow: "0 10px 30px rgba(0,0,0,0.07)" as any },
+      default: { elevation: 3 },
+    }) as any),
+    maxWidth: 560,
+    alignSelf: "center",
     width: "100%",
-    maxWidth: 720,
-    ...(Platform.select({ web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any }, default: { elevation: 4 } }) as any),
+    maxHeight: 640,
   },
-  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0b1f33" },
-  modalDivider: { height: 1, backgroundColor: "#edf2f7", marginVertical: 10 },
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 },
-
-  // Inputs
-  dropdownLabel: { fontSize: 12, color: "#486581", marginTop: 8 },
-  pickerWrapper: {
-    backgroundColor: "#f8fafc",
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#e2e8f0",
-    overflow: "hidden",
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 6,
   },
-  picker: { height: 44 },
-  input: {
-    backgroundColor: "#f8fafc",
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#e2e8f0",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: "#0b1f33",
-    fontSize: 14,
-    marginTop: 4,
+  modalDivider: {
+    height: 1,
+    backgroundColor: "#eef2f7",
+    marginBottom: 8,
   },
-
-  // Misc
-  loader: { paddingVertical: 20, alignItems: "center" },
-  empty: { textAlign: "center", color: "#627d98", paddingVertical: 12 },
+  modalActions: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "flex-end",
+  },
+  link: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: "#f1f5f9" },
+  linkText: { color: "#0b1f33", fontWeight: "700" },
 });

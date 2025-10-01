@@ -12,30 +12,51 @@ import {
   Text,
   View,
   TouchableOpacity,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
 
+const today = () => new Date().toISOString().slice(0, 10);
+
 export default function ScannerScreen() {
   const router = useRouter();
-  const { addScan } = useScanHistory();
+  // ⬇️ use queueScan instead of addScan (Ctx does not have addScan)
+  const { queueScan } = useScanHistory();
   const [scanned, setScanned] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
 
-  const handleScan = (data: OnSuccessfulScanProps) => {
+  const handleScan = async (data: OnSuccessfulScanProps) => {
     if (scanned) return;
     setScanned(true);
 
     const scanText =
       (data as any)?.rawData || (data as any)?.data || JSON.stringify(data);
+    const raw = String(scanText).trim();
 
-    addScan({ data: String(scanText), timestamp: new Date().toISOString() });
+    // Try to extract a meter id like MTR-123...
+    const match = raw.match(/\bMTR-[A-Za-z0-9-]+\b/i);
+    const meterId = match ? match[0].toUpperCase() : "";
 
-    // Jump to History so the dashboard fetches immediately
+    // If we detected a meter id, queue an offline "placeholder" reading (value 0, today).
+    // This lets the reading appear in Offline History for later approval when online.
+    try {
+      if (meterId) {
+        await queueScan({
+          meter_id: meterId,
+          reading_value: 0,
+          lastread_date: today(),
+        });
+      }
+    } catch {
+      // Non-fatal — continue navigation anyway
+    }
+
+    // Go to Billing screen after scan
     router.replace("/(tabs)/billing");
 
-    Alert.alert("Scanned!", String(scanText));
+    Alert.alert("Scanned!", meterId || raw);
     setTimeout(() => setScanned(false), 3000);
   };
 
@@ -53,22 +74,11 @@ export default function ScannerScreen() {
         scanning={{ cooldownDuration: 1200 }}
         uiControls={{
           showControls: true,
-          showTorchButton: true, // <-- built-in flash toggle
+          showTorchButton: true, // built-in flash toggle
           showStatus: true,
         }}
         permissionScreen={{}}
       />
-
-      {/* Top bar with Close (X) */}
-      <SafeAreaView pointerEvents="box-none" style={styles.topBar}>
-        <TouchableOpacity
-          onPress={() => router.replace("/(tabs)/billing")}
-          style={styles.iconBtn}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <Ionicons name="close" size={26} color="#000000ff" />
-        </TouchableOpacity>
-      </SafeAreaView>
 
       {/* Make overlays non-interactive so touches reach the torch button */}
       <View pointerEvents="none" style={styles.logoContainer}>
@@ -81,6 +91,9 @@ export default function ScannerScreen() {
 
       <View pointerEvents="none" style={styles.overlay}>
         <Text style={styles.overlayText}>Point your camera at a QR Code</Text>
+        {Platform.OS === "web" ? (
+          <Text style={styles.overlayHint}>Use CTRL/CMD + Plus to zoom if needed</Text>
+        ) : null}
       </View>
     </View>
   );
@@ -123,12 +136,18 @@ const styles = StyleSheet.create({
     bottom: 60,
     width: "100%",
     alignItems: "center",
+    paddingHorizontal: 12,
   },
   overlayText: {
     color: "#fff",
-    fontSize: 16,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    padding: 8,
-    borderRadius: 10,
+    fontSize: 14,
+    textAlign: "center",
+    opacity: 0.9,
+  },
+  overlayHint: {
+    marginTop: 6,
+    color: "#d1d5db",
+    fontSize: 12,
+    opacity: 0.85,
   },
 });

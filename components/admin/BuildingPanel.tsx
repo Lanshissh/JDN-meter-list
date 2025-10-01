@@ -332,42 +332,42 @@ export default function BuildingPanel({ token }: { token: string | null }) {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.filtersBar}>
-          <View
-            style={[styles.searchWrap, Platform.OS === "web" && { flex: 1.4 }]}
-          >
-            <Ionicons
-              name="search"
-              size={16}
-              color="#94a3b8"
-              style={{ marginRight: 6 }}
-            />
-            <TextInput
-              style={styles.search}
-              placeholder="Search by ID or name…"
-              placeholderTextColor="#9aa5b1"
-              value={query}
-              onChangeText={setQuery}
-            />
-          </View>
+        {/* Search bar */}
+        <View style={styles.searchBar}>
+          <Ionicons
+            name="search"
+            size={16}
+            color="#94a3b8"
+            style={{ marginRight: 6 }}
+          />
+          <TextInput
+            style={styles.search}
+            placeholder="Search by ID or name…"
+            placeholderTextColor="#9aa5b1"
+            value={query}
+            onChangeText={setQuery}
+          />
+        </View>
 
-          <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Sort</Text>
-            <View className="chips" style={styles.chipsRow}>
-              {([
+        {/* Filters below search */}
+        <View style={styles.filtersRow}>
+          <Text style={styles.filterLabel}>Sort by</Text>
+          <View style={styles.chipsRow}>
+            {(
+              [
                 { label: "Newest", val: "newest" },
                 { label: "Oldest", val: "oldest" },
                 { label: "Name", val: "name" },
                 { label: "ID", val: "id" },
-              ] as const).map(({ label, val }) => (
-                <Chip
-                  key={label}
-                  label={label}
-                  active={sortMode === (val as any)}
-                  onPress={() => setSortMode(val as any)}
-                />
-              ))}
-            </View>
+              ] as const
+            ).map(({ label, val }) => (
+              <Chip
+                key={label}
+                label={label}
+                active={sortMode === (val as any)}
+                onPress={() => setSortMode(val as any)}
+              />
+            ))}
           </View>
         </View>
 
@@ -632,13 +632,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
-  filtersBar: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 12,
-    marginBottom: 8,
-    alignItems: "center",
-  },
-  filterCol: { flex: 1 },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -660,18 +653,41 @@ const styles = StyleSheet.create({
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
-  chip: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: StyleSheet.hairlineWidth,
+   // top filters + search layout
+  filtersBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    alignItems: "flex-start",
+    marginTop: 6,
   },
-  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
-  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
-  chipText: { fontSize: 12, fontWeight: "700" },
+
+  filterCol: { minWidth: 220, flexShrink: 1 },
+
+  dropdownLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#486581",
+    marginBottom: 6,
+  },
+
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
+  chipActive: { borderColor: "#2563eb", backgroundColor: "#2563eb" },
+  chipText: { fontSize: 12 },
+  chipTextIdle: { color: "#334e68" },
   chipTextActive: { color: "#fff" },
-  chipTextIdle: { color: "#475569" },
 
   // Row
   row: {
@@ -725,7 +741,6 @@ const styles = StyleSheet.create({
   },
 
   // Inputs
-  dropdownLabel: { fontSize: 12, color: "#486581", marginTop: 8 },
   input: {
     backgroundColor: "#f8fafc",
     borderRadius: 10,
@@ -760,4 +775,24 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { color: "#486581", fontWeight: "700" },
   emptyNote: { color: "#7b8794", fontSize: 12 },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 10,
+  },
+  filtersRow: {
+    marginTop: 10,
+    gap: 8,
+  },
+  filterLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 4,
+  },
 });

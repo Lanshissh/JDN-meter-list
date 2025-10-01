@@ -492,27 +492,18 @@ export default function RatesPanel({ token }: { token: string | null }) {
 
         {/* Filters row */}
         <View style={styles.filtersBar}>
-          {/* Search */}
-          <View
-            style={[
-              styles.searchWrap,
-              Platform.OS === "web" && ({ flex: 1.3 } as any),
-            ]}
-          >
-            <Ionicons
-              name="search"
-              size={16}
-              color="#94a3b8"
-              style={{ marginRight: 6 }}
-            />
-            <TextInput
-              style={styles.search}
-              placeholder="Search by Rate ID, Tenant ID, Tenant Name…"
-              placeholderTextColor="#9aa5b1"
-              value={query}
-              onChangeText={setQuery}
-            />
-          </View>
+{/* Search bar */}
+<View style={styles.searchWrap}>
+  <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+  <TextInput
+    value={query}
+    onChangeText={setQuery}
+    placeholder="Search stalls by ID, SN, tenant, status…"
+    placeholderTextColor="#9aa5b1"
+    style={styles.search}
+  />
+</View>
+
 
           {/* Building selector (admin only) */}
           <View style={[styles.filterCol, { flex: 1 }]}>

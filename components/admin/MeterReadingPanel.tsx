@@ -1,3 +1,4 @@
+// components/admin/MeterReadingPanel.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -39,6 +40,21 @@ function fmtValue(n: number | string | null | undefined, unit?: string) {
   if (n == null) return "—"; const v = typeof n === "string" ? parseFloat(n) : n; if (!isFinite(v)) return String(n); const formatted = Intl.NumberFormat(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}).format(v); return unit ? `${formatted} ${unit}` : formatted;
 }
 function formatDateTime(dt: string) { try { const d = new Date(dt); const yyyy = d.getFullYear(); const mm = String(d.getMonth()+1).padStart(2,"0"); const dd = String(d.getDate()).padStart(2,"0"); const hh = String(d.getHours()).padStart(2,"0"); const mi = String(d.getMinutes()).padStart(2,"0"); return `${yyyy}-${mm}-${dd} ${hh}:${mi}`; } catch { return dt; } }
+
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    // Web: use the native confirm
+    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+  }
+  // Mobile: use RN Alert
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
+
 
 // ---------- types ----------
 export type Reading = { reading_id: string; meter_id: string; reading_value: number; read_by: string; lastread_date: string; last_updated: string; updated_by: string; };
@@ -131,7 +147,28 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   };
   const openEdit = (row: Reading) => { setEditRow(row); setEditMeterId(row.meter_id); setEditValue(String(row.reading_value)); setEditDate(row.lastread_date); setEditVisible(true); };
   const onUpdate = async () => { if (!editRow) return; try { setSubmitting(true); await api.put(`/readings/${encodeURIComponent(editRow.reading_id)}`, { meter_id: editMeterId, reading_value: editValue === "" ? undefined : parseFloat(editValue), lastread_date: editDate }); setEditVisible(false); await loadAll(); notify("Updated","Reading updated successfully."); } catch (err:any) { notify("Update failed", errorText(err)); } finally { setSubmitting(false); } };
-  const onDelete = async (row?: Reading) => { const target = row ?? editRow; if (!target) return; const ok = await new Promise<boolean>((res)=> Alert.alert("Delete reading?", `Are you sure you want to delete ${target.reading_id}? This cannot be undone.`, [{ text:"Cancel", style:"cancel", onPress:()=>res(false)},{ text:"Delete", style:"destructive", onPress:()=>res(true)}])); if (!ok) return; try { setSubmitting(true); await api.delete(`/readings/${encodeURIComponent(target.reading_id)}`); setEditVisible(false); await loadAll(); notify("Deleted", `${target.reading_id} removed.`); } catch (err:any) { notify("Delete failed", errorText(err)); } finally { setSubmitting(false); } };
+  const onDelete = async (row?: Reading) => {
+    const target = row ?? editRow;
+    if (!target) return;
+
+    const ok = await confirm(
+      "Delete reading?",
+      `Are you sure you want to delete ${target.reading_id}? This cannot be undone.`
+    );
+    if (!ok) return;
+
+    try {
+      setSubmitting(true);
+      await api.delete(`/readings/${encodeURIComponent(target.reading_id)}`);
+      setEditVisible(false);
+      await loadAll();
+      notify("Deleted", `${target.reading_id} removed.`);
+    } catch (err: any) {
+      notify("Delete failed", errorText(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   // scanning
   const onScan = (data: OnSuccessfulScanProps | string) => { const raw = String((data as any)?.code ?? (data as any)?.rawData ?? (data as any)?.data ?? data ?? "").trim(); if (!raw) return; const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i; if (!meterIdPattern.test(raw)) return; const meterId = raw; setScanVisible(false); if (!metersById.get(meterId)) { notify("Unknown meter", `No meter found for id: ${meterId}`); return; } setFormMeterId(meterId); setFormValue(""); setFormDate(todayStr()); setTimeout(()=> readingInputRef.current?.focus?.(), 150); };
@@ -155,13 +192,14 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}><Text style={styles.btnText}>+ Create Reading</Text></TouchableOpacity>
         </View>
 
-        {/* Search + filters in one row */}
-        <View style={styles.filtersBar}>
-          <View style={[styles.searchWrap, { flex: 1.4 }]}>
-            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-            <TextInput value={meterQuery} onChangeText={setMeterQuery} placeholder="Search meters by ID, SN, stall, status…" placeholderTextColor="#9aa5b1" style={styles.search} />
-          </View>
+        {/* Search bar (now separate, above filters) */}
+        <View style={[styles.searchWrap, { flex: 1.4 }]}>
+          <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+          <TextInput value={meterQuery} onChangeText={setMeterQuery} placeholder="Search meters by ID, SN, stall, status…" placeholderTextColor="#9aa5b1" style={styles.search} />
+        </View>
 
+        {/* Filters moved BELOW search bar */}
+        <View style={styles.filtersBar}>
           <View style={[styles.filterCol, { flex: 1 }]}>
             <Text style={styles.dropdownLabel}>Building</Text>
             <View style={styles.chipsRow}>
@@ -468,7 +506,6 @@ const styles = StyleSheet.create({
   smallBtnGhost: { backgroundColor: "#eef2ff" },
   smallBtnGhostText: { color: "#1f4bd8", fontWeight: "800" },
   // dropdowns
-  dropdownLabel: { color: "#334e68", marginBottom: 6, marginTop: 6, fontWeight: "600" },
   pickerWrapper: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, overflow: "hidden", backgroundColor: "#fff" },
   picker: { height: 50 },
   // datepicker
@@ -478,14 +515,39 @@ const styles = StyleSheet.create({
   datePickersRow: { flexDirection: "row", gap: 12 },
   datePickerCol: { flex: 1 },
   // filter chips + bar
-  filtersBar: { flexDirection: Platform.OS === "web" ? "row" : "column", flexWrap: "wrap", alignItems: "center", gap: 12, padding: 12, marginBottom: 12, backgroundColor: "#f7f9ff", borderRadius: 12, borderWidth: 1, borderColor: "#e6efff" },
-  filterCol: { flex: 1, minWidth: 220 },
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, borderWidth: StyleSheet.hairlineWidth },
-  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
-  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
-  chipText: { fontSize: 12, fontWeight: "700" },
-  chipTextIdle: { color: "#475569" },
+  filtersBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    alignItems: "flex-start",
+    marginTop: 6,
+  },
+
+  filterCol: { minWidth: 220, flexShrink: 1 },
+
+  dropdownLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#486581",
+    marginBottom: 6,
+  },
+
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
+  chipActive: { borderColor: "#2563eb", backgroundColor: "#2563eb" },
+  chipText: { fontSize: 12 },
+  chipTextIdle: { color: "#334e68" },
   chipTextActive: { color: "#fff" },
   // badges + links
   badge: { backgroundColor: "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, alignSelf: "center" },

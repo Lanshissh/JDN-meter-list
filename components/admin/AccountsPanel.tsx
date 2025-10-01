@@ -214,17 +214,29 @@ export default function AccountsPanel({
         arr.sort((a, b) => a.user_fullname.localeCompare(b.user_fullname));
         break;
       case "role":
-        arr.sort((a, b) => a.user_level.localeCompare(b.user_level) || a.user_fullname.localeCompare(b.user_fullname));
+        arr.sort(
+          (a, b) =>
+            a.user_level.localeCompare(b.user_level) ||
+            a.user_fullname.localeCompare(b.user_fullname),
+        );
         break;
       case "id":
         arr.sort((a, b) => a.user_id.localeCompare(b.user_id));
         break;
       case "oldest":
-        arr.sort((a, b) => (Date.parse(a.last_updated || "") || 0) - (Date.parse(b.last_updated || "") || 0));
+        arr.sort(
+          (a, b) =>
+            (Date.parse(a.last_updated || "") || 0) -
+            (Date.parse(b.last_updated || "") || 0),
+        );
         break;
       case "newest":
       default:
-        arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
+        arr.sort(
+          (a, b) =>
+            (Date.parse(b.last_updated || "") || 0) -
+            (Date.parse(a.last_updated || "") || 0),
+        );
         break;
     }
     return arr;
@@ -357,20 +369,34 @@ export default function AccountsPanel({
       style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
     >
       <Text
-        style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}
+        style={[
+          styles.chipText,
+          active ? styles.chipTextActive : styles.chipTextIdle,
+        ]}
       >
         {label}
       </Text>
     </TouchableOpacity>
   );
 
-  const UtilChip = ({ util, selected, onToggle }: { util: Util; selected: boolean; onToggle: () => void }) => (
+  const UtilChip = ({
+    util,
+    selected,
+    onToggle,
+  }: {
+    util: Util;
+    selected: boolean;
+    onToggle: () => void;
+  }) => (
     <TouchableOpacity
       onPress={onToggle}
       style={[styles.chip, selected ? styles.chipActive : styles.chipIdle]}
     >
       <Text
-        style={[styles.chipText, selected ? styles.chipTextActive : styles.chipTextIdle]}
+        style={[
+          styles.chipText,
+          selected ? styles.chipTextActive : styles.chipTextIdle,
+        ]}
       >
         {util.toUpperCase()}
       </Text>
@@ -426,53 +452,66 @@ export default function AccountsPanel({
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Manage Accounts</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => setCreateVisible(true)}
+            >
               <Text style={styles.btnText}>+ Create Account</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Filters row */}
-        <View style={styles.filtersBar}>
-          {/* Search */}
-          <View style={[styles.searchWrap, Platform.OS === "web" && { flex: 1.4 }] }>
-            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-            <TextInput
-              style={styles.search}
-              placeholder="Search by ID, name, role, building, utilities…"
-              placeholderTextColor="#9aa5b1"
-              value={query}
-              onChangeText={setQuery}
-            />
-          </View>
+        {/* Search bar */}
+        <View style={styles.searchBar}>
+          <Ionicons
+            name="search"
+            size={16}
+            color="#94a3b8"
+            style={{ marginRight: 6 }}
+          />
+          <TextInput
+            style={styles.search}
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search by ID, name, role, building, utility…"
+            placeholderTextColor="#9aa5b1"
+          />
+        </View>
 
-          {/* Role filter chips */}
-          <View style={[styles.filterCol, { flex: 1 }] }>
-            <Text style={styles.dropdownLabel}>Filter by Role</Text>
+        {/* Filters (moved below search) */}
+        <View style={styles.filtersRow}>
+          {/* Role filter */}
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterLabel}>Role</Text>
             <View style={styles.chipsRow}>
-              {([
-                { label: "ALL", val: "" },
-                { label: "ADMIN", val: "admin" },
-                { label: "OPERATOR", val: "operator" },
-                { label: "BILLER", val: "biller" },
-              ] as const).map(({ label, val }) => (
-                <Chip key={label} label={label} active={roleFilter === (val as any)} onPress={() => setRoleFilter(val as any)} />
+              {["", "admin", "operator", "biller"].map((role) => (
+                <Chip
+                  key={role || "all"}
+                  label={role ? role.toUpperCase() : "All"}
+                  active={roleFilter === role}
+                  onPress={() => setRoleFilter(role as any)}
+                />
               ))}
             </View>
           </View>
 
-          {/* Sort chips */}
-          <View style={[styles.filterCol, { flex: 1 }] }>
-            <Text style={styles.dropdownLabel}>Sort</Text>
+          {/* Sort filter */}
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterLabel}>Sort by</Text>
             <View style={styles.chipsRow}>
-              {([
+              {[
                 { label: "Newest", val: "newest" },
                 { label: "Oldest", val: "oldest" },
                 { label: "Name", val: "name" },
                 { label: "Role", val: "role" },
                 { label: "ID", val: "id" },
-              ] as const).map(({ label, val }) => (
-                <Chip key={label} label={label} active={sortMode === (val as any)} onPress={() => setSortMode(val as any)} />
+              ].map(({ label, val }) => (
+                <Chip
+                  key={val}
+                  label={label}
+                  active={sortMode === val}
+                  onPress={() => setSortMode(val as any)}
+                />
               ))}
             </View>
           </View>
@@ -480,19 +519,30 @@ export default function AccountsPanel({
 
         {/* List */}
         {busy ? (
-          <View style={styles.loader}><ActivityIndicator /></View>
+          <View style={styles.loader}>
+            <ActivityIndicator />
+          </View>
         ) : (
           <FlatList
             data={sortedUsers}
             keyExtractor={(item) => item.user_id}
             style={{ marginTop: 4 }}
-            ListEmptyComponent={<Empty title="No users found" note="Try adjusting filters or create a new account." />}
+            ListEmptyComponent={
+              <Empty
+                title="No users found"
+                note="Try adjusting filters or create a new account."
+              />
+            }
             renderItem={({ item }) => {
               const meta = [
                 item.user_level?.toUpperCase(),
                 item.building_id || "—",
-                item.utility_role?.length ? `UTIL: ${item.utility_role.join("/").toUpperCase()}` : undefined,
-              ].filter(Boolean).join("  •  ");
+                item.utility_role?.length
+                  ? `UTIL: ${item.utility_role.join("/").toUpperCase()}`
+                  : undefined,
+              ]
+                .filter(Boolean)
+                .join("  •  ");
               return (
                 <View style={styles.row}>
                   <View style={{ flex: 1 }}>
@@ -502,11 +552,19 @@ export default function AccountsPanel({
                       {meta ? `  •  ${meta}` : ""}
                     </Text>
                   </View>
-                  <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}>
+                  <TouchableOpacity
+                    style={styles.link}
+                    onPress={() => openEdit(item)}
+                  >
                     <Text style={styles.linkText}>Update</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}>
-                    <Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>
+                  <TouchableOpacity
+                    style={[styles.link, { marginLeft: 8 }]}
+                    onPress={() => onDelete(item)}
+                  >
+                    <Text style={[styles.linkText, { color: "#e53935" }]}>
+                      Delete
+                    </Text>
                   </TouchableOpacity>
                 </View>
               );
@@ -516,22 +574,49 @@ export default function AccountsPanel({
       </View>
 
       {/* CREATE MODAL */}
-      <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+      <Modal
+        visible={createVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCreateVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 12 }}
+            >
               <Text style={styles.modalTitle}>Create Account</Text>
 
               <Text style={styles.dropdownLabel}>Full name</Text>
-              <TextInput style={styles.input} placeholder="e.g. Juan Dela Cruz" value={fullname} onChangeText={setFullname} />
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Juan Dela Cruz"
+                value={fullname}
+                onChangeText={setFullname}
+              />
 
               <Text style={styles.dropdownLabel}>Password</Text>
-              <TextInput style={styles.input} placeholder="Set a password" value={password} onChangeText={setPassword} secureTextEntry />
+              <TextInput
+                style={styles.input}
+                placeholder="Set a password"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
 
               <Text style={styles.dropdownLabel}>Role</Text>
               <View style={styles.chipsRow}>
                 {(["admin", "operator", "biller"] as Role[]).map((r) => (
-                  <Chip key={r} label={r.toUpperCase()} active={level === r} onPress={() => setLevel(r)} />
+                  <Chip
+                    key={r}
+                    label={r.toUpperCase()}
+                    active={level === r}
+                    onPress={() => setLevel(r)}
+                  />
                 ))}
               </View>
 
@@ -541,7 +626,10 @@ export default function AccountsPanel({
                 value={buildingId}
                 onChange={setBuildingId}
                 disabled={!roleNeedsBuilding(level)}
-                options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
+                options={buildings.map((b) => ({
+                  label: `${b.building_name} (${b.building_id})`,
+                  value: b.building_id,
+                }))}
               />
 
               {/* Utility chips (only for biller) */}
@@ -554,7 +642,9 @@ export default function AccountsPanel({
                         key={u}
                         util={u}
                         selected={utilRoles.includes(u)}
-                        onToggle={() => setUtilRoles((cur) => toggleArrayValue(cur, u))}
+                        onToggle={() =>
+                          setUtilRoles((cur) => toggleArrayValue(cur, u))
+                        }
                       />
                     ))}
                   </View>
@@ -563,7 +653,10 @@ export default function AccountsPanel({
             </ScrollView>
 
             <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btnGhost]} onPress={() => setCreateVisible(false)}>
+              <TouchableOpacity
+                style={[styles.btnGhost]}
+                onPress={() => setCreateVisible(false)}
+              >
                 <Text style={styles.btnGhostText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -571,7 +664,11 @@ export default function AccountsPanel({
                 disabled={submitting}
                 onPress={onCreate}
               >
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create</Text>}
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnText}>Create</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -579,31 +676,62 @@ export default function AccountsPanel({
       </Modal>
 
       {/* EDIT MODAL */}
-      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+      <Modal
+        visible={editVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 12 }}
+            >
               <Text style={styles.modalTitle}>Update Account</Text>
 
               <Text style={styles.dropdownLabel}>Full name</Text>
-              <TextInput style={styles.input} value={editFullname} onChangeText={setEditFullname} />
+              <TextInput
+                style={styles.input}
+                value={editFullname}
+                onChangeText={setEditFullname}
+              />
 
               <Text style={styles.dropdownLabel}>New password (optional)</Text>
-              <TextInput style={styles.input} placeholder="Leave blank to keep" value={editPassword} onChangeText={setEditPassword} secureTextEntry />
+              <TextInput
+                style={styles.input}
+                placeholder="Leave blank to keep"
+                value={editPassword}
+                onChangeText={setEditPassword}
+                secureTextEntry
+              />
 
+            <View style={[styles.filterCol, { flex: 1 }]}>
               <Text style={styles.dropdownLabel}>Role</Text>
               <View style={styles.chipsRow}>
                 {(["admin", "operator", "biller"] as Role[]).map((r) => (
-                  <Chip key={r} label={r.toUpperCase()} active={editLevel === r} onPress={() => setEditLevel(r)} />
+                  <Chip
+                    key={r}
+                    label={r.toUpperCase()}
+                    active={editLevel === r}
+                    onPress={() => setEditLevel(r)}
+                  />
                 ))}
               </View>
+            </View>
 
               <Dropdown
                 label="Building"
                 value={editBuildingId}
                 onChange={setEditBuildingId}
                 disabled={!roleNeedsBuilding(editLevel)}
-                options={buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))}
+                options={buildings.map((b) => ({
+                  label: `${b.building_name} (${b.building_id})`,
+                  value: b.building_id,
+                }))}
               />
 
               {editLevel === "biller" && (
@@ -615,7 +743,9 @@ export default function AccountsPanel({
                         key={u}
                         util={u}
                         selected={editUtilRoles.includes(u)}
-                        onToggle={() => setEditUtilRoles((cur) => toggleArrayValue(cur, u))}
+                        onToggle={() =>
+                          setEditUtilRoles((cur) => toggleArrayValue(cur, u))
+                        }
                       />
                     ))}
                   </View>
@@ -624,7 +754,10 @@ export default function AccountsPanel({
             </ScrollView>
 
             <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btnGhost]} onPress={() => setEditVisible(false)}>
+              <TouchableOpacity
+                style={[styles.btnGhost]}
+                onPress={() => setEditVisible(false)}
+              >
                 <Text style={styles.btnGhostText}>Close</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -632,7 +765,11 @@ export default function AccountsPanel({
                 disabled={submitting}
                 onPress={onUpdate}
               >
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save</Text>}
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnText}>Save</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -653,7 +790,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
-    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(2,10,50,0.06)" as any }, default: { elevation: 1 } }) as any),
+    ...(Platform.select({
+      web: { boxShadow: "0 8px 24px rgba(2,10,50,0.06)" as any },
+      default: { elevation: 1 },
+    }) as any),
   },
   cardHeader: {
     flexDirection: "row",
@@ -665,16 +805,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: "#102a43",
-  },
-
-  // Filters
-  filtersBar: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 12,
-    marginBottom: 8,
-  },
-  filterCol: {
-    flex: 1,
   },
 
   // Search
@@ -715,20 +845,41 @@ const styles = StyleSheet.create({
   btnGhostText: { color: "#3b5bdb", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
 
-  // Chips
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
-  chip: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: StyleSheet.hairlineWidth,
+  // top filters + search layout
+  filtersBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    alignItems: "flex-start",
+    marginTop: 6,
   },
-  chipIdle: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
-  chipActive: { backgroundColor: "#0f62fe", borderColor: "#0f62fe" },
-  chipText: { fontSize: 12, fontWeight: "700" },
-  chipTextIdle: { color: "#0b1f33" },
-  chipTextActive: { color: "#fff" },
 
+  filterCol: { minWidth: 220, flexShrink: 1 },
+
+  dropdownLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#486581",
+    marginBottom: 6,
+  },
+
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
+  chipActive: { borderColor: "#2563eb", backgroundColor: "#2563eb" },
+  chipText: { fontSize: 12 },
+  chipTextIdle: { color: "#334e68" },
+  chipTextActive: { color: "#fff" },
   // Row
   row: {
     flexDirection: "row",
@@ -739,7 +890,12 @@ const styles = StyleSheet.create({
   },
   rowTitle: { fontSize: 15, fontWeight: "700", color: "#102a43" },
   rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
-  link: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: "#f1f5f9" },
+  link: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#f1f5f9",
+  },
   linkText: { color: "#0b1f33", fontWeight: "700" },
 
   // Modal base
@@ -757,13 +913,25 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 640,
     maxHeight: Platform.OS === "web" ? 700 : undefined,
-    ...(Platform.select({ web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any }, default: { elevation: 4 } }) as any),
+    ...(Platform.select({
+      web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any },
+      default: { elevation: 4 },
+    }) as any),
   },
-  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0b1f33", marginBottom: 4 },
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0b1f33",
+    marginBottom: 4,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 10,
+  },
 
   // Inputs
-  dropdownLabel: { fontSize: 12, color: "#486581", marginTop: 8 },
   pickerWrapper: {
     backgroundColor: "#f8fafc",
     borderRadius: 10,
@@ -786,7 +954,38 @@ const styles = StyleSheet.create({
 
   // Misc
   loader: { paddingVertical: 20, alignItems: "center" },
-  emptyWrap: { alignItems: "center", justifyContent: "center", paddingVertical: 30, gap: 8 },
+  emptyWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 30,
+    gap: 8,
+  },
   emptyTitle: { color: "#486581", fontWeight: "700" },
   emptyNote: { color: "#7b8794", fontSize: 12 },
+  filtersRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 10,
+    gap: 12,
+  },
+  filterGroup: {
+    flex: 1,
+    minWidth: 140,
+  },
+  filterLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 4,
+  },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0", // light gray border
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 10,
+  },
 });
