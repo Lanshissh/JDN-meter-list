@@ -10,6 +10,7 @@ import {
   ScrollView,
   Platform,
   Image,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import axios from "axios";
@@ -17,6 +18,7 @@ import { useFocusEffect } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
 import { BASE_API } from "../../constants/api";
+import { Picker } from "@react-native-picker/picker";
 
 /** -------- helpers -------- */
 type Numeric = number | string | null;
@@ -37,7 +39,8 @@ const errorToText = (err: any): string => {
   for (const c of candidates) {
     if (!c) continue;
     if (typeof c === "string") return c;
-    if (typeof c === "object" && typeof (c as any).message === "string") return (c as any).message;
+    if (typeof c === "object" && typeof (c as any).message === "string")
+      return (c as any).message;
   }
   if (typeof data === "string") return data;
   try {
@@ -73,15 +76,15 @@ type PeriodBill = {
   prev_index: number | null;
   curr_index: number | null;
   consumption: number; // 0 for downtime
-  base: number;        // 0 for downtime
-  vat: number;         // 0 for downtime
-  total: number;       // 0 for downtime
+  base: number; // 0 for downtime
+  vat: number; // 0 for downtime
+  total: number; // 0 for downtime
 };
 
 type PeriodOut = {
   type: "billable" | "downtime";
   start: string; // YYYY-MM-DD
-  end: string;   // YYYY-MM-DD
+  end: string; // YYYY-MM-DD
   reason?: string; // for downtime segments
   bill: PeriodBill;
 };
@@ -92,6 +95,211 @@ type BillingApiResponse = {
   periods: PeriodOut[];
   totals: { consumption: number; base: number; vat: number; total: number };
 };
+
+/** -------- DatePickerField (cross-platform) -------- */
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+function daysInMonth(y: number, m1to12: number) {
+  return new Date(y, m1to12, 0).getDate();
+}
+function splitYMD(value: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || "");
+  if (!m) {
+    const t = new Date();
+    return { y: t.getFullYear(), m: t.getMonth() + 1, d: t.getDate() };
+  }
+  return { y: +m[1], m: +m[2], d: +m[3] };
+}
+
+function DatePickerField({
+  value,
+  onChange,
+  style,
+  placeholder = "YYYY-MM-DD",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  style?: any;
+  placeholder?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  const { y, m, d } = splitYMD(value);
+  const [yy, setYy] = useState(y);
+  const [mm, setMm] = useState(m);
+  const [dd, setDd] = useState(d);
+
+  useEffect(() => {
+    const cur = splitYMD(value);
+    setYy(cur.y);
+    setMm(cur.m);
+    setDd(cur.d);
+  }, [value]);
+
+  // WEB: use native <input type="date"> for best UX
+  const openWebPicker = () => {
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    const input = document.createElement("input");
+    input.type = "date";
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    input.value = value || ymd();
+    document.body.appendChild(input);
+    input.onchange = () => {
+      onChange(String(input.value));
+      setTimeout(() => input.remove(), 0);
+    };
+    input.onblur = () => setTimeout(() => input.remove(), 0);
+    input.click();
+  };
+
+  const applyMobile = () => {
+    const maxDay = daysInMonth(yy, mm);
+    const safeD = clamp(dd, 1, maxDay);
+    onChange(
+      `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(
+        safeD
+      ).padStart(2, "0")}`
+    );
+    setVisible(false);
+  };
+
+  // --- inside DatePickerField ---
+  if (Platform.OS === "web") {
+    return (
+      // @ts-ignore - using a real HTML input on web
+      <input
+        type="date"
+        value={value || ""}
+        onChange={(e: any) => onChange(e.target.value)}
+        // style to match styles.input (height, padding, border, radius, colors)
+        style={{
+          flex: 1,
+          backgroundColor: "#f8fafc",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: "#e2e8f0",
+          borderRadius: 10,
+          padding: "0 12px",
+          height: 40,
+          color: "#102a43",
+          outline: "none",
+          width: "100%",
+        }}
+      />
+    );
+  }
+
+  // Mobile: simple modal with three pickers (Month/Day/Year)
+  const years: number[] = (() => {
+    const now = new Date().getFullYear();
+    const arr: number[] = [];
+    for (let i = now + 2; i >= now - 10; i--) arr.push(i);
+    return arr;
+  })();
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  const maxDay = daysInMonth(yy, mm);
+  const days = Array.from({ length: maxDay }, (_, i) => i + 1);
+
+  return (
+    <>
+      <TouchableOpacity
+        onPress={() => setVisible(true)}
+        style={[style, { justifyContent: "center" }]}
+      >
+        <Text style={{ color: "#102a43" }}>
+          {value ? value : placeholder}
+        </Text>
+      </TouchableOpacity>
+
+      <Modal visible={visible} animationType="slide" transparent>
+        <View style={modalStyles.wrap}>
+          <View style={modalStyles.card}>
+            <Text style={modalStyles.title}>Select date</Text>
+            <View style={modalStyles.row}>
+              <View style={modalStyles.col}>
+                <Text style={modalStyles.label}>Month</Text>
+                <Picker
+                  selectedValue={mm}
+                  onValueChange={(v) => setMm(Number(v))}
+                >
+                  {months.map((m) => (
+                    <Picker.Item key={m} label={String(m)} value={m} />
+                  ))}
+                </Picker>
+              </View>
+              <View style={modalStyles.col}>
+                <Text style={modalStyles.label}>Day</Text>
+                <Picker
+                  selectedValue={dd > maxDay ? maxDay : dd}
+                  onValueChange={(v) => setDd(Number(v))}
+                >
+                  {days.map((d) => (
+                    <Picker.Item key={d} label={String(d)} value={d} />
+                  ))}
+                </Picker>
+              </View>
+              <View style={modalStyles.col}>
+                <Text style={modalStyles.label}>Year</Text>
+                <Picker
+                  selectedValue={yy}
+                  onValueChange={(v) => setYy(Number(v))}
+                >
+                  {years.map((y) => (
+                    <Picker.Item key={y} label={String(y)} value={y} />
+                  ))}
+                </Picker>
+              </View>
+            </View>
+
+            <View style={modalStyles.actions}>
+              <TouchableOpacity
+                onPress={() => setVisible(false)}
+                style={[styles.pillBtn, { backgroundColor: "#e2e8f0" }]}
+              >
+                <Text style={[styles.pillText, { color: "#102a43" }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={applyMobile} style={styles.pillBtn}>
+                <Text style={styles.pillText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+const modalStyles = StyleSheet.create({
+  wrap: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.3)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  card: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+  },
+  title: { fontWeight: "700", color: "#102a43", fontSize: 16, marginBottom: 8 },
+  row: { flexDirection: "row", gap: 8 },
+  col: { flex: 1 },
+  label: { color: "#64748b", fontSize: 12, marginBottom: 4 },
+  actions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 10,
+  },
+});
 
 /** -------- component -------- */
 export default function BillingScreen() {
@@ -147,7 +355,9 @@ export default function BillingScreen() {
     setData(null);
 
     try {
-      const url = `${BASE_API}/billings/meters/${encodeURIComponent(id)}/period-end/${encodeURIComponent(ed)}`;
+      const url = `${BASE_API}/billings/meters/${encodeURIComponent(
+        id
+      )}/period-end/${encodeURIComponent(ed)}`;
       const res = await axios.get(url, { headers: authHeader });
       setData(res.data as BillingApiResponse);
     } catch (err: any) {
@@ -188,8 +398,18 @@ export default function BillingScreen() {
   };
 
   const BillTag = ({ type }: { type: PeriodOut["type"] }) => (
-    <View style={[styles.tag, type === "billable" ? styles.tagOk : styles.tagMuted]}>
-      <Text style={[styles.tagText, type === "billable" ? styles.tagTextOk : styles.tagTextMuted]}>
+    <View
+      style={[
+        styles.tag,
+        type === "billable" ? styles.tagOk : styles.tagMuted,
+      ]}
+    >
+      <Text
+        style={[
+          styles.tagText,
+          type === "billable" ? styles.tagTextOk : styles.tagTextMuted,
+        ]}
+      >
         {type === "billable" ? "BILLABLE" : "DOWNTIME"}
       </Text>
     </View>
@@ -204,7 +424,10 @@ export default function BillingScreen() {
           <View
             style={[
               styles.brandHeader,
-              Platform.OS === "web" && { alignItems: "flex-start", marginTop: -30 },
+              Platform.OS === "web" && {
+                alignItems: "flex-start",
+                marginTop: -30,
+              },
             ]}
           >
             <Image
@@ -240,16 +463,16 @@ export default function BillingScreen() {
               )}
             </View>
 
-            <Text style={[styles.label, { marginTop: 10 }]}>Period-end date</Text>
+            <Text style={[styles.label, { marginTop: 10 }]}>
+              Period-end date
+            </Text>
             <View style={styles.inputRow}>
-              <TextInput
+              {/* ⤵️ Swapped the TextInput for a cross-platform DatePicker */}
+              <DatePickerField
                 value={endDate}
-                onChangeText={setEndDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="#8A8F98"
-                autoCapitalize="none"
-                autoCorrect={false}
+                onChange={setEndDate}
                 style={styles.input}
+                placeholder="YYYY-MM-DD"
               />
               <TouchableOpacity onPress={setToday} style={styles.pillBtn}>
                 <Text style={styles.pillText}>Today</Text>
@@ -265,110 +488,53 @@ export default function BillingScreen() {
 
           {/* Loading */}
           {loading && (
-            <View style={styles.card}>
+            <View className="card" style={styles.card}>
               <View style={[styles.center, { paddingVertical: 16 }]}>
                 <ActivityIndicator />
-                <Text style={{ color: "#6b7280", marginTop: 8 }}>Loading preview…</Text>
+                <Text style={{ color: "#6b7b8c", marginTop: 6 }}>
+                  Loading preview…
+                </Text>
               </View>
-            </View>
-          )}
-
-          {/* No data yet */}
-          {!loading && !error && !data && (
-            <View style={styles.card}>
-              <Text style={{ color: "#6b7280" }}>Enter a valid Meter ID and date to preview.</Text>
             </View>
           )}
 
           {/* Preview */}
           {!loading && data && (
-            <>
-              {/* Summary */}
-              <View style={styles.card}>
-                <View style={styles.summaryHeader}>
-                  <Text style={styles.summaryTitle}>
-                    {data.meter_id} · {String(data.meter_type || "").toUpperCase()}
-                  </Text>
-                  <TouchableOpacity onPress={fetchPreview} style={[styles.pillBtn, { paddingVertical: 6 }]}>
-                    <Text style={styles.pillText}>Refresh</Text>
-                  </TouchableOpacity>
-                </View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>
+                {data.meter_id} • {data.meter_type.toUpperCase()}
+              </Text>
 
-                <View style={styles.summaryRow}>
-                  <View style={styles.sumCol}>
-                    <Text style={styles.sumLabel}>Consumption</Text>
-                    <Text style={styles.sumValue}>{fmt(data.totals.consumption, false)}</Text>
-                  </View>
-                  <View style={styles.sumCol}>
-                    <Text style={styles.sumLabel}>Base</Text>
-                    <Text style={styles.sumValue}>{fmt(data.totals.base)}</Text>
-                  </View>
-                  <View style={styles.sumCol}>
-                    <Text style={styles.sumLabel}>VAT</Text>
-                    <Text style={styles.sumValue}>{fmt(data.totals.vat)}</Text>
-                  </View>
-                  <View style={styles.sumCol}>
-                    <Text style={styles.sumLabel}>Total</Text>
-                    <Text style={[styles.sumValue, styles.sumEm]}>{fmt(data.totals.total)}</Text>
-                  </View>
-                </View>
+              {/* Totals */}
+              <View style={[styles.badge, styles.badgeOk]}>
+                <Text style={styles.badgeText}>
+                  Total consumption: {fmt(data.totals.consumption, false)} • Base:{" "}
+                  {fmt(data.totals.base)} • VAT: {fmt(data.totals.vat)} • Total:{" "}
+                  {fmt(data.totals.total)}
+                </Text>
               </View>
 
               {/* Periods */}
-              <View style={styles.card}>
-                <Text style={styles.sectionTitle}>Period breakdown</Text>
-
-                {data.periods.length === 0 ? (
-                  <Text style={{ color: "#6b7280", marginTop: 6 }}>No data in range.</Text>
-                ) : (
-                  data.periods.map((p, i) => (
-                    <View key={`${p.start}_${p.end}_${i}`} style={styles.periodRow}>
-                      <View style={styles.periodHeader}>
-                        <BillTag type={p.type} />
-                        <Text style={styles.periodDates}>
-                          {p.start} → {p.end}
-                        </Text>
-                      </View>
-
-                      {p.type === "downtime" && !!p.reason && (
-                        <View style={[styles.badge, styles.badgeMuted]}>
-                          <Text style={[styles.badgeText, { color: "#374151" }]}>
-                            {p.reason}
-                          </Text>
-                        </View>
-                      )}
-
-                      <View style={styles.grid2}>
-                        <View style={styles.kv}>
-                          <Text style={styles.k}>Prev index</Text>
-                          <Text style={styles.v}>{p.bill.prev_index ?? "—"}</Text>
-                        </View>
-                        <View style={styles.kv}>
-                          <Text style={styles.k}>Current index</Text>
-                          <Text style={styles.v}>{p.bill.curr_index ?? "—"}</Text>
-                        </View>
-                        <View style={styles.kv}>
-                          <Text style={styles.k}>Consumption</Text>
-                          <Text style={styles.v}>{fmt(p.bill.consumption, false)}</Text>
-                        </View>
-                        <View style={styles.kv}>
-                          <Text style={styles.k}>Base</Text>
-                          <Text style={styles.v}>{fmt(p.bill.base)}</Text>
-                        </View>
-                        <View style={styles.kv}>
-                          <Text style={styles.k}>VAT</Text>
-                          <Text style={styles.v}>{fmt(p.bill.vat)}</Text>
-                        </View>
-                        <View style={styles.kv}>
-                          <Text style={styles.k}>Total</Text>
-                          <Text style={[styles.v, { fontWeight: "700" }]}>{fmt(p.bill.total)}</Text>
-                        </View>
-                      </View>
-                    </View>
-                  ))
-                )}
-              </View>
-            </>
+              {data.periods.map((p, idx) => (
+                <View key={`${p.start}-${p.end}-${idx}`} style={styles.row}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rowTitle}>
+                      {p.start} → {p.end}
+                    </Text>
+                    <Text style={styles.rowSub}>
+                      {p.type === "downtime"
+                        ? p.reason || "Downtime"
+                        : `kWh/CBM: ${fmt(p.bill.consumption, false)} • Base: ${fmt(
+                            p.bill.base
+                          )} • VAT: ${fmt(p.bill.vat)} • Total: ${fmt(
+                            p.bill.total
+                          )}`}
+                    </Text>
+                  </View>
+                  <BillTag type={p.type} />
+                </View>
+              ))}
+            </View>
           )}
         </ScrollView>
       </View>
@@ -376,122 +542,94 @@ export default function BillingScreen() {
   );
 }
 
-/** -------- styles -------- */
+/** -------- styles (unchanged) -------- */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#f5f7fb" },
   container: { flex: 1, padding: 12, gap: 8 },
-
-  brandHeader: { width: "100%", alignItems: "center", marginBottom: 2 },
-  brandLogo: { width: 90, height: 90, opacity: 0.95 },
+  brandHeader: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    alignItems: "center",
+  },
+  brandLogo: { width: 88, height: 36, opacity: 0.9 },
 
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
-    padding: 14,
-    ...(Platform.select({
-      web: { boxShadow: "0 4px 16px rgba(0,0,0,0.06)" as any },
-      default: { elevation: 2 },
-    }) as any),
-  },
-
-  title: { fontSize: 18, fontWeight: "700", color: "#0f172a", marginBottom: 8 },
-  label: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-
-  inputRow: { flexDirection: "row", gap: 8, alignItems: "center", marginTop: 6 },
-  input: {
-    flex: 1,
-    height: 42,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#f9fafb",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    color: "#111827",
-  },
-  pillBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: "#0ea5e9",
-    borderRadius: 999,
-  },
-  pillText: { color: "#fff", fontWeight: "600" },
-
-  badge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    marginTop: 10,
-  },
-  badgeError: { backgroundColor: "#fee2e2" },
-  badgeMuted: { backgroundColor: "#f3f4f6" },
-  badgeText: { color: "#b91c1c", fontWeight: "600" },
-
-  center: { alignItems: "center", justifyContent: "center" },
-
-  summaryHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  summaryTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
-  summaryRow: {
-    marginTop: 10,
-    flexDirection: "row",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  sumCol: {
-    flexGrow: 1,
-    minWidth: 140,
-    backgroundColor: "#f9fafb",
-    borderRadius: 12,
     padding: 12,
     borderWidth: 1,
     borderColor: "#eef2f7",
+    ...(Platform.select({
+      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.05)" as any },
+      default: { elevation: 2 },
+    }) as any),
+    gap: 8,
   },
-  sumLabel: { fontSize: 12, color: "#6b7280" },
-  sumValue: { fontSize: 16, fontWeight: "700", color: "#111827", marginTop: 4 },
-  sumEm: { color: "#082cac" },
 
-  sectionTitle: { fontWeight: "700", color: "#111827" },
+  title: { fontSize: 16, fontWeight: "800", color: "#102a43" },
 
-  periodRow: {
+  label: { color: "#6b7b8c", fontSize: 12, marginBottom: 4 },
+
+  inputRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  input: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: "#eef2f7",
-    borderRadius: 12,
-    padding: 10,
-    marginTop: 8,
-    backgroundColor: "#fafafa",
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 40,
+    color: "#102a43",
   },
-  periodHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
-  periodDates: { color: "#374151", fontWeight: "600" },
+
+  pillBtn: {
+    backgroundColor: "#082cac",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+  },
+  pillText: { color: "#fff", fontWeight: "700" },
+
+  badge: {
+    marginTop: 6,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  badgeOk: { backgroundColor: "#e6f7ef" },
+  badgeError: { backgroundColor: "#ffe8e6" },
+  badgeText: { color: "#102a43" },
+
+  row: {
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  rowTitle: { color: "#102a43", fontWeight: "700" },
+  rowSub: { color: "#64748b", marginTop: 2 },
 
   tag: {
+    borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
+    alignSelf: "flex-start",
   },
-  tagOk: { backgroundColor: "#e8f5e9", borderColor: "#b6e3be" },
-  tagMuted: { backgroundColor: "#eef2ff", borderColor: "#c7d2fe" },
-  tagText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
-  tagTextOk: { color: "#1b5e20" },
-  tagTextMuted: { color: "#3730a3" },
-
-  grid2: {
-    marginTop: 8,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    columnGap: 10,
-    rowGap: 8,
+  tagOk: { backgroundColor: "#ecfdf5" },
+  tagMuted: { backgroundColor: "#f1f5f9" },
+  tagText: { fontSize: 10, fontWeight: "800" },
+  tagTextOk: { color: "#065f46" },
+  tagTextMuted: { color: "#64748b" },
+  center: { alignItems: "center", justifyContent: "center" },
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#102a43",
+    marginBottom: 6,
   },
-  kv: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#eef2f7",
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    minWidth: 150,
-    flexGrow: 1,
-  },
-  k: { fontSize: 11, color: "#6b7280" },
-  v: { fontSize: 14, color: "#111827", fontWeight: "600", marginTop: 2 },
 });

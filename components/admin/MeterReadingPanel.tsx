@@ -81,6 +81,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [typeFilter, setTypeFilter] = useState<""|"electric"|"water"|"lpg">("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [sortBy, setSortBy] = useState<"date_desc"|"date_asc"|"id_desc"|"id_asc">("date_desc");
+  const [filtersVisible, setFiltersVisible] = useState(false);
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -192,41 +193,67 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}><Text style={styles.btnText}>+ Create Reading</Text></TouchableOpacity>
         </View>
 
-        {/* Search bar (now separate, above filters) */}
-        <View style={[styles.searchWrap, { flex: 1.4 }]}>
-          <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-          <TextInput value={meterQuery} onChangeText={setMeterQuery} placeholder="Search meters by ID, SN, stall, status…" placeholderTextColor="#9aa5b1" style={styles.search} />
+        {/* Search + Filters button */}
+        <View style={styles.topBar}>
+          <View style={[styles.searchWrap, { flex: 1 }]}>
+            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+            <TextInput
+              value={meterQuery}
+              onChangeText={setMeterQuery}
+              placeholder="Search meters by ID, SN, stall, status…"
+              placeholderTextColor="#9aa5b1"
+              style={styles.search}
+            />
+          </View>
+
+          <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
+            <Ionicons name="filter-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+            <Text style={styles.btnGhostText}>Filters</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Filters moved BELOW search bar */}
-        <View style={styles.filtersBar}>
-          <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Building</Text>
-            <View style={styles.chipsRow}>
-              {buildingChipOptions.map((opt) => (
-                <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />
-              ))}
-            </View>
-          </View>
+        {/* Filters Modal */}
+        <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
+          <View style={styles.promptOverlay}>
+            <View style={styles.promptCard}>
+              <Text style={styles.modalTitle}>Filters & Sort</Text>
+              <View style={styles.modalDivider} />
 
-          <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Type</Text>
-            <View style={styles.chipsRow}>
-              {[{label:"All", val:""}, {label:"Electric", val:"electric"}, {label:"Water", val:"water"}, {label:"LPG", val:"lpg"}].map(({label,val}) => (
-                <Chip key={label} label={label} active={typeFilter === (val as any)} onPress={() => setTypeFilter(val as any)} />
-              ))}
-            </View>
-          </View>
+              <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Building</Text>
+              <View style={styles.chipsRow}>
+                {buildingChipOptions.map((opt) => (
+                  <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />
+                ))}
+              </View>
 
-          <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Sort</Text>
-            <View style={styles.chipsRow}>
-              {[{label:"Newest", val:"date_desc"},{label:"Oldest", val:"date_asc"},{label:"ID ↑", val:"id_asc"},{label:"ID ↓", val:"id_desc"}].map(({label,val}) => (
-                <Chip key={val} label={label} active={sortBy === (val as any)} onPress={() => setSortBy(val as any)} />
-              ))}
+              <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Type</Text>
+              <View style={styles.chipsRow}>
+                {[{label:"All", val:""}, {label:"Electric", val:"electric"}, {label:"Water", val:"water"}, {label:"LPG", val:"lpg"}].map(({label,val}) => (
+                  <Chip key={label} label={label} active={typeFilter === (val as any)} onPress={() => setTypeFilter(val as any)} />
+                ))}
+              </View>
+
+              <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
+              <View style={styles.chipsRow}>
+                {[{label:"Newest", val:"date_desc"},{label:"Oldest", val:"date_asc"},{label:"ID ↑", val:"id_asc"},{label:"ID ↓", val:"id_desc"}].map(({label,val}) => (
+                  <Chip key={val} label={label} active={sortBy === (val as any)} onPress={() => setSortBy(val as any)} />
+                ))}
+              </View>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={() => { setMeterQuery(''); setBuildingFilter(''); setTypeFilter(''); setSortBy('date_desc'); setFiltersVisible(false); }}
+                >
+                  <Text style={styles.btnGhostText}>Reset</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.btn} onPress={() => setFiltersVisible(false)}>
+                  <Text style={styles.btnText}>Apply</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
+        </Modal>
 
         {/* list */}
         {busy ? (
@@ -278,7 +305,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={[styles.modalCard, Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.85) }]}>
             <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalTitle}>Edit {editRow?.reading_id}</Text>
+              <Text style={styles.modalTitle}>Update {editRow?.reading_id}</Text>
               <Dropdown label="Meter" value={editMeterId} onChange={setEditMeterId} options={meters.map((m)=>({ label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`, value: m.meter_id }))} />
               <View style={styles.rowWrap}>
                 <View style={{ flex: 1, marginTop: 8 }}>
@@ -386,8 +413,12 @@ function ReadingsModal({ visible, onClose, selectedMeterId, query, setQuery, sor
                         {(() => { const mType = metersById.get(item.meter_id)?.meter_type; const unit = mType === "electric" ? "" : mType === "water" ? "" : mType === "lpg" ? "" : undefined; return (<Text style={[styles.rowSub, styles.centerText]}>{item.lastread_date} • Value: {fmtValue(item.reading_value, unit)}</Text>); })()}
                         <Text style={styles.rowSub}>Updated {formatDateTime(item.last_updated)} by {item.updated_by}</Text>
                       </View>
-                      <TouchableOpacity style={styles.link} onPress={()=>openEdit(item)}><Text style={styles.linkText}>Update</Text></TouchableOpacity>
-                      <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={()=>onDelete(item)} disabled={submitting}>{submitting ? (<ActivityIndicator color="#fff" />) : (<Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text>)}</TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={()=>openEdit(item)}>
+                        <Text style={styles.actionBtnGhostText}>Update</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.actionBtn} onPress={()=>onDelete(item)} disabled={submitting}>
+                        {submitting ? (<ActivityIndicator color="#fff" />) : (<Text style={styles.actionBtnText}>Delete</Text>)}
+                      </TouchableOpacity>
                     </View>
                   )} style={{ maxHeight: 520, marginTop: 6 }} nestedScrollEnabled />
                 )}
@@ -450,25 +481,33 @@ const styles = StyleSheet.create({
   infoOnline: { backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#10b98155" },
   infoOffline: { backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#f59e0b55" },
   infoText: { fontWeight: "800", color: "#111827" },
-  historyBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#1f4bd8" },
+  historyBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#082cac" },
   historyBtnText: { color: "#fff", fontWeight: "800" },
   // card
   card: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, padding: 12, backgroundColor: "#fff", ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }) as any },
   cardHeader: { marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
+  topBar: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
   // list rows
   listRow: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, padding: 12, marginBottom: 10, backgroundColor: "#fff", ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }) as any, flexDirection: "row", alignItems: "center", gap: 10 },
   rowTitle: { fontWeight: "700", color: "#102a43" },
   rowSub: { fontSize: 13, color: "#2c3e50", textAlign: "left", fontWeight: "600", backgroundColor: "#ffffffff", paddingVertical: 2, paddingHorizontal: 8, marginLeft: -9, borderRadius: 8 },
-  centerText: { textAlign: "center", width: "100%", color: "#1f4bd8", fontWeight: "900", fontSize: 15, marginLeft: 75 },
+  centerText: { textAlign: "center", width: "100%", color: "#082cac", fontWeight: "900", fontSize: 15, marginLeft: 75 },
   // buttons/links
-  btn: { backgroundColor: "#1f4bd8", paddingVertical: 12, borderRadius: 12, alignItems: "center", paddingHorizontal: 14 },
+  btn: { backgroundColor: "#082cac", paddingVertical: 12, borderRadius: 12, alignItems: "center", paddingHorizontal: 14 },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
-  btnGhost: { backgroundColor: "#eef2ff", borderWidth: 1, borderColor: "#cbd5e1" },
-  btnGhostText: { color: "#1f4bd8", fontWeight: "700" },
+  btnGhost: {
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  btnGhostText: { color: "#394e6a", fontWeight: "700" },
   link: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eef2ff" },
-  linkText: { color: "#1f4bd8", fontWeight: "700" },
+  linkText: { color: "#082cac", fontWeight: "700" },
   // search
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e2e8f0" },
   search: { flex: 1, fontSize: 14, color: "#0b1f33" },
@@ -483,11 +522,11 @@ const styles = StyleSheet.create({
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
   headerActions: { flexDirection: "row", gap: 8 },
-  actionBtn: { backgroundColor: "#1f4bd8", paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 },
+  actionBtn: { backgroundColor: "#082cac", paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 },
   actionBtnText: { color: "#fff", fontWeight: "800" },
   actionBtnDisabled: { opacity: 0.5 },
-  actionBtnGhost: { backgroundColor: "#eef2ff", borderWidth: 1, borderColor: "#cbd5e1" },
-  actionBtnGhostText: { color: "#1f4bd8", fontWeight: "800" },
+  actionBtnGhost: { backgroundColor: "#edf2ff", borderWidth: 0 },
+  actionBtnGhostText: { color: "#082cac", fontWeight: "800" },
   // history rows
   historyRow: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, backgroundColor: "#fff", ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }) as any, padding: 12, marginTop: 10, flexDirection: "row", alignItems: "stretch", gap: 12 },
   rowLeft: { flex: 1, gap: 4 },
@@ -500,11 +539,11 @@ const styles = StyleSheet.create({
   statusWarn: { backgroundColor: "#fefce8", color: "#713f12", borderWidth: 1, borderColor: "#facc1555" },
   rowSubSmall: { fontSize: 12, color: "#64748b" },
   // small actions
-  smallBtn: { backgroundColor: "#1f4bd8", paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, alignItems: "center" },
+  smallBtn: { backgroundColor: "#082cac", paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, alignItems: "center" },
   smallBtnText: { color: "#fff", fontWeight: "800" },
   smallBtnDanger: { backgroundColor: "#e53935" },
   smallBtnGhost: { backgroundColor: "#eef2ff" },
-  smallBtnGhostText: { color: "#1f4bd8", fontWeight: "800" },
+  smallBtnGhostText: { color: "#082cac", fontWeight: "800" },
   // dropdowns
   pickerWrapper: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, overflow: "hidden", backgroundColor: "#fff" },
   picker: { height: 50 },
@@ -545,14 +584,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
-  chipActive: { borderColor: "#2563eb", backgroundColor: "#2563eb" },
+  chipActive: { borderColor: "#082cac", backgroundColor: "#082cac" },
   chipText: { fontSize: 12 },
   chipTextIdle: { color: "#334e68" },
   chipTextActive: { color: "#fff" },
   // badges + links
-  badge: { backgroundColor: "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, alignSelf: "center" },
-  badgeText: { color: "#102a43", fontSize: 12 },
-  meterLink: { color: "#1f4bd8", textDecorationLine: "underline" },
+  badge: {
+    backgroundColor: "#bfbfbfff",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  badgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  meterLink: { color: "#082cac", textDecorationLine: "underline" },
   // pagination
   pageBar: { marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   pageInfo: { color: "#334e68", fontWeight: "600" },
@@ -574,5 +618,31 @@ const styles = StyleSheet.create({
   scanHint: { color: "#fff", marginBottom: 8, textAlign: "center" },
   scanCloseBtn: { backgroundColor: "#dc2626" },
   scanBtn: { backgroundColor: "#eef2ff", borderWidth: 1, borderColor: "#cbd5e1", paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, alignSelf: "flex-start" },
-  scanBtnText: { color: "#1f4bd8", fontWeight: "800" },
+  scanBtnText: { color: "#082cac", fontWeight: "800" },
+  // Small prompt modal (for Filters)
+  promptOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(16,42,67,0.25)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  promptCard: {
+    backgroundColor: "#fff",
+    width: "100%",
+    maxWidth: 520,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    ...(Platform.select({
+      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any },
+      default: { elevation: 3 },
+    }) as any),
+  },
+  modalDivider: {
+    height: 1,
+    backgroundColor: "#edf2f7",
+    marginVertical: 8,
+  },
 });

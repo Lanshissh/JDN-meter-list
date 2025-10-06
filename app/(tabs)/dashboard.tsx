@@ -1,4 +1,3 @@
-// app/(tabs)/dashboard.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -33,7 +32,7 @@ type TileState = {
   key: CountKey;
   color: string;
   icon: keyof typeof Ionicons.glyphMap;
-  restricted?: boolean; // set when the API denies access
+  restricted?: boolean;
 };
 
 // ---- Helpers ----
@@ -90,7 +89,6 @@ async function safeCount(
     ) {
       return { restricted: true };
     }
-    // Any other error -> treat as zero but not restricted
     return { count: 0 };
   }
 }
@@ -112,7 +110,6 @@ export default function Dashboard() {
     readings: false,
   });
 
-  // Which endpoints to call for the current role
   const wantedTiles: TileState[] = useMemo(() => {
     const base: TileState[] = [
       {
@@ -136,18 +133,16 @@ export default function Dashboard() {
     if (role === "admin") return base;
 
     if (role === "operator") {
-      // Operators typically manage field work: tenants/stalls/meters/readings
       return base.filter((t) =>
         ["tenants", "stalls", "meters", "readings"].includes(t.key)
       );
     }
 
     if (role === "biller") {
-      // Billers care about rates and tenants; others may be restricted
       return base.filter((t) => ["tenants", "rates"].includes(t.key));
     }
 
-    return base; // unknown -> attempt all; restrictions will show up
+    return base;
   }, [role]);
 
   useEffect(() => {

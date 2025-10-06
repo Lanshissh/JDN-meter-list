@@ -1,3 +1,4 @@
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
@@ -19,7 +20,7 @@ import QRCode from "react-native-qrcode-svg";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 
-// ------------ ALERT HELPERS ------------
+/* ========== Alert Helpers ========== */
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -47,7 +48,7 @@ function confirm(title: string, message: string): Promise<boolean> {
   });
 }
 
-// ---- Types ----
+/* ========== Types ========== */
 export type Meter = {
   meter_id: string;
   meter_type: "electric" | "water" | "lpg";
@@ -58,19 +59,10 @@ export type Meter = {
   last_updated: string;
   updated_by: string;
 };
+export type Stall = { stall_id: string; stall_sn: string; building_id?: string };
+type Building = { building_id: string; building_name: string };
 
-export type Stall = {
-  stall_id: string;
-  stall_sn: string;
-  building_id?: string;
-};
-
-type Building = {
-  building_id: string;
-  building_name: string;
-};
-
-// --- JWT decode ---
+/* ========== JWT decode ========== */
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
   try {
@@ -96,6 +88,7 @@ function decodeJwtPayload(token: string | null): any | null {
   } catch { return null; }
 }
 
+/* ========== Component ========== */
 export default function MeterPanel({ token }: { token: string | null }) {
   const jwt = useMemo(() => decodeJwtPayload(token), [token]);
   const isAdmin = String(jwt?.user_level || "").toLowerCase() === "admin";
@@ -103,23 +96,33 @@ export default function MeterPanel({ token }: { token: string | null }) {
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  // data
   const [meters, setMeters] = useState<Meter[]>([]);
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
 
+  // search + filters
   const [query, setQuery] = useState("");
   const [filterType, setFilterType] = useState<"all" | "electric" | "water" | "lpg">("all");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
-  const [sortBy, setSortBy] = useState<"id_asc" | "id_desc" | "type" | "stall" | "status">("id_asc");
+  type SortMode = "id_asc" | "id_desc" | "type" | "stall" | "status";
+  const [sortBy, setSortBy] = useState<SortMode>("id_asc");
 
+  // modals
+  const [filtersVisible, setFiltersVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
+  const [editVisible, setEditVisible] = useState(false);
+  const [qrVisible, setQrVisible] = useState(false);
+
+  // create form
   const [type, setType] = useState<Meter["meter_type"]>("electric");
   const [sn, setSn] = useState("");
   const [mult, setMult] = useState("1.00");
   const [stallId, setStallId] = useState("");
   const [status, setStatus] = useState<Meter["meter_status"]>("inactive");
 
-  const [editVisible, setEditVisible] = useState(false);
+  // edit form
   const [editRow, setEditRow] = useState<Meter | null>(null);
   const [editType, setEditType] = useState<Meter["meter_type"]>("electric");
   const [editSn, setEditSn] = useState("");
@@ -127,23 +130,22 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const [editStallId, setEditStallId] = useState("");
   const [editStatus, setEditStatus] = useState<Meter["meter_status"]>("inactive");
 
-  const [qrVisible, setQrVisible] = useState(false);
+  // QR
   const [qrMeterId, setQrMeterId] = useState("");
   const qrCodeRef = useRef<any>(null);
 
+  // api
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
 
   useEffect(() => { loadAll(); }, [token]);
-
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage meters."); return; }
     try {
       setBusy(true);
-      const [metersRes, stallsRes] = await Promise.all([api.get<Meter>("/meters" as any) as any, api.get<Stall>("/stalls" as any) as any]);
-      setMeters((metersRes as any).data || []);
-      setStalls((stallsRes as any).data || []);
-
+      const [metersRes, stallsRes] = await Promise.all([api.get<Meter[]>("/meters"), api.get<Stall[]>("/stalls")]);
+      setMeters(metersRes.data || []);
+      setStalls(stallsRes.data || []);
       if (isAdmin) {
         try { const bRes = await api.get<Building[]>("/buildings"); setBuildings(bRes.data || []); }
         catch { setBuildings([]); }
@@ -154,6 +156,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
 
   const mtrNum = (id: string) => { const m = /^MTR-(\d+)/i.exec(id || ""); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; };
   const stallToBuilding = useMemo(() => { const m = new Map<string, string>(); stalls.forEach((s) => { if (s?.stall_id && s?.building_id) m.set(s.stall_id, s.building_id); }); return m; }, [stalls]);
+
+  const filterBuildingOptions = useMemo(() => (
+    [ { label: "All Buildings", value: "" }, ...(isAdmin ? buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id })) : userBuildingId ? [{ label: userBuildingId, value: userBuildingId }] : []) ]
+  ), [isAdmin, buildings, userBuildingId]);
 
   const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
@@ -175,22 +181,19 @@ export default function MeterPanel({ token }: { token: string | null }) {
     return list.filter((m) => [m.meter_id, m.meter_sn, m.meter_type, m.stall_id, m.meter_status].some((v) => String(v).toLowerCase().includes(q)));
   }, [meters, query, filterType, buildingFilter, stallToBuilding]);
 
-  const filterBuildingOptions = useMemo(() => (
-    [ { label: "All Buildings", value: "" }, ...(isAdmin ? buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id })) : userBuildingId ? [{ label: userBuildingId, value: userBuildingId }] : []) ]
-  ), [isAdmin, buildings, userBuildingId]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortBy) {
-      case "id_desc": arr.sort((a, b) => mtrNum(b.meter_id) - mtrNum(a.meter_id) || b.meter_id.localeCompare(a.meter_id)); break;
-      case "type": arr.sort((a, b) => a.meter_type.localeCompare(b.meter_type) || mtrNum(a.meter_id) - mtrNum(b.meter_id)); break;
-      case "stall": arr.sort((a, b) => (a.stall_id || "").localeCompare(b.stall_id || "") || mtrNum(a.meter_id) - mtrNum(b.meter_id)); break;
-      case "status": arr.sort((a, b) => (a.meter_status === "active" ? 0 : 1) - (b.meter_status === "active" ? 0 : 1) || mtrNum(a.meter_id) - mtrNum(b.meter_id)); break;
-      case "id_asc": default: arr.sort((a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id)); break;
+      case "id_desc": return arr.sort((a, b) => mtrNum(b.meter_id) - mtrNum(a.meter_id) || b.meter_id.localeCompare(a.meter_id));
+      case "type":    return arr.sort((a, b) => a.meter_type.localeCompare(b.meter_type) || mtrNum(a.meter_id) - mtrNum(b.meter_id));
+      case "stall":   return arr.sort((a, b) => (a.stall_id || "").localeCompare(b.stall_id || "") || mtrNum(a.meter_id) - mtrNum(b.meter_id));
+      case "status":  return arr.sort((a, b) => (a.meter_status === "active" ? 0 : 1) - (b.meter_status === "active" ? 0 : 1) || mtrNum(a.meter_id) - mtrNum(b.meter_id));
+      case "id_asc":
+      default:        return arr.sort((a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id));
     }
-    return arr;
   }, [filtered, sortBy]);
 
+  // CRUD
   const onCreate = async () => {
     if (!sn.trim() || !stallId.trim()) { notify("Missing info", "Serial number and Stall are required."); return; }
     const multValue = mult.trim() === "" ? undefined : Number(mult);
@@ -199,11 +202,11 @@ export default function MeterPanel({ token }: { token: string | null }) {
     catch (err: any) { notify("Create failed", errorText(err, "Unable to add meter.")); }
     finally { setSubmitting(false); }
   };
-
   const openEdit = (m: Meter) => { setEditRow(m); setEditType(m.meter_type); setEditSn(m.meter_sn); setEditMult(String(m.meter_mult ?? "1")); setEditStallId(m.stall_id); setEditStatus(m.meter_status); setEditVisible(true); };
   const onUpdate = async () => { if (!editRow) return; const multValue = editMult.trim() === "" ? undefined : Number(editMult); const body: any = { meter_type: editType, meter_sn: editSn.trim(), stall_id: editStallId.trim(), meter_status: editStatus, ...(multValue !== undefined ? { meter_mult: multValue } : {}) }; try { setSubmitting(true); await api.put(`/meters/${encodeURIComponent(editRow.meter_id)}`, body); setEditVisible(false); await loadAll(); notify("Updated", "Meter updated successfully."); } catch (err: any) { notify("Update failed", errorText(err)); } finally { setSubmitting(false); } };
   const onDelete = async (m: Meter) => { const ok = await confirm("Delete meter", `Are you sure you want to delete ${m.meter_id}?`); if (!ok) return; try { setSubmitting(true); await api.delete(`/meters/${encodeURIComponent(m.meter_id)}`); await loadAll(); notify("Deleted", "Meter removed."); } catch (err: any) { notify("Delete failed", errorText(err)); } finally { setSubmitting(false); } };
 
+  // QR
   const openQr = (meter_id: string) => { setQrMeterId(meter_id); setQrVisible(true); };
   const downloadQr = () => {
     if (!qrCodeRef.current) return;
@@ -217,61 +220,87 @@ export default function MeterPanel({ token }: { token: string | null }) {
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Manage Meters</Text>
-          <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}><Text style={styles.btnText}>+ Create Meter</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+            <Text style={styles.btnText}>+ Create Meter</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Search bar */}
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-          <TextInput
-            placeholder="Search meters…"
-            placeholderTextColor="#94a3b8"
-            value={query}
-            onChangeText={setQuery}
-            style={styles.search}
-          />
-        </View>
-
-        {/* Filters (moved below search bar) */}
-        <View style={styles.filtersBar}>
-
-          {/* Building filter */}
-          {/* Building filter chips */}
-          <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Filter by Building</Text>
-            <View style={styles.chipsRow}>
-              {filterBuildingOptions.map((opt) => (
-                <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />
-              ))}
-            </View>
+        {/* Search + Filters button (filters moved into modal) */}
+        <View style={styles.topBar}>
+          <View style={[styles.searchWrap, { flex: 1 }]}>
+            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+            <TextInput
+              placeholder="Search meters…"
+              placeholderTextColor="#94a3b8"
+              value={query}
+              onChangeText={setQuery}
+              style={styles.search}
+            />
           </View>
 
-          {/* Type filter */}
-          <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Status</Text>
+          <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
+            <Ionicons name="filter-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+            <Text style={styles.btnGhostText}>Filters</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* List */}
+        {sorted.length === 0 ? (<Text style={styles.empty}>No meters found.</Text>) : (
+          <FlatList
+            data={sorted}
+            keyExtractor={(item) => item.meter_id}
+            style={{ maxHeight: 420, marginTop: 6 }}
+            nestedScrollEnabled
+            renderItem={({ item }) => (
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle}>{item.meter_id} • {item.meter_type.toUpperCase()}</Text>
+                  <Text style={styles.rowSub}>SN: {item.meter_sn} • Mult: {item.meter_mult} • Stall: {item.stall_id} • {item.meter_status}</Text>
+                </View>
+                <View style={styles.rowActions}>
+                  <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openEdit(item)}>
+                    <Text style={styles.actionBtnGhostText}>Update</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => onDelete(item)}>
+                    <Text style={styles.actionBtnText}>Delete</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openQr(item.meter_id)}>
+                    <Text style={styles.actionBtnGhostText}>QR</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          />
+        )}
+      </View>
+
+      {/* FILTERS modal (Building + Type + Sort) */}
+      <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
+        <View style={styles.promptOverlay}>
+          <View style={styles.promptCard}>
+            <Text style={styles.modalTitle}>Filters & Sort</Text>
+            <View style={styles.modalDivider} />
+
+            <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Building</Text>
+            <View style={styles.chipsRow}>
+              {buildingChipOptions.map((opt) => (
+                <Chip
+                  key={opt.value || "all"}
+                  label={opt.label}
+                  active={buildingFilter === opt.value}
+                  onPress={() => setBuildingFilter(opt.value)}
+                />
+              ))}
+            </View>
+
+            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Type</Text>
             <View style={styles.chipsRow}>
               {["all", "electric", "water", "lpg"].map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  onPress={() => setFilterType(t as any)}
-                  style={[styles.chip, filterType === t ? styles.chipActive : styles.chipIdle]}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      filterType === t ? styles.chipTextActive : styles.chipTextIdle,
-                    ]}
-                  >
-                    {t.toUpperCase()}
-                  </Text>
-                </TouchableOpacity>
+                <Chip key={t} label={t.toUpperCase()} active={filterType === (t as any)} onPress={() => setFilterType(t as any)} />
               ))}
             </View>
-          </View>
 
-          {/* Sort filter */}
-          <View style={[styles.filterCol, { flex: 1 }]}>
-            <Text style={styles.dropdownLabel}>Sort</Text>
+            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
             <View style={styles.chipsRow}>
               {[
                 { label: "ID ↑", val: "id_asc" },
@@ -280,40 +309,24 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 { label: "Stall", val: "stall" },
                 { label: "Status", val: "status" },
               ].map(({ label, val }) => (
-                <TouchableOpacity
-                  key={val}
-                  onPress={() => setSortBy(val as any)}
-                  style={[styles.chip, sortBy === val ? styles.chipActive : styles.chipIdle]}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      sortBy === val ? styles.chipTextActive : styles.chipTextIdle,
-                    ]}
-                  >
-                    {label}
-                  </Text>
-                </TouchableOpacity>
+                <Chip key={val} label={label} active={sortBy === (val as SortMode)} onPress={() => setSortBy(val as SortMode)} />
               ))}
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnGhost]}
+                onPress={() => { setQuery(""); setBuildingFilter(""); setFilterType("all"); setSortBy("id_asc"); setFiltersVisible(false); }}
+              >
+                <Text style={styles.btnGhostText}>Reset</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btn} onPress={() => setFiltersVisible(false)}>
+                <Text style={styles.btnText}>Apply</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
-
-        {/* List */}
-        {sorted.length === 0 ? (<Text style={styles.empty}>No meters found.</Text>) : (
-          <FlatList data={sorted} keyExtractor={(item) => item.meter_id} renderItem={({ item }) => (
-            <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{item.meter_id} • {item.meter_type}</Text>
-                <Text style={styles.rowSub}>SN: {item.meter_sn} • Mult: {item.meter_mult} • Stall: {item.stall_id} • {item.meter_status}</Text>
-              </View>
-              <TouchableOpacity style={styles.link} onPress={() => openEdit(item)}><Text style={styles.linkText}>Update</Text></TouchableOpacity>
-              <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => onDelete(item)}><Text style={[styles.linkText, { color: "#e53935" }]}>Delete</Text></TouchableOpacity>
-              <TouchableOpacity style={[styles.link, { marginLeft: 8 }]} onPress={() => openQr(item.meter_id)}><Text style={styles.linkText}>QR</Text></TouchableOpacity>
-            </View>
-          )} />
-        )}
-      </View>
+      </Modal>
 
       {/* CREATE MODAL */}
       <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
@@ -332,57 +345,126 @@ export default function MeterPanel({ token }: { token: string | null }) {
               <Text style={styles.dropdownLabel}>Status</Text>
               <View style={styles.pickerWrapper}><Picker selectedValue={status} onValueChange={(v) => setStatus(v)} style={styles.picker}><Picker.Item label="Inactive" value="inactive" /><Picker.Item label="Active" value="active" /></Picker></View>
             </ScrollView>
-            <View style={styles.modalActions}><TouchableOpacity style={[styles.btnGhost]} onPress={() => setCreateVisible(false)}><Text style={styles.btnGhostText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>{submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Meter</Text>}</TouchableOpacity></View>
+            <View style={styles.modalActions}><TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}><Text style={styles.btnGhostText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>{submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create Meter</Text>}</TouchableOpacity></View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
 
       {/* EDIT MODAL */}
       <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
-        <View style={styles.modalWrap}><View style={styles.modalCard}><Text style={styles.modalTitle}>Edit {editRow?.meter_id}</Text>
-          <Text style={styles.dropdownLabel}>Type</Text><View style={styles.pickerWrapper}><Picker selectedValue={editType} onValueChange={(v) => setEditType(v)} style={styles.picker}><Picker.Item label="Electric" value="electric" /><Picker.Item label="Water" value="water" /><Picker.Item label="LPG (Gas)" value="lpg" /></Picker></View>
-          <Text style={styles.dropdownLabel}>Serial Number</Text><TextInput value={editSn} onChangeText={setEditSn} style={styles.input} />
-          <Text style={styles.dropdownLabel}>Multiplier</Text><TextInput value={editMult} onChangeText={setEditMult} keyboardType="numeric" style={styles.input} />
-          <Text style={styles.dropdownLabel}>Stall</Text><View style={styles.pickerWrapper}><Picker selectedValue={editStallId} onValueChange={(v) => setEditStallId(v)} style={styles.picker}>{stalls.map((s) => (<Picker.Item key={s.stall_id} label={`${s.stall_id} • ${s.stall_sn || ""}`} value={s.stall_id} />))}</Picker></View>
-          <Text style={styles.dropdownLabel}>Status</Text><View style={styles.pickerWrapper}><Picker selectedValue={editStatus} onValueChange={(v) => setEditStatus(v)} style={styles.picker}><Picker.Item label="Inactive" value="inactive" /><Picker.Item label="Active" value="active" /></Picker></View>
-          <View style={styles.modalActions}><TouchableOpacity style={[styles.btnGhost]} onPress={() => setEditVisible(false)}><Text style={styles.btnGhostText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>{submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}</TouchableOpacity></View>
-        </View></View>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Update {editRow?.meter_id}</Text>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+              <Text style={styles.dropdownLabel}>Type</Text><View style={styles.pickerWrapper}><Picker selectedValue={editType} onValueChange={(v) => setEditType(v)} style={styles.picker}><Picker.Item label="Electric" value="electric" /><Picker.Item label="Water" value="water" /><Picker.Item label="LPG (Gas)" value="lpg" /></Picker></View>
+              <Text style={styles.dropdownLabel}>Serial Number</Text><TextInput value={editSn} onChangeText={setEditSn} style={styles.input} />
+              <Text style={styles.dropdownLabel}>Multiplier</Text><TextInput value={editMult} onChangeText={setEditMult} keyboardType="numeric" style={styles.input} />
+              <Text style={styles.dropdownLabel}>Stall</Text><View style={styles.pickerWrapper}><Picker selectedValue={editStallId} onValueChange={(v) => setEditStallId(v)} style={styles.picker}>{stalls.map((s) => (<Picker.Item key={s.stall_id} label={`${s.stall_id} • ${s.stall_sn || ""}`} value={s.stall_id} />))}</Picker></View>
+              <Text style={styles.dropdownLabel}>Status</Text><View style={styles.pickerWrapper}><Picker selectedValue={editStatus} onValueChange={(v) => setEditStatus(v)} style={styles.picker}><Picker.Item label="Inactive" value="inactive" /><Picker.Item label="Active" value="active" /></Picker></View>
+            </ScrollView>
+            <View style={styles.modalActions}><TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}><Text style={styles.btnGhostText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>{submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}</TouchableOpacity></View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* QR MODAL */}
       <Modal visible={qrVisible} animationType="fade" transparent onRequestClose={() => setQrVisible(false)}>
-        <View style={styles.modalWrap}><View style={styles.modalCard}><Text style={styles.modalTitle}>QR: {qrMeterId}</Text><View style={{ alignItems: "center", paddingVertical: 8 }}><QRCode value={qrMeterId || ""} size={220} getRef={(c) => (qrCodeRef.current = c)} /></View><View style={styles.modalActions}><TouchableOpacity style={[styles.btnGhost]} onPress={() => setQrVisible(false)}><Text style={styles.btnGhostText}>Close</Text></TouchableOpacity><TouchableOpacity style={styles.btn} onPress={downloadQr}><Text style={styles.btnText}>Download</Text></TouchableOpacity></View></View></View>
+        <View style={styles.modalWrap}><View style={styles.modalCard}><Text style={styles.modalTitle}>QR: {qrMeterId}</Text><View style={{ alignItems: "center", paddingVertical: 8 }}><QRCode value={qrMeterId || ""} size={220} getRef={(c) => (qrCodeRef.current = c)} /></View><View style={styles.modalActions}><TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setQrVisible(false)}><Text style={styles.btnGhostText}>Close</Text></TouchableOpacity><TouchableOpacity style={styles.btn} onPress={downloadQr}><Text style={styles.btnText}>Download</Text></TouchableOpacity></View></View></View>
       </Modal>
     </View>
   );
 }
 
+/* Small chip */
 function Chip({ label, active, onPress }: { label: string; active?: boolean; onPress?: () => void; }) {
   return (<TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}><Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text></TouchableOpacity>);
 }
 
+/* ========== Styles (synced with BuildingPanel) ========== */
 const styles = StyleSheet.create({
   grid: { flex: 1, padding: 12, gap: 12 },
-  card: { backgroundColor: "#fff", borderRadius: 12, padding: 12, ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(2,10,50,0.06)" as any }, default: { elevation: 1 } }) as any) },
-  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-  cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
-  searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e2e8f0" },
-  search: { flex: 1, fontSize: 14, color: "#0b1f33" },
-  btn: { backgroundColor: "#0f62fe", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  btnText: { color: "#fff", fontWeight: "700" },
-  btnGhost: { backgroundColor: "#eef2ff", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  btnGhostText: { color: "#3b5bdb", fontWeight: "700" },
-  btnDisabled: { opacity: 0.6 },
-  filtersBar: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    alignItems: "flex-start",
-    marginTop: 6,
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 2 } }) as any),
   },
+  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  cardTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
 
-  filterCol: { minWidth: 220, flexShrink: 1 },
+  topBar: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
 
+  // Search
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  search: { flex: 1, fontSize: 14, color: "#0b1f33" },
+
+  // Primary & Ghost buttons
+  btn: {
+    backgroundColor: "#082cac",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnGhost: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+  },
+  btnGhostText: { color: "#394e6a", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
+
+  // Row list
+  row: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderTopWidth: 1, borderTopColor: "#edf2f7" },
+  rowTitle: { fontSize: 14, fontWeight: "700", color: "#102a43" },
+  rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
+  rowActions: { flexDirection: "row", gap: 8 },
+  empty: { padding: 14, textAlign: "center", color: "#475569" },
+
+  // BuildingPanel-style action buttons
+  actionBtn: {
+    backgroundColor: "#082cac",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  actionBtnText: { color: "#fff", fontWeight: "700" },
+  actionBtnGhost: {
+    backgroundColor: "#edf2ff",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  actionBtnGhostText: { color: "#082cac", fontWeight: "700" },
+
+  // Chips
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
+  chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
+  chipActive: { borderColor: "#082cac", backgroundColor: "#082cac" },
+  chipText: { fontSize: 12 },
+  chipTextIdle: { color: "#334e68", fontWeight: "700" },
+  chipTextActive: { color: "#fff", fontWeight: "700" },
   dropdownLabel: {
     fontSize: 12,
     fontWeight: "700",
@@ -390,34 +472,54 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
-  chipsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
+  // picker + inputs
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: "#dbe2ea",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  picker: { height: 40 },
+
+  // fields
+  field: { marginBottom: 10 },
+  label: { fontSize: 12, color: "#6b7280", marginBottom: 6 },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e7ecf3",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    color: "#0f172a",
   },
 
-  chip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  chipIdle: { borderColor: "#94a3b8", backgroundColor: "#fff" },
-  chipActive: { borderColor: "#2563eb", backgroundColor: "#2563eb" },
-  chipText: { fontSize: 12 },
-  chipTextIdle: { color: "#334e68" },
-  chipTextActive: { color: "#fff" },
-  row: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#edf2f7" },
-  rowTitle: { fontSize: 15, fontWeight: "700", color: "#102a43" },
-  rowSub: { fontSize: 12, color: "#627d98", marginTop: 2 },
-  link: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: "#f1f5f9" },
-  linkText: { color: "#0b1f33", fontWeight: "700" },
+  // Modal
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", alignItems: "center", justifyContent: "center", padding: 12 },
-  modalCard: { backgroundColor: "#fff", borderRadius: 16, padding: 14, width: "100%", maxWidth: 560, ...(Platform.select({ web: { boxShadow: "0 12px 30px rgba(16,42,67,0.25)" as any }, default: { elevation: 4 } }) as any) },
-  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0b1f33", marginBottom: 4 },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 4 } }) as any),
+    width: "100%",
+    maxWidth: 560,
+  },
+  modalTitle: { fontSize: 16, fontWeight: "800", color: "#0b1f33" },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 },
-  pickerWrapper: { backgroundColor: "#f8fafc", borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e2e8f0", overflow: "hidden" },
-  picker: { height: 44 },
-  input: { backgroundColor: "#f8fafc", borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e2e8f0", paddingHorizontal: 12, paddingVertical: 10, color: "#0b1f33", fontSize: 14, marginTop: 4 },
-  empty: { textAlign: "center", color: "#627d98", paddingVertical: 12 },
+  modalDivider: { height: 1, backgroundColor: "#eef2f7", marginVertical: 8 },
+
+  // Filters prompt (small modal like BuildingPanel)
+  promptOverlay: { flex: 1, backgroundColor: "rgba(16,42,67,0.25)", justifyContent: "center", alignItems: "center", padding: 16 },
+  promptCard: {
+    backgroundColor: "#fff",
+    width: "100%",
+    maxWidth: 520,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 3 } }) as any),
+  },
 });
