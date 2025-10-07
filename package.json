@@ -24,6 +24,7 @@
     "axios": "^1.11.0",
     "datetimepicker": "^0.1.39",
     "expo": "^54.0.2",
+    "expo-asset": "^12.0.9",
     "expo-blur": "~15.0.7",
     "expo-camera": "~17.0.7",
     "expo-constants": "~18.0.8",
@@ -60,6 +61,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/react": "~19.1.10",
+    "@types/xlsx": "^0.0.35",
     "eas-cli": "^16.19.2",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
