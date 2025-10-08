@@ -259,8 +259,15 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         {busy ? (
           <View style={styles.loader}><ActivityIndicator /></View>
         ) : (
-          <FlatList data={metersVisible} keyExtractor={(m)=>m.meter_id} style={{ maxHeight: 360, marginTop: 4 }} nestedScrollEnabled ListEmptyComponent={<Text style={styles.empty}>No meters found.</Text>} renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => { setSelectedMeterId(item.meter_id); setQuery(""); setPage(1); setReadingsModalVisible(true); }} style={styles.listRow}>
+          <FlatList
+            data={metersVisible}
+            keyExtractor={(m)=>m.meter_id}
+            style={{ flexGrow: 1, marginTop: 4 }}
+            contentContainerStyle={{ paddingBottom: 8 }}
+            nestedScrollEnabled
+            ListEmptyComponent={<Text style={styles.empty}>No meters found.</Text>}
+            renderItem={({ item }) => (            
+          <TouchableOpacity onPress={() => { setSelectedMeterId(item.meter_id); setQuery(""); setPage(1); setReadingsModalVisible(true); }} style={styles.listRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}><Text style={styles.meterLink}>{item.meter_id}</Text> • {item.meter_type.toUpperCase()}</Text>
                 <Text style={styles.rowSub}>SN: {item.meter_sn} • Stall: {item.stall_id} • {item.meter_status}</Text>
@@ -475,7 +482,7 @@ function HistoryModal({ visible, onClose, scans, approveAll, markPending, approv
 
 // ---------- styles ----------
 const styles = StyleSheet.create({
-  grid: { gap: 16 },
+  grid: { flex: 1, gap: 16 },
   // info bar
   infoBar: { padding: 10, borderRadius: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   infoOnline: { backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#10b98155" },
@@ -484,7 +491,7 @@ const styles = StyleSheet.create({
   historyBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#082cac" },
   historyBtnText: { color: "#fff", fontWeight: "800" },
   // card
-  card: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, padding: 12, backgroundColor: "#fff", ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }) as any },
+  card: { flex: 1, minHeight: 0, borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, padding: 12, backgroundColor: "#fff", ...Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }) as any },
   cardHeader: { marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#102a43" },
   topBar: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },

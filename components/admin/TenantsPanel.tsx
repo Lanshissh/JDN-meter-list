@@ -581,7 +581,13 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         <Text style={styles.cardTitle}>Tenants</Text>
 
         {/* Create button */}
-        <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+        <TouchableOpacity
+          onPress={() => {
+            setCBillStart(today());   // ⟵ force to current date every time
+            setCreateVisible(true);
+          }}
+          style={styles.btn}
+        >
           <Text style={styles.btnText}>+ Create Tenant</Text>
         </TouchableOpacity>
       </View>
@@ -612,7 +618,8 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         <FlatList
           data={sorted}
           keyExtractor={(t) => t.tenant_id}
-          style={{ maxHeight: 360, marginTop: 4 }}
+          style={{ flexGrow: 1, marginTop: 4 }}
+          contentContainerStyle={{ paddingBottom: 8 }}
           nestedScrollEnabled
           ListEmptyComponent={<Text style={styles.empty}>No tenants found.</Text>}
           renderItem={({ item }) => (
@@ -620,7 +627,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>{item.tenant_name} • {item.tenant_id}</Text>
                 <Text style={styles.rowSub}>
-                  SN: {item.tenant_sn} • Building: {item.building_id} • Bill start: {item.bill_start} • {item.tenant_status}
+                  SN: {item.tenant_sn} • Building: {item.building_id} • Date Created: {item.bill_start} • {item.tenant_status}
                 </Text>
               </View>
               <View style={styles.badge}><Text style={styles.badgeText}>View</Text></View>
@@ -731,8 +738,13 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     </Picker>
                   </View>
 
-                  <Text style={styles.inputLabel}>Bill start (YYYY-MM-DD)</Text>
-                  <TextInput style={styles.input} value={cBillStart} onChangeText={setCBillStart} placeholder="YYYY-MM-DD" placeholderTextColor="#9aa5b1" autoCapitalize="none" />
+                  {/* Bill Start (auto) - READ ONLY */}
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={styles.dropdownLabel}>Date Created</Text>
+                    <View style={styles.readonlyField}>
+                      <Text style={styles.readonlyText}>{cBillStart}</Text>
+                    </View>
+                  </View>
 
                   <Text style={styles.inputLabel}>Status</Text>
                   <View style={styles.dropdownBox}>
@@ -776,7 +788,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                   <Text style={styles.inputLabel}>Tenant name</Text>
                   <TextInput style={styles.input} value={tenantDraft.tenant_name} onChangeText={(v) => setTenantDraft({ ...tenantDraft, tenant_name: v })} />
 
-                  <Text style={styles.inputLabel}>Bill start (YYYY-MM-DD)</Text>
+                  <Text style={styles.inputLabel}>Date created (YYYY-MM-DD)</Text>
                   <TextInput style={styles.input} value={tenantDraft.bill_start} onChangeText={(v) => setTenantDraft({ ...tenantDraft, bill_start: v })} placeholder="YYYY-MM-DD" />
 
                   <Text style={styles.inputLabel}>Status</Text>
@@ -879,26 +891,22 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   );
 }
 
-/** Styles — responsive grid + copied filter chips modal */
 const styles = StyleSheet.create({
+  grid: { flex: 1, padding: 12, gap: 12 },
   card: {
+    flex: 1,
+    minHeight: 0,
     backgroundColor: "#fff",
     borderRadius: 12,
-    padding: 14,
+    padding: 12,
     borderWidth: 1,
     borderColor: "#eef2f7",
-    ...(Platform.select({
-      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.05)" as any },
-      default: { elevation: 2 },
-    }) as any),
+    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 2 } }) as any),
   },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
+  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   cardTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
+
+  topBar: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
 
   // top bar
   filtersBar: {
@@ -1028,7 +1036,7 @@ const styles = StyleSheet.create({
         width: "200%",
         maxWidth: 1000,
         position: "relative",
-        left: "50%",
+        left: "100%",
         transform: "translateX(-50%)",
       },
       default: {
@@ -1166,6 +1174,19 @@ const styles = StyleSheet.create({
   dropdown: { height: 36 },
   sectionTitle: { fontSize: 14, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
   muted: { color: "#94a3b8" },
+
+  readonlyField: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  readonlyText: {
+    color: "#0f172a",
+    fontSize: 14,
+  },
 
   // web-only zoom (used by details modal shell)
   webZoom80: {

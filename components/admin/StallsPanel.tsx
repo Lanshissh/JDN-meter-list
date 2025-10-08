@@ -299,25 +299,28 @@ export default function StallsPanel({ token }: { token: string | null }) {
   // --- Create ---
   const onCreate = async () => {
     if (!canCreate) return;
+
     // admin chooses building; operator is locked to own building
     const finalBuildingId = isAdmin ? buildingId : userBuildingId;
 
-    if (!stallSn || !finalBuildingId || !status) {
-      notify("Missing info", "Please fill in Stall SN, Building, and Status.");
+    if (!stallSn || !finalBuildingId) {
+      notify("Missing info", "Please fill in Stall SN and Building.");
       return;
     }
+
     try {
       setSubmitting(true);
       await api.post("/stalls", {
         stall_sn: stallSn,
-        tenant_id: status === "available" ? null : tenantId || null,
+        tenant_id: null,            // ⟵ always null on create
         building_id: finalBuildingId,
-        stall_status: status,
+        stall_status: "available",  // ⟵ always available on create
       });
+
       // reset + close
       setStallSn("");
-      setTenantId("");
-      setStatus("available");
+      setTenantId("");             // harmless reset
+      setStatus("available");      // keep internal state consistent
       setCreateVisible(false);
 
       await loadAll();
@@ -416,8 +419,9 @@ export default function StallsPanel({ token }: { token: string | null }) {
           <FlatList
             data={sorted}
             keyExtractor={(item) => item.stall_id}
-            scrollEnabled={Platform.OS === "web"}
-            nestedScrollEnabled={false}
+            style={{ flexGrow: 1, marginTop: 4 }}
+            contentContainerStyle={{ paddingBottom: 8 }}
+            nestedScrollEnabled
             ListEmptyComponent={<Text style={styles.empty}>No stalls found.</Text>}
             renderItem={({ item }) => (
               <View style={styles.row}>
@@ -444,7 +448,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                 </View>
               </View>
             )}
-            style={{ maxHeight: 360, marginTop: 4 }}
           />
         )}
       </View>
@@ -553,15 +556,15 @@ export default function StallsPanel({ token }: { token: string | null }) {
               <TextInput style={styles.input} placeholder="e.g. S-100" placeholderTextColor="#9aa5b1" value={stallSn} onChangeText={setStallSn} />
             </View>
 
+            {/* --- Status (fixed) --- */}
             <View style={{ marginTop: 8 }}>
               <Text style={styles.dropdownLabel}>Status</Text>
-              <View style={styles.pickerWrapper}>
-                <Picker selectedValue={status} onValueChange={(v) => setStatus(String(v) as any)} style={styles.picker}>
-                  <Picker.Item label="Available" value="available" />
-                  <Picker.Item label="Occupied" value="occupied" />
-                  <Picker.Item label="Under Maintenance" value="under maintenance" />
-                </Picker>
+              <View style={[styles.chip, styles.chipActive]}>
+                <Text style={[styles.chipText, styles.chipTextActive]}>AVAILABLE</Text>
               </View>
+              <Text style={{ color: "#94a3b8", marginTop: 4, fontSize: 12 }}>
+                New stalls are always created as AVAILABLE. You can assign a tenant later from Edit.
+              </Text>
             </View>
 
             {/* Tenant only if not available */}
@@ -664,9 +667,10 @@ export default function StallsPanel({ token }: { token: string | null }) {
 
 /* -------------------- styles (copied to match BuildingPanel) -------------------- */
 const styles = StyleSheet.create({
-  grid: { padding: 12, gap: 12 },
-
+  grid: { flex: 1, gap: 12 },
   card: {
+    flex: 1,
+    minHeight: 0,
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,

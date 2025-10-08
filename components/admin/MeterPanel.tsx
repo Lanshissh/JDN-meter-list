@@ -249,7 +249,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
           <FlatList
             data={sorted}
             keyExtractor={(item) => item.meter_id}
-            style={{ maxHeight: 420, marginTop: 6 }}
+            style={{ flexGrow: 1, marginTop: 4 }}
+            contentContainerStyle={{ paddingBottom: 8 }}
             nestedScrollEnabled
             renderItem={({ item }) => (
               <View style={styles.row}>
@@ -382,8 +383,10 @@ function Chip({ label, active, onPress }: { label: string; active?: boolean; onP
 
 /* ========== Styles (synced with BuildingPanel) ========== */
 const styles = StyleSheet.create({
-  grid: { flex: 1, padding: 12, gap: 12 },
+  grid: { flex: 1, gap: 12 },
   card: {
+    flex: 1,
+    minHeight: 0,
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,

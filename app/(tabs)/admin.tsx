@@ -25,8 +25,10 @@ import BuildingPanel from "../../components/admin/BuildingPanel";
 import RatesPanel from "../../components/admin/RatesPanel";
 import StallsPanel from "../../components/admin/StallsPanel";
 import TenantsPanel from "../../components/admin/TenantsPanel";
+import AssignTenantPanel from "../../components/admin/AssignTenantPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
+
 
 export type PageKey =
   | "accounts"
@@ -34,6 +36,7 @@ export type PageKey =
   | "rates"
   | "stalls"
   | "tenants"
+  | "assign"
   | "meters"
   | "readings";
 
@@ -56,6 +59,7 @@ export default function AdminScreen() {
       { label: "Rates", key: "rates", icon: "pricetag-outline" },
       { label: "Stalls", key: "stalls", icon: "storefront-outline" },
       { label: "Tenants", key: "tenants", icon: "person-outline" },
+      { label: "Assign", key: "assign", icon: "person-add-outline" },
       { label: "Meters", key: "meters", icon: "speedometer-outline" },
       { label: "Readings", key: "readings", icon: "reader-outline" },
     ],
@@ -81,6 +85,7 @@ export default function AdminScreen() {
         "buildings",
         "rates",
         "stalls",
+        "assign",
         "tenants",
         "meters",
         "readings",
@@ -205,6 +210,8 @@ export default function AdminScreen() {
         return <StallsPanel token={token} />;
       case "tenants":
         return <TenantsPanel token={token} />;
+      case "assign":
+        return <AssignTenantPanel token={token} />;
       case "meters":
         return <MeterPanel token={token} />;
       case "readings":

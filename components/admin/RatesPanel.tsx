@@ -395,7 +395,8 @@ export default function RatesPanel({ token }: { token: string | null }) {
         <FlatList
           data={sorted}
           keyExtractor={(r) => r.rate_id}
-          style={{ maxHeight: 360, marginTop: 4 }}
+          style={{ flexGrow: 1, marginTop: 4 }}
+          contentContainerStyle={{ paddingBottom: 8 }}
           nestedScrollEnabled
           ListEmptyComponent={<Text style={styles.empty}>No rates found.</Text>}
           renderItem={({ item }) => (
@@ -553,7 +554,10 @@ export default function RatesPanel({ token }: { token: string | null }) {
 
 /** Styles (synced with BuildingPanel look) */
 const styles = StyleSheet.create({
+  grid: { flex: 1, gap: 12 },
   card: {
+    flex: 1,
+    minHeight: 0,
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,

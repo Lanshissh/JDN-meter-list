@@ -274,7 +274,8 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           <FlatList
             data={derived}
             keyExtractor={(u) => u.user_id}
-            style={{ maxHeight: 420, marginTop: 4 }}
+            style={{ flexGrow: 1, marginTop: 4 }}
+            contentContainerStyle={{ paddingBottom: 8 }}
             nestedScrollEnabled
             ListEmptyComponent={<Text style={styles.empty}>No users found.</Text>}
             renderItem={({ item }) => (
@@ -492,8 +493,10 @@ export default function AccountsPanel({ token }: { token: string | null }) {
 
 /** Styles cloned from BuildingPanel to match UI */
 const styles = StyleSheet.create({
-  grid: { gap: 12 },
+  grid: { flex: 1, gap: 12 },
   card: {
+    flex: 1,
+    minHeight: 0,
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
