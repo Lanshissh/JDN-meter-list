@@ -1,5 +1,14 @@
-import React, { useMemo, useState } from "react";
-import { View, TouchableOpacity, StyleSheet, Image, Text } from "react-native";
+// components/SideNav.tsx
+import React, { useMemo, useRef, useState, useEffect } from "react";
+import {
+  View,
+  TouchableOpacity,
+  StyleSheet,
+  Image,
+  Text,
+  Platform,
+  Animated,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -28,177 +37,232 @@ function decodeRole(token: string | null): string {
 export default function SideNav({ active, onSelect }: Props) {
   const { token } = useAuth();
   const role = useMemo(() => decodeRole(token), [token]);
-  const canSeeAdmin = true;  
+  const canSeeAdmin = true;
+
+  // expand/collapse with animated width
   const [expanded, setExpanded] = useState(false);
+  const widthAnim = useRef(new Animated.Value(68)).current;
+
+  useEffect(() => {
+    Animated.spring(widthAnim, {
+      toValue: expanded ? 220 : 68,
+      useNativeDriver: false,
+      speed: 18,
+      bounciness: 6,
+    }).start();
+  }, [expanded, widthAnim]);
+
+  const NavItem = ({
+    icon,
+    label,
+    tab,
+  }: {
+    icon: keyof typeof Ionicons.glyphMap;
+    label: string;
+    tab: TabKey;
+  }) => {
+    const isActive = active === tab;
+    return (
+      <TouchableOpacity
+        onPress={() => onSelect(tab)}
+        style={[
+          styles.item,
+          expanded && styles.itemWide,
+          isActive && styles.itemActive,
+        ]}
+        {...(Platform.OS === "web" && !expanded ? { title: label } : {})}
+      >
+        <View style={[styles.itemRow, expanded && styles.itemRowWide]}>
+          <Ionicons
+            name={icon}
+            size={22}
+            color="#fff"
+          />
+          {expanded && (
+            <Text style={[styles.itemText, isActive && styles.itemTextActive]}>
+              {label}
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
-    <View style={[styles.sideNav, expanded && styles.sideNavExpanded]}>
-      {/* Logo */}
+    <Animated.View style={[styles.shell, { width: widthAnim }]}>
+      {/* soft overlay – keeps your #082cac base but adds subtle depth */}
+      <View pointerEvents="none" style={styles.overlay} />
+
+      {/* Logo / brand */}
       <TouchableOpacity
-        style={[styles.iconBtn, expanded && styles.iconBtnWide]}
+        style={[styles.logoBtn, expanded && styles.logoBtnWide]}
         onPress={() => onSelect("admin")}
+        {...(Platform.OS === "web" && !expanded ? { title: "Admin" } : {})}
       >
-        <Image
-          source={require("../assets/images/jdn.jpg")}
-          style={styles.logo}
-        />
+        <Image source={require("../assets/images/jdn.jpg")} style={styles.logo} />
+        {expanded && <Text style={styles.brand}>JDN</Text>}
       </TouchableOpacity>
 
-      {/* Nav buttons */}
-      <View style={styles.navSection}>
-        {canSeeAdmin && (
-        <TouchableOpacity
-          style={[
-            styles.iconBtn,
-            expanded && styles.iconBtnWide,
-            active === "admin" && styles.active,
-          ]}
-          onPress={() => onSelect("admin")}
-        >
-          <View style={[styles.row, expanded && styles.rowExpanded]}>
-            <Ionicons name="person-circle-outline" size={28} color="#fff" />
-            {expanded && <Text style={styles.label}>Admin</Text>}
-          </View>        
-        </TouchableOpacity>
-        )}
-
-        <TouchableOpacity
-          style={[
-            styles.iconBtn,
-            expanded && styles.iconBtnWide,
-            active === "scanner" && styles.active,
-          ]}
-          onPress={() => onSelect("scanner")}
-        >
-          <View style={[styles.row, expanded && styles.rowExpanded]}>
-            <Ionicons name="scan-outline" size={28} color="#fff" />
-            {expanded && <Text style={styles.label}>Scanner</Text>}
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.iconBtn,
-            expanded && styles.iconBtnWide,
-            active === "billing" && styles.active,
-          ]}
-          onPress={() => onSelect("billing")}
-        >
-          <View style={[styles.row, expanded && styles.rowExpanded]}>
-            <Ionicons name="card-outline" size={28} color="#fff" />
-            {expanded && <Text style={styles.label}>Billing</Text>}
-          </View>
-        </TouchableOpacity>
+      {/* Nav section */}
+      <View style={styles.section}>
+        {canSeeAdmin && <NavItem icon="person-circle-outline" label="Admin" tab="admin" />}
+        <NavItem icon="scan-outline" label="Scanner" tab="scanner" />
+        <NavItem icon="card-outline" label="Billing" tab="billing" />
       </View>
 
       <View style={{ flex: 1 }} />
+
+      {/* Bottom items */}
+      <NavItem icon="stats-chart-outline" label="Dashboard" tab="dashboard" />
+
+      {/* Expand / Collapse */}
       <TouchableOpacity
-        style={[
-          styles.iconBtn,
-          expanded && styles.iconBtnWide,
-          active === "dashboard" && styles.active,
-        ]}
-        onPress={() => onSelect("dashboard")}
-      >
-        <View style={[styles.row, expanded && styles.rowExpanded]}>
-          <Ionicons name="stats-chart-outline" size={28} color="#fff" />
-          {expanded && <Text style={styles.label}>Dashboard</Text>}
-        </View>
-      </TouchableOpacity>
-      {/* Expand / Collapse toggle (replaces logout) */}
-      <TouchableOpacity
-        style={[styles.iconBtn, expanded && styles.iconBtnWide]}
         onPress={() => setExpanded((v) => !v)}
-        accessibilityLabel={expanded ? "Collapse" : "Expand"}
+        style={[styles.toggle, expanded && styles.itemWide]}
+        accessibilityLabel={expanded ? "Collapse sidebar" : "Expand sidebar"}
+        {...(Platform.OS === "web" ? { title: expanded ? "Collapse" : "Expand" } : {})}
       >
-        <View style={[styles.row, expanded && styles.rowExpanded]}>
+        <View style={[styles.itemRow, expanded && styles.itemRowWide]}>
           {!expanded ? (
-            // |→  (arrow then bar)
             <View style={styles.expandIconRow}>
-              <Ionicons name="arrow-forward-outline" size={24} color="#fff" />
+              <Ionicons name="arrow-forward-outline" size={18} color="#fff" />
               <View style={styles.vertBar} />
             </View>
           ) : (
-            // |←  (bar then arrow)
             <View style={styles.expandIconRow}>
               <View style={styles.vertBar} />
-              <Ionicons name="arrow-back-outline" size={24} color="#fff" />
+              <Ionicons name="arrow-back-outline" size={18} color="#fff" />
             </View>
           )}
-          {expanded && <Text style={styles.label}>Collapse</Text>}
+          {expanded && <Text style={styles.itemText}>Collapse</Text>}
         </View>
       </TouchableOpacity>
-    </View>
+    </Animated.View>
   );
 }
 
+/* ===================== styles ===================== */
+/** brand palette — preserved from your original file */
+const BRAND_BG = "#082cac";
+const BORDER = "#eee";
+const TEXT = "#fff";
+
 const styles = StyleSheet.create({
-  sideNav: {
-    width: 68,
-    backgroundColor: "#082cac",
-    alignItems: "center",
-    paddingTop: 20,
-    paddingBottom: 20,
-    borderRightWidth: 1,
-    borderRightColor: "#eee",
-    flexDirection: "column",
+  shell: {
     height: "100%",
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+    backgroundColor: BRAND_BG,              // <-- keep your base color
+    borderRightWidth: 1,
+    borderRightColor: BORDER,               // <-- keep your border color
+    overflow: "hidden",
+    ...(Platform.OS === "web"
+      ? {
+          backdropFilter: "blur(8px)",      // subtle frost
+          WebkitBackdropFilter: "blur(8px)",
+          boxShadow:
+            "inset 0 0 0 1px rgba(255,255,255,0.06), 0 8px 28px rgba(0,0,0,0.24)",
+        }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.18,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 8 },
+        }),
+    borderTopRightRadius: 16,
+    borderBottomRightRadius: 16,
   },
-  sideNavExpanded: {
-    width: 220,
-    alignItems: "flex-start",
-    paddingLeft: 10,
-    paddingRight: 10,
+
+  overlay: {
+    position: "absolute",
+    inset: 0 as any,
+    borderTopRightRadius: 16,
+    borderBottomRightRadius: 16,
+    backgroundColor: "transparent",
+    ...(Platform.OS === "web"
+      ? {
+          // very soft vertical light—keeps BRAND_BG dominant
+          background:
+            "linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.03) 40%, rgba(0,0,0,0.08) 100%)",
+        }
+      : {}),
   },
-  navSection: {
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 24,
-  },
-  iconBtn: {
-    marginVertical: 6,
+
+  /* logo */
+  logoBtn: {
+    height: 56,
+    width: 56,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    width: 48,
-    height: 48,
-    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    marginBottom: 12,
   },
-  iconBtnWide: {
+  logoBtnWide: {
     width: "100%",
-    alignItems: "flex-start",
-    paddingHorizontal: 8,
-  },
-  row: {
-    alignItems: "center",
-  },
-  rowExpanded: {
     flexDirection: "row",
-    gap: 12,
+    gap: 10,
+    justifyContent: "flex-start",
+    paddingHorizontal: 10,
   },
   logo: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    marginBottom: 16,
-    borderWidth: 2,
-    borderColor: "#fff",
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
   },
-  label: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  expandIconRow: {
-    flexDirection: "row",
+  brand: { color: TEXT, fontWeight: "800", fontSize: 16, letterSpacing: 0.4 },
+
+  /* section */
+  section: { marginTop: 8, gap: 8 },
+
+  /* items */
+  item: {
+    height: 46,
+    borderRadius: 12,
     alignItems: "center",
-    gap: 6,
+    justifyContent: "center",
+    marginVertical: 4,
+    backgroundColor: "rgba(255,255,255,0.08)",  // soft white veil on brand blue
+    ...(Platform.OS === "web"
+      ? { cursor: "pointer", transition: "box-shadow 140ms ease, background 140ms ease" }
+      : {}),
   },
+  itemWide: { alignItems: "flex-start", paddingHorizontal: 10 },
+
+  itemRow: { alignItems: "center" },
+  itemRowWide: { flexDirection: "row", gap: 10 },
+
+  itemActive: {
+    backgroundColor: "rgba(255,255,255,0.18)",  // brighter white, not cyan
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 0 0 3px rgba(255,255,255,0.24), 0 10px 24px rgba(0,0,0,0.25)" }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.35,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 8 },
+        }),
+  },
+  itemText: { color: TEXT, fontWeight: "700", fontSize: 14 },
+  itemTextActive: { color: TEXT },
+
+  /* toggle */
+  toggle: {
+    height: 46,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 6,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  expandIconRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   vertBar: {
     width: 3,
-    height: 22,
-    backgroundColor: "#fff",
+    height: 20,
+    backgroundColor: TEXT,
     borderRadius: 2,
+    opacity: 0.9,
   },
-  active: { backgroundColor: "rgba(255,255,255,0.15)" },
 });

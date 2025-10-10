@@ -41,7 +41,7 @@ export default function LoginScreen() {
       const res = await axios.post(API_URL, { user_id, user_password });
       const { token } = res.data;
       await login(token);
-      router.replace("/(tabs)/admin");
+      router.replace("/(tabs)/dashboard");
     } catch (err: any) {
       if (err?.response?.data?.error) setError(String(err.response.data.error));
       else setError("Network/server error. Please try again.");

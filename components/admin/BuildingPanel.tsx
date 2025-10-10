@@ -1,4 +1,4 @@
-
+// components/admin/BuildingPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   Dimensions,
+  useWindowDimensions,
 } from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
@@ -40,7 +41,6 @@ function notify(title: string, message?: string) {
     Alert.alert(title, message);
   }
 }
-
 function errorText(err: any, fallback = "Server error.") {
   const d = err?.response?.data;
   if (typeof d === "string") return d;
@@ -49,25 +49,29 @@ function errorText(err: any, fallback = "Server error.") {
   if (err?.message) return String(err.message);
   try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
-
 const toNum = (s: string): number | null => {
   const t = s.trim();
   if (t === "") return null;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
 };
-
 const fmt = (n: number | null | undefined, unit?: string) => {
   if (n == null || !isFinite(Number(n))) return "—";
   const out = Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n));
   return unit ? `${out} ${unit}` : out;
 };
 
-const cmp = (a: string | number, b: string | number) =>
-  String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
+/** Tiny chip */
+const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
+  <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
+    <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+  </TouchableOpacity>
+);
 
-/** Component */
 export default function BuildingPanel({ token }: { token: string | null }) {
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
+
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -77,7 +81,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
   type SortMode = "newest" | "oldest" | "name" | "id";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
 
-  // FILTERS MODAL
+  // filters modal
   const [filtersVisible, setFiltersVisible] = useState(false);
 
   // create modal
@@ -114,10 +118,9 @@ export default function BuildingPanel({ token }: { token: string | null }) {
       setBusy(false);
     }
   };
-
   useEffect(() => { loadAll(); }, [token]);
 
-  /** Derived list with search + sort */
+  /** Derived list: shows immediately (no modal needed) */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = buildings;
@@ -139,7 +142,7 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     return arr;
   }, [buildings, query, sortMode]);
 
-  /** Actions */
+  /** CRUD (unchanged) */
   const onCreate = async () => {
     const building_name = name.trim();
     if (!building_name) { notify("Missing info", "Please enter a building name."); return; }
@@ -201,8 +204,6 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const ok = window.confirm(`Delete ${b.building_name}?`);
       if (!ok) return;
-    } else {
-      // simple native confirm
     }
     try {
       setSubmitting(true);
@@ -214,378 +215,464 @@ export default function BuildingPanel({ token }: { token: string | null }) {
     } finally { setSubmitting(false); }
   };
 
-  /** UI */
-  const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
-    <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
-      <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
-    </TouchableOpacity>
-  );
-
+  /** UI (FlatList is the only vertical scroller) */
   return (
-    <View style={styles.grid}>
-      {/* LIST CARD */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Manage Buildings</Text>
-          <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
-            <Text style={styles.btnText}>+ Create Building</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Search bar + Filter button (filters moved into modal) */}
-        <View style={styles.filtersBar}>
-          <View style={[styles.searchWrap, { flex: 1 }]}>
-            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search building by name or ID…"
-              placeholderTextColor="#9aa5b1"
-              style={styles.search}
-            />
+    <View style={styles.page}>
+      <View style={styles.grid}>
+        {/* Header card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Manage Buildings</Text>
+            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+              <Text style={styles.btnText}>+ Create Building</Text>
+            </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
-            <Ionicons name="filter-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
-            <Text style={styles.btnGhostText}>Filters</Text>
-          </TouchableOpacity>
+          {/* Toolbar: Search + Filters beside each other */}
+          <View style={styles.filtersBar}>
+            <View style={[styles.searchWrap, { flex: 1 }]}>
+              <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search building by name or ID…"
+                placeholderTextColor="#9aa5b1"
+                style={styles.search}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
+              <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+              <Text style={styles.btnGhostText}>Filters</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* List */}
+          {busy ? (
+            <View style={styles.loader}><ActivityIndicator /></View>
+          ) : (
+            <FlatList
+              data={filtered}
+              keyExtractor={(b) => b.building_id}
+              style={{ flex: 1 }}
+              contentContainerStyle={filtered.length === 0 ? styles.emptyPad : { paddingBottom: 24 }}
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <Ionicons name="business-outline" size={42} color="#cbd5e1" />
+                  <Text style={styles.emptyTitle}>No buildings</Text>
+                  <Text style={styles.emptyText}>Try adjusting your search or create a new one.</Text>
+                </View>
+              }
+              renderItem={({ item }) => (
+                <View style={[styles.row, isMobile && styles.rowMobile]}>
+                  {/* Main details */}
+                  <View style={styles.rowMain}>
+                    <Text style={styles.rowTitle}>
+                      {item.building_name} <Text style={styles.rowSub}>({item.building_id})</Text>
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      E: {fmt(item.erate_perKwH, "₱/kWh")} • Min: {fmt(item.emin_con, "kWh")}  |  W: {fmt(item.wrate_perCbM, "₱/m³")} • Min: {fmt(item.wmin_con, "m³")}  |  LPG: {fmt(item.lrate_perKg, "₱/kg")}
+                    </Text>
+                    {item.last_updated ? (
+                      <Text style={styles.rowMetaSmall}>
+                        Updated {new Date(item.last_updated).toLocaleString()} {item.updated_by ? `• by ${item.updated_by}` : ""}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  {/* Actions: right on desktop/tablet, below on mobile */}
+                  {isMobile ? (
+                    <View style={styles.rowActionsMobile}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.rowActions}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+            />
+          )}
         </View>
 
-        {/* List */}
-        {busy ? (
-          <View style={styles.loader}><ActivityIndicator /></View>
-        ) : (
-          <FlatList
-            data={filtered}
-            keyExtractor={(b) => b.building_id}
-            style={{ flexGrow: 1, marginTop: 4 }}
-            contentContainerStyle={{ paddingBottom: 8 }}
-            nestedScrollEnabled
-            ListEmptyComponent={<Text style={styles.empty}>No buildings found.</Text>}
-            renderItem={({ item }) => (
-              <View style={styles.row}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle}>
-                    {item.building_name} <Text style={styles.rowSub}>({item.building_id})</Text>
-                  </Text>
-                  <Text style={styles.rowMeta}>
-                    Elec: {fmt(item.erate_perKwH, "rate/kWh")} • Min: {fmt(item.emin_con)}
-                    {"  "}Water: {fmt(item.wrate_perCbM, "rate/cbm")} • Min: {fmt(item.wmin_con)}
-                    {"  "}LPG: {fmt(item.lrate_perKg, "rate/kg")}
-                  </Text>
-                </View>
-                <View style={styles.rowActions}>
-                  <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openEdit(item)}>
-                    <Text style={styles.actionBtnGhostText}>Update</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.actionBtn} onPress={() => onDelete(item)}>
-                    <Text style={styles.actionBtnText}>Delete</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          />
-        )}
-      </View>
-
-      {/* CREATE modal */}
-      <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <View style={[styles.modalCard, Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.85) }]}>
-            <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled">
-              <Text style={styles.modalTitle}>Create Building</Text>
-              <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>Building Name</Text>
-                <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="e.g. JDN Plaza" />
-              </View>
-              <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Rates</Text></View>
-              <View style={styles.rowWrap}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.dropdownLabel}>Electric: rate/kWh</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={c_eRate} onChangeText={setC_eRate} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.dropdownLabel}>Electric: min. consumption</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={c_eMin} onChangeText={setC_eMin} />
-                </View>
-              </View>
-              <View style={styles.rowWrap}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.dropdownLabel}>Water: rate/cbm</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={c_wRate} onChangeText={setC_wRate} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.dropdownLabel}>Water: min. consumption</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={c_wMin} onChangeText={setC_wMin} />
-                </View>
-              </View>
-              <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>LPG: rate/kg</Text>
-                <TextInput style={styles.input} keyboardType="numeric" value={c_lRate} onChangeText={setC_lRate} />
+        {/* Filters Modal (sort only) */}
+        <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
+          <View style={styles.promptOverlay}>
+            <View style={styles.promptCard}>
+              <Text style={styles.modalTitle}>Filters & Sort</Text>
+              <View style={styles.modalDivider} />
+              <Text style={styles.dropdownLabel}>Sort by</Text>
+              <View style={styles.chipsRow}>
+                {[
+                  { label: "Newest", val: "newest" as SortMode },
+                  { label: "Oldest", val: "oldest" as SortMode },
+                  { label: "Name", val: "name" as SortMode },
+                  { label: "ID", val: "id" as SortMode },
+                ].map(({ label, val }) => (
+                  <Chip key={val} label={label} active={sortMode === val} onPress={() => setSortMode(val)} />
+                ))}
               </View>
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
-                  <Text style={styles.btnGhostText}>Cancel</Text>
+                <TouchableOpacity style={[styles.btn, { minWidth: 120 }]} onPress={() => setFiltersVisible(false)}>
+                  <Text style={styles.btnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Create Modal */}
+        <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Create Building</Text>
+              <View style={styles.modalDivider} />
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Name</Text>
+                  <TextInput value={name} onChangeText={setName} placeholder="e.g. JDN Center" style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+
+                <Text style={styles.sectionTitle}>Base Rates</Text>
+                <View style={styles.grid2}>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Electric Rate (₱/kWh)</Text>
+                    <TextInput value={c_eRate} onChangeText={setC_eRate} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Electric Min (kWh)</Text>
+                    <TextInput value={c_eMin} onChangeText={setC_eMin} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Water Rate (₱/m³)</Text>
+                    <TextInput value={c_wRate} onChangeText={setC_wRate} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Water Min (m³)</Text>
+                    <TextInput value={c_wMin} onChangeText={setC_wMin} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>LPG Rate (₱/kg)</Text>
+                    <TextInput value={c_lRate} onChangeText={setC_lRate} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
+                  <Text style={styles.btnGhostTextAlt}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save</Text>}
+                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
                 </TouchableOpacity>
               </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
 
-      {/* EDIT modal */}
-      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <View style={[styles.modalCard, Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.85) }]}>
-            <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled">
-              <Text style={styles.modalTitle}>Update Building</Text>
-              <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>Building Name</Text>
-                <TextInput style={styles.input} value={editName} onChangeText={setEditName} placeholder="e.g. JDN Plaza" />
-              </View>
-              <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Rates</Text></View>
-              <View style={styles.rowWrap}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.dropdownLabel}>Electric: rate/kWh</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={e_eRate} onChangeText={setE_eRate} />
+        {/* Edit Modal */}
+        <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Edit Building</Text>
+              <View style={styles.modalDivider} />
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Name</Text>
+                  <TextInput value={editName} onChangeText={setEditName} placeholder="Building name" style={styles.input} placeholderTextColor="#9aa5b1" />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.dropdownLabel}>Electric: min. consumption</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={e_eMin} onChangeText={setE_eMin} />
+
+                <Text style={styles.sectionTitle}>Base Rates</Text>
+                <View style={styles.grid2}>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Electric Rate (₱/kWh)</Text>
+                    <TextInput value={e_eRate} onChangeText={setE_eRate} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Electric Min (kWh)</Text>
+                    <TextInput value={e_eMin} onChangeText={setE_eMin} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Water Rate (₱/m³)</Text>
+                    <TextInput value={e_wRate} onChangeText={setE_wRate} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Water Min (m³)</Text>
+                    <TextInput value={e_wMin} onChangeText={setE_wMin} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>LPG Rate (₱/kg)</Text>
+                    <TextInput value={e_lRate} onChangeText={setE_lRate} keyboardType="numeric" style={styles.input} placeholderTextColor="#9aa5b1" />
+                  </View>
                 </View>
-              </View>
-              <View style={styles.rowWrap}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.dropdownLabel}>Water: rate/cbm</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={e_wRate} onChangeText={setE_wRate} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.dropdownLabel}>Water: min. consumption</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" value={e_wMin} onChangeText={setE_wMin} />
-                </View>
-              </View>
-              <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>LPG: rate/kg</Text>
-                <TextInput style={styles.input} keyboardType="numeric" value={e_lRate} onChangeText={setE_lRate} />
-              </View>
+              </ScrollView>
+
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
-                  <Text style={styles.btnGhostText}>Cancel</Text>
+                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
+                  <Text style={styles.btnGhostTextAlt}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save Changes</Text>}
+                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Save"}</Text>
                 </TouchableOpacity>
               </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* FILTERS modal (Sort options moved here) */}
-      <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
-        <View style={styles.promptOverlay}>
-          <View style={styles.promptCard}>
-            <Text style={styles.modalTitle}>Filters & Sort</Text>
-            <View style={styles.modalDivider} />
-
-            <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Sort by</Text>
-            <View style={styles.chipsRow}>
-              {[
-                { label: "Newest", val: "newest" },
-                { label: "Oldest", val: "oldest" },
-                { label: "Name", val: "name" },
-                { label: "ID", val: "id" },
-              ].map(({ label, val }) => (
-                <Chip key={val} label={label} active={sortMode === (val as SortMode)} onPress={() => setSortMode(val as SortMode)} />
-              ))}
             </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => { setSortMode("newest"); setFiltersVisible(false); }}
-              >
-                <Text style={styles.btnGhostText}>Reset</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={() => setFiltersVisible(false)}>
-                <Text style={styles.btnText}>Apply</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+          </KeyboardAvoidingView>
+        </Modal>
+      </View>
     </View>
   );
 }
 
-/** Styles (kept consistent with other admin panels) */
+/** Styles — clean, light, mobile-friendly */
+const W = Dimensions.get("window").width;
 const styles = StyleSheet.create({
-  grid: { flex: 1, gap: 12 },
-  card: {
+  // NEW: page + grid are flex so the list can occupy full height and scroll
+  page: {
     flex: 1,
     minHeight: 0,
+  },
+  grid: {
+    flex: 1,
+    padding: 14,
+    gap: 14,
+    minHeight: 0,
+  },
+
+  card: {
+    flex: 1,          // let FlatList have a scrollable container
+    minHeight: 0,
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
+    borderRadius: 14,
+    padding: 14,
     ...(Platform.select({
-      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.05)" as any },
+      web: { boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)" } as any,
       default: { elevation: 2 },
     }) as any),
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  cardTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
 
-  filtersBar: {
-    marginTop: 8,
+  cardHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  btn: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
+
+  filtersBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: "wrap",
   },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#f1f5f9",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 40,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    height: 36,
   },
-  search: { flex: 1, color: "#102a43", paddingVertical: 6 },
-
-  btn: {
-    backgroundColor: "#082cac",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
+  search: {
+    flex: 1,
+    height: 40,
+    color: "#0f172a",
   },
-  btnText: { color: "#fff", fontWeight: "700" },
-
   btnGhost: {
-    backgroundColor: "#f1f5f9",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#e2e8f0",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-  btnDisabled: { opacity: 0.7 },
 
-  loader: { paddingVertical: 20, alignItems: "center" },
-  empty: { color: "#64748b", textAlign: "center", paddingVertical: 16 },
+  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
 
   row: {
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  rowTitle: { fontSize: 14, fontWeight: "700", color: "#0b1f33" },
-  rowSub: { color: "#64748b", fontSize: 12 },
-  rowMeta: { color: "#475569", marginTop: 2, fontSize: 12 },
-  rowActions: { flexDirection: "row", gap: 8 },
-
-  actionBtn: {
-    backgroundColor: "#082cac",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  actionBtnText: { color: "#fff", fontWeight: "700" },
-  actionBtnGhost: {
-    backgroundColor: "#edf2ff",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  actionBtnGhostText: { color: "#082cac", fontWeight: "700" },
-
-  modalWrap: {
-    flex: 1,
-    backgroundColor: "rgba(16,42,67,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 12,
-  },
-  modalCard: {
-    width: "100%",
-    maxWidth: 740,
-    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
     borderRadius: 12,
     padding: 12,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
+    marginBottom: 10,
+    backgroundColor: "#fff",
+    flexDirection: "row",
+    alignItems: "center",      // center vertically on wide screens
+  },
+  rowMobile: {
+    flexDirection: "column",   // stack on mobile
+    alignItems: "stretch",
+  },
+  rowMain: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  // Desktop/tablet: actions on the right, centered vertically
+  rowActions: {
+    width: 200,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  // Mobile: actions below details
+  rowActionsMobile: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    justifyContent: "flex-start",
+    alignItems: "center",
+  },
+
+  rowTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  rowSub: { color: "#64748b", fontWeight: "600" },
+  rowMeta: { color: "#334155", marginTop: 6 },
+  rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
+
+  // labeled action buttons
+  actionBtn: {
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  actionEdit: { backgroundColor: "#e2e8f0" },
+  actionDelete: { backgroundColor: "#ef4444" },
+  actionText: { fontWeight: "700" },
+  actionEditText: { color: "#1f2937" },
+  actionDeleteText: { color: "#fff" },
+
+  emptyPad: { paddingVertical: 30 },
+  empty: { alignItems: "center", gap: 6 },
+  emptyTitle: { fontWeight: "800", color: "#0f172a" },
+  emptyText: { color: "#94a3b8" },
+
+  // Modal shell
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.36)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 14,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    width: "100%",
+    maxWidth: 720,
+    padding: 14,
     ...(Platform.select({
-      web: { boxShadow: "0 10px 28px rgba(16,42,67,0.08)" as any },
+      web: { boxShadow: "0 14px 44px rgba(15, 23, 42, 0.16)" } as any,
       default: { elevation: 3 },
     }) as any),
   },
-  modalTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
-  modalActions: { marginTop: 10, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
-  sectionHeader: { marginTop: 10, marginBottom: 2 },
-  sectionHeaderText: { color: "#486581", fontWeight: "800" },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
+  modalDivider: { height: 1, backgroundColor: "#e2e8f0", marginVertical: 10 },
+  modalActions: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  btnGhostAlt: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
+
+  inputRow: { marginBottom: 10 },
+  inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
   input: {
     backgroundColor: "#f8fafc",
     borderWidth: 1,
     borderColor: "#e2e8f0",
     borderRadius: 10,
+    height: 40,
     paddingHorizontal: 10,
-    paddingVertical: 8,
-    color: "#102a43",
-    marginTop: 6,
+    color: "#0f172a",
   },
-  rowWrap: { flexDirection: "row", gap: 8, marginTop: 6 },
-  dropdownLabel: { fontSize: 12, color: "#5d7285", marginTop: 6 },
+  sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
 
-  // Small prompt modal (for Filters)
+  grid2: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+
+  // Filter modal (chips)
   promptOverlay: {
     flex: 1,
-    backgroundColor: "rgba(16,42,67,0.25)",
-    justifyContent: "center",
+    backgroundColor: "rgba(15,23,42,0.36)",
     alignItems: "center",
-    padding: 16,
+    justifyContent: "center",
+    padding: 14,
   },
   promptCard: {
     backgroundColor: "#fff",
+    borderRadius: 14,
     width: "100%",
-    maxWidth: 520,
-    borderRadius: 12,
+    maxWidth: 560,
     padding: 14,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
     ...(Platform.select({
-      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any },
+      web: { boxShadow: "0 14px 44px rgba(15, 23, 42, 0.16)" } as any,
       default: { elevation: 3 },
     }) as any),
   },
-  modalDivider: {
-    height: 1,
-    backgroundColor: "#edf2f7",
-    marginVertical: 8,
+  dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8 },
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
-
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 },
   chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#c7d2fe",
-    backgroundColor: "#eef2ff",
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f8fafc",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  chipActive: { backgroundColor: "#082cac" },
+  chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
   chipIdle: {},
-  chipText: { fontWeight: "700", color: "#082cac" },
-  chipTextActive: { color: "#fff" },
-  chipTextIdle: { color: "#082cac" },
+  chipText: { fontWeight: "700" },
+  chipTextActive: { color: "#1d4ed8" },
+  chipTextIdle: { color: "#334155" },
 });

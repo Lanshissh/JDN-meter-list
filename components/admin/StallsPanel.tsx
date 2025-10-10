@@ -1,4 +1,4 @@
-
+// components/admin/StallsPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -13,22 +13,23 @@ import {
   Platform,
   KeyboardAvoidingView,
   ScrollView,
+  useWindowDimensions,
+  Dimensions,
 } from "react-native";
 import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-import { useAuth } from "../../contexts/AuthContext";
 
-// -------------------- Types --------------------
+/** Types */
 type Stall = {
   stall_id: string;
   stall_sn: string;
   tenant_id: string | null;
   building_id: string;
   stall_status: "occupied" | "available" | "under maintenance";
-  last_updated: string;
-  updated_by: string;
+  last_updated?: string;
+  updated_by?: string;
 };
 
 type Building = {
@@ -42,52 +43,7 @@ type Tenant = {
   building_id: string;
 };
 
-const cmp = (a: string | number, b: string | number) =>
-  String(a ?? "").localeCompare(String(b ?? ""), undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-
-const dateOf = (s: Stall) => Date.parse(s.last_updated || "") || 0;
-
-/** Safe JWT payload decode (no deps) */
-function decodeJwtPayload(token: string | null): any | null {
-  if (!token) return null;
-  try {
-    const part = token.split(".")[1];
-    const base64 = (part || "").replace(/-/g, "+").replace(/_/g, "/");
-    const padLen = (4 - (base64.length % 4)) % 4;
-    const padded = base64 + "=".repeat(padLen);
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    let str = "";
-    let i = 0;
-    for (; i < padded.length; i += 4) {
-      const c1 = chars.indexOf(padded[i]);
-      const c2 = chars.indexOf(padded[i + 1]);
-      const c3 = chars.indexOf(padded[i + 2]);
-      const c4 = chars.indexOf(padded[i + 3]);
-      const n = (c1 << 18) | (c2 << 12) | ((c3 & 63) << 6) | (c4 & 63);
-      const b1 = (n >> 16) & 255;
-      const b2 = (n >> 8) & 255;
-      const b3 = n & 255;
-      if (c3 === 64) str += String.fromCharCode(b1);
-      else if (c4 === 64) str += String.fromCharCode(b1, b2);
-      else str += String.fromCharCode(b1, b2, b3);
-    }
-    const json = decodeURIComponent(
-      str
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join(""),
-    );
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-/** ------------ ALERT HELPERS (web + mobile) ------------ */
+/** Helpers (match BuildingPanel style + behavior) */
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -95,92 +51,28 @@ function notify(title: string, message?: string) {
     Alert.alert(title, message);
   }
 }
-
 function errorText(err: any, fallback = "Server error.") {
   const d = err?.response?.data;
   if (typeof d === "string") return d;
   if (d?.error) return String(d.error);
   if (d?.message) return String(d.message);
   if (err?.message) return String(err.message);
-  try {
-    return JSON.stringify(d ?? err);
-  } catch {
-    return fallback;
-  }
+  try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
+const cmp = (a: string | number, b: string | number) =>
+  String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
+const dateOf = (s?: string) => (s ? Date.parse(s) || 0 : 0);
 
-function confirm(title: string, message: string): Promise<boolean> {
-  if (Platform.OS === "web" && typeof window !== "undefined") {
-    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
-  }
-  return new Promise((resolve) => {
-    Alert.alert(title, message, [
-      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
-    ]);
-  });
-}
-
-// A tiny wrapper so CREATE & EDIT modals look EXACTLY the same
-function ModalShell({
-  title,
-  children,
-  footer,
-}: {
-  title: string;
-  children: React.ReactNode;
-  footer: React.ReactNode;
-}) {
-  return (
-    <View style={styles.modalWrap}>
-      <View style={styles.modalCard}>
-        <Text style={styles.modalTitle}>{title}</Text>
-        <View style={styles.modalDivider} />
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
-          {children}
-        </ScrollView>
-        <View style={styles.modalActions}>{footer}</View>
-      </View>
-    </View>
-  );
-}
-
-/** ---------- Chip helper for filter/sort UI ---------- */
-function Chip({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
-    >
-      <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
+/** Chip */
+const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
+  <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
+    <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+  </TouchableOpacity>
+);
 
 export default function StallsPanel({ token }: { token: string | null }) {
-  const { token: ctxToken } = useAuth();
-  const mergedToken = token || ctxToken || null;
-
-  const jwt = useMemo(() => decodeJwtPayload(mergedToken), [mergedToken]);
-  const role = String(jwt?.user_level || "").toLowerCase();
-  const isAdmin = role === "admin";
-  const isOperator = role === "operator";
-  const userBuildingId = String(jwt?.building_id || "");
-
-  // Operators now have full CRUD
-  const canCreate = isAdmin || isOperator;
-  const canEdit = isAdmin || isOperator;
-  const canDelete = isAdmin || isOperator;
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -188,496 +80,507 @@ export default function StallsPanel({ token }: { token: string | null }) {
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [query, setQuery] = useState("");
 
-  // list filters
+  // search + filters + sort
+  const [query, setQuery] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"" | Stall["stall_status"]>("");
-
-  // filters modal
+  type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
+  const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
 
-  // --- create form (now in a modal) ---
+  // Mobile “Select Building” picker modal
+  const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
+
+  // create modal
   const [createVisible, setCreateVisible] = useState(false);
-  const [stallSn, setStallSn] = useState("");
-  const [buildingId, setBuildingId] = useState("");
-  const [tenantId, setTenantId] = useState("");
-  const [status, setStatus] = useState<Stall["stall_status"]>("available");
+  const [c_stallSn, setC_stallSn] = useState("");
+  const [c_buildingId, setC_buildingId] = useState("");
+  const [c_status] = useState<Stall["stall_status"]>("available");
+  const [c_tenantId, setC_tenantId] = useState("");
 
   // edit modal
   const [editVisible, setEditVisible] = useState(false);
   const [editStall, setEditStall] = useState<Stall | null>(null);
 
-  type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
-  const [sortMode, setSortMode] = useState<SortMode>("newest");
-
-  const authHeader = useMemo(() => ({ Authorization: `Bearer ${mergedToken ?? ""}` }), [mergedToken]);
-  const api = useMemo(
-    () => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
-    [authHeader],
-  );
+  const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
+  const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
 
   const loadAll = async () => {
-    if (!mergedToken) {
-      setBusy(false);
-      notify("Not logged in", "Please log in to manage stalls.");
-      return;
-    }
+    if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage stalls."); return; }
     try {
       setBusy(true);
-
-      // Always get stalls + tenants; only admins fetch /buildings
-      const reqs: Promise<any>[] = [api.get<Stall[]>("/stalls"), api.get<Tenant[]>("/tenants")];
-      if (isAdmin) reqs.push(api.get<Building[]>("/buildings"));
-
-      const [stallsRes, tenantsRes, buildingsRes] = (await Promise.all(reqs)) as [any, any, any?];
-
-      setStalls(stallsRes?.data || []);
-      setTenants(tenantsRes?.data || []);
-
-      if (isAdmin && buildingsRes) {
-        setBuildings(buildingsRes.data || []);
-        if (!buildingId && buildingsRes.data?.length) {
-          setBuildingId(buildingsRes.data[0].building_id);
-        }
-      } else {
-        // lock building to operator's own building (and other non-admins)
-        setBuildingId((prev) => prev || userBuildingId || "");
-      }
+      const [stRes, bRes, tRes] = await Promise.all([
+        api.get<Stall[]>("/stalls"),
+        api.get<Building[]>("/buildings"),
+        api.get<Tenant[]>("/tenants"),
+      ]);
+      setStalls(stRes.data || []);
+      setBuildings(bRes.data || []);
+      setTenants(tRes.data || []);
+      if (!c_buildingId && (bRes.data?.length ?? 0) > 0) setC_buildingId(bRes.data[0].building_id);
     } catch (err: any) {
-      console.error("[STALLS LOAD]", err?.response?.data || err?.message);
       notify("Load failed", errorText(err, "Connection error."));
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
+  useEffect(() => { loadAll(); }, [token]);
 
-  useEffect(() => { loadAll(); }, [mergedToken]);
-
-  // tenant lists filtered by building
-  const tenantsForCreate = useMemo(() => tenants.filter((t) => !buildingId || t.building_id === buildingId), [tenants, buildingId]);
-  const tenantsForEdit = useMemo(() => {
-    if (!editStall) return [] as Tenant[];
-    return tenants.filter((t) => t.building_id === editStall.building_id);
-  }, [tenants, editStall]);
-
-  // list filtering + sorting
+  /** Derived list */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = stalls;
-
     if (buildingFilter) list = list.filter((s) => s.building_id === buildingFilter);
     if (statusFilter) list = list.filter((s) => s.stall_status === statusFilter);
-
-    if (!q) return list;
-    return list.filter(
-      (s) =>
-        s.stall_id.toLowerCase().includes(q) ||
-        s.stall_sn.toLowerCase().includes(q) ||
-        s.building_id.toLowerCase().includes(q) ||
-        (s.tenant_id?.toLowerCase() ?? "").includes(q) ||
-        s.stall_status.toLowerCase().includes(q),
-    );
+    if (q) {
+      list = list.filter((s) =>
+        [s.stall_id, s.stall_sn, s.building_id, s.tenant_id, s.stall_status]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q)),
+      );
+    }
+    return list;
   }, [stalls, query, buildingFilter, statusFilter]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
+      case "oldest": arr.sort((a, b) => dateOf(a.last_updated) - dateOf(b.last_updated)); break;
+      case "idAsc": arr.sort((a, b) => cmp(a.stall_id, b.stall_id)); break;
+      case "idDesc": arr.sort((a, b) => cmp(b.stall_id, a.stall_id)); break;
       case "newest":
-        return arr.sort((a, b) => dateOf(b) - dateOf(a));
-      case "oldest":
-        return arr.sort((a, b) => dateOf(a) - dateOf(b));
-      case "idAsc":
-        return arr.sort((a, b) => cmp(a.stall_id, b.stall_id));
-      case "idDesc":
-        return arr.sort((a, b) => cmp(b.stall_id, a.stall_id));
-      default:
-        return arr;
+      default: arr.sort((a, b) => dateOf(b.last_updated) - dateOf(a.last_updated)); break;
     }
+    return arr;
   }, [filtered, sortMode]);
 
-  // --- Create ---
+  /** CRUD (unchanged) */
   const onCreate = async () => {
-    if (!canCreate) return;
-
-    // admin chooses building; operator is locked to own building
-    const finalBuildingId = isAdmin ? buildingId : userBuildingId;
-
-    if (!stallSn || !finalBuildingId) {
-      notify("Missing info", "Please fill in Stall SN and Building.");
-      return;
-    }
-
+    const stall_sn = c_stallSn.trim();
+    if (!stall_sn || !c_buildingId) { notify("Missing info", "Please enter Stall SN and select a Building."); return; }
     try {
       setSubmitting(true);
       await api.post("/stalls", {
-        stall_sn: stallSn,
-        tenant_id: null,            // ⟵ always null on create
-        building_id: finalBuildingId,
-        stall_status: "available",  // ⟵ always available on create
+        stall_sn,
+        building_id: c_buildingId,
+        stall_status: c_status,
+        tenant_id: null,
       });
-
-      // reset + close
-      setStallSn("");
-      setTenantId("");             // harmless reset
-      setStatus("available");      // keep internal state consistent
       setCreateVisible(false);
-
+      setC_stallSn("");
+      setC_tenantId("");
       await loadAll();
       notify("Success", "Stall created.");
     } catch (err: any) {
-      console.error("[CREATE STALL]", err?.response?.data || err?.message);
       notify("Create failed", errorText(err));
-    } finally {
-      setSubmitting(false);
-    }
+    } finally { setSubmitting(false); }
   };
 
-  // --- Edit modal ---
-  const openEdit = (stall: Stall) => {
-    if (!canEdit) return;
-    setEditStall({ ...stall });
+  const openEdit = (s: Stall) => {
+    setEditStall({ ...s });
     setEditVisible(true);
   };
 
   const onUpdate = async () => {
-    if (!canEdit || !editStall) return;
+    if (!editStall) return;
     try {
       setSubmitting(true);
-      const finalBuildingId = isAdmin ? editStall.building_id : userBuildingId; // operator locked to own building
-      await api.put(`/stalls/${encodeURIComponent(editStall.stall_id)}` , {
+      await api.put(`/stalls/${encodeURIComponent(editStall.stall_id)}`, {
         stall_sn: editStall.stall_sn,
-        tenant_id: editStall.stall_status === "available" ? null : editStall.tenant_id || null,
-        building_id: finalBuildingId,
+        building_id: editStall.building_id,
         stall_status: editStall.stall_status,
+        tenant_id: editStall.stall_status === "available" ? null : editStall.tenant_id || null,
       });
       setEditVisible(false);
       await loadAll();
       notify("Updated", "Stall updated successfully.");
     } catch (err: any) {
-      console.error("[UPDATE STALL]", err?.response?.data || err?.message);
       notify("Update failed", errorText(err));
-    } finally {
-      setSubmitting(false);
-    }
+    } finally { setSubmitting(false); }
   };
 
-  const onDelete = async (stall: Stall) => {
-    if (!canDelete) return;
-    const ok = await confirm("Delete stall", `Are you sure you want to delete ${stall.stall_sn} (${stall.stall_id})?`);
-    if (!ok) return;
-
+  const onDelete = async (s: Stall) => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const ok = window.confirm(`Delete ${s.stall_sn} (${s.stall_id})?`);
+      if (!ok) return;
+    }
     try {
       setSubmitting(true);
-      await api.delete(`/stalls/${encodeURIComponent(stall.stall_id)}`);
+      await api.delete(`/stalls/${encodeURIComponent(s.stall_id)}`);
       await loadAll();
-      notify("Deleted", "Stall removed.");
+      notify("Deleted", "Stall deleted.");
     } catch (err: any) {
       notify("Delete failed", errorText(err));
-    } finally {
-      setSubmitting(false);
-    }
+    } finally { setSubmitting(false); }
   };
 
+  /** UI — FlatList is the ONLY vertical scroller (no nested ScrollView around it) */
   return (
-    <View style={styles.grid}>
-      {/* LIST & FILTERS + Create button */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Manage Stalls</Text>
-          {canCreate && (
+    <View style={styles.page}>
+      <View style={styles.grid}>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Manage Stalls</Text>
             <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
               <Text style={styles.btnText}>+ Create Stall</Text>
             </TouchableOpacity>
+          </View>
+
+          {/* Toolbar: Search + Filters beside each other (wraps on small widths) */}
+          <View style={styles.filtersBar}>
+            <View style={[styles.searchWrap, { flex: 1 }]}>
+              <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search by ID, SN, tenant, building, status…"
+                placeholderTextColor="#9aa5b1"
+                style={styles.search}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
+              <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+              <Text style={styles.btnGhostText}>Filters</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Building filter — mobile friendly (horizontal ScrollView is OK; different orientation) */}
+          <View style={{ marginTop: 6, marginBottom: 15 }}>
+            <View style={styles.buildingHeaderRow}>
+              <Text style={styles.dropdownLabel}>Building</Text>
+            </View>
+
+            {isMobile ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipsRowHorizontal}
+              >
+                <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+                {buildings.map((b) => (
+                  <Chip
+                    key={b.building_id}
+                    label={b.building_name || b.building_id}
+                    active={buildingFilter === b.building_id}
+                    onPress={() => setBuildingFilter(b.building_id)}
+                  />
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.chipsRow}>
+                <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+                {buildings.map((b) => (
+                  <Chip
+                    key={b.building_id}
+                    label={b.building_name || b.building_id}
+                    active={buildingFilter === b.building_id}
+                    onPress={() => setBuildingFilter(b.building_id)}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* List (fills remaining height; the page scrolls via this FlatList) */}
+          {busy ? (
+            <View style={styles.loader}><ActivityIndicator /></View>
+          ) : (
+            <FlatList
+              data={sorted}
+              keyExtractor={(s) => s.stall_id}
+              style={{ flex: 1 }}
+              contentContainerStyle={sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }}
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <Ionicons name="albums-outline" size={42} color="#cbd5e1" />
+                  <Text style={styles.emptyTitle}>No stalls</Text>
+                  <Text style={styles.emptyText}>Try adjusting your search or create a new one.</Text>
+                </View>
+              }
+              renderItem={({ item }) => (
+                <View style={[styles.row, isMobile && styles.rowMobile]}>
+                  {/* Main details */}
+                  <View style={styles.rowMain}>
+                    <Text style={styles.rowTitle}>
+                      {item.stall_sn} <Text style={styles.rowSub}>({item.stall_id})</Text>
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      Building: {item.building_id} • Status: {item.stall_status}
+                      {item.tenant_id ? ` • Tenant: ${item.tenant_id}` : ""}
+                    </Text>
+                    {item.last_updated ? (
+                      <Text style={styles.rowMetaSmall}>
+                        Updated {new Date(item.last_updated).toLocaleString()} {item.updated_by ? `• by ${item.updated_by}` : ""}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  {/* Actions: right on desktop/tablet, below on mobile */}
+                  {isMobile ? (
+                    <View style={styles.rowActionsMobile}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.rowActions}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+            />
           )}
         </View>
 
-        {/* Search + Filter button (filters moved into modal like BuildingPanel) */}
-        <View style={styles.filtersBar}>
-          <View style={[styles.searchWrap, { flex: 1 }]}>
-            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-            <TextInput
-              style={styles.search}
-              placeholder="Search by ID, SN, tenant, building, status…"
-              placeholderTextColor="#9aa5b1"
-              value={query}
-              onChangeText={setQuery}
-            />
-          </View>
+        {/* Filters Modal (Status + Sort only; building chips live below search) */}
+        <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
+          <View style={styles.promptOverlay}>
+            <View style={styles.promptCard}>
+              <Text style={styles.modalTitle}>Filters & Sort</Text>
+              <View style={styles.modalDivider} />
 
-          <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
-            <Ionicons name="filter-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
-            <Text style={styles.btnGhostText}>Filters</Text>
-          </TouchableOpacity>
-        </View>
-
-        {busy ? (
-          <View style={styles.loader}>
-            <ActivityIndicator />
-          </View>
-        ) : (
-          <FlatList
-            data={sorted}
-            keyExtractor={(item) => item.stall_id}
-            style={{ flexGrow: 1, marginTop: 4 }}
-            contentContainerStyle={{ paddingBottom: 8 }}
-            nestedScrollEnabled
-            ListEmptyComponent={<Text style={styles.empty}>No stalls found.</Text>}
-            renderItem={({ item }) => (
-              <View style={styles.row}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle}>{item.stall_sn}</Text>
-                  <Text style={styles.rowSub}>
-                    {item.stall_id}  •  {item.stall_status}  •  {item.building_id}
-                  </Text>
-                  {item.tenant_id && <Text style={styles.rowSub}>Tenant: {item.tenant_id}</Text>}
-                </View>
-
-                <View style={styles.rowActions}>
-                  {canEdit && (
-                    <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openEdit(item)}>
-                      <Text style={styles.actionBtnGhostText}>Update</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {canDelete && (
-                    <TouchableOpacity style={styles.actionBtn} onPress={() => onDelete(item)}>
-                      <Text style={styles.actionBtnText}>Delete</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+              <Text style={styles.dropdownLabel}>Status</Text>
+              <View style={styles.chipsRow}>
+                {[
+                  { label: "All", value: "" },
+                  { label: "Available", value: "available" },
+                  { label: "Occupied", value: "occupied" },
+                  { label: "Under Maintenance", value: "under maintenance" },
+                ].map((opt) => (
+                  <Chip
+                    key={opt.value || "all"}
+                    label={opt.label}
+                    active={statusFilter === (opt.value as any)}
+                    onPress={() => setStatusFilter(opt.value as any)}
+                  />
+                ))}
               </View>
-            )}
-          />
-        )}
-      </View>
 
-      {/* FILTERS modal (Building + Status + Sort) */}
-      <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
-        <View style={styles.promptOverlay}>
-          <View style={styles.promptCard}>
-            <Text style={styles.modalTitle}>Filters & Sort</Text>
-            <View style={styles.modalDivider} />
+              <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Sort by</Text>
+              <View style={styles.chipsRow}>
+                <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
+                <Chip label="Oldest" active={sortMode === "oldest"} onPress={() => setSortMode("oldest")} />
+                <Chip label="ID ↑" active={sortMode === "idAsc"} onPress={() => setSortMode("idAsc")} />
+                <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
+              </View>
 
-            <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Building</Text>
-            <View style={styles.chipsRow}>
-              {[
-                { label: "All", value: "" },
-                ...(isAdmin
-                  ? buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))
-                  : userBuildingId
-                  ? [{ label: userBuildingId, value: userBuildingId }]
-                  : []),
-              ].map((opt) => (
-                <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />
-              ))}
-            </View>
-
-            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Status</Text>
-            <View style={styles.chipsRow}>
-              {[
-                { label: "All", value: "" },
-                { label: "Available", value: "available" },
-                { label: "Occupied", value: "occupied" },
-                { label: "Under Maintenance", value: "under maintenance" },
-              ].map((opt) => (
-                <Chip key={opt.value || "all"} label={opt.label} active={statusFilter === (opt.value as any)} onPress={() => setStatusFilter(opt.value as any)} />
-              ))}
-            </View>
-
-            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
-            <View style={styles.chipsRow}>
-              {[
-                { label: "Newest", val: "newest" },
-                { label: "Oldest", val: "oldest" },
-                { label: "ID ↑", val: "idAsc" },
-                { label: "ID ↓", val: "idDesc" },
-              ].map(({ label, val }) => (
-                <Chip key={val} label={label} active={sortMode === (val as any)} onPress={() => setSortMode(val as any)} />
-              ))}
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => {
-                  setQuery("");
-                  setBuildingFilter("");
-                  setStatusFilter("");
-                  setSortMode("newest");
-                  setFiltersVisible(false);
-                }}
-              >
-                <Text style={styles.btnGhostText}>Reset</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={() => setFiltersVisible(false)}>
-                <Text style={styles.btnText}>Apply</Text>
-              </TouchableOpacity>
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btn]} onPress={() => setFiltersVisible(false)}>
+                  <Text style={styles.btnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      {/* CREATE modal */}
-      <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <ModalShell
-            title="Create Stall"
-            footer={
-              <>
-                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
-                  <Text style={styles.btnGhostText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} disabled={submitting} onPress={onCreate}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create</Text>}
-                </TouchableOpacity>
-              </>
-            }
-          >
-            {/* Admins can select Building; operators are locked to their building */}
-            <View style={{ marginTop: 8, opacity: isAdmin ? 1 : 0.7 }}>
-              <Text style={styles.dropdownLabel}>Building</Text>
+        {/* Mobile Building Picker (for long lists) */}
+        <Modal
+          visible={buildingPickerVisible}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setBuildingPickerVisible(false)}
+        >
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Select Building</Text>
+              <View style={styles.modalDivider} />
               <View style={styles.pickerWrapper}>
                 <Picker
-                  enabled={isAdmin}
-                  selectedValue={isAdmin ? buildingId : userBuildingId || buildingId}
-                  onValueChange={(v) => setBuildingId(String(v))}
+                  selectedValue={buildingFilter}
+                  onValueChange={(v) => setBuildingFilter(String(v))}
                   style={styles.picker}
                 >
-                  {(isAdmin ? buildings : buildings.filter((b) => b.building_id === userBuildingId)).map((b) => (
-                    <Picker.Item key={b.building_id} label={`${b.building_name} (${b.building_id})`} value={b.building_id} />
+                  <Picker.Item label="All" value="" />
+                  {buildings.map((b) => (
+                    <Picker.Item key={b.building_id} label={b.building_name || b.building_id} value={b.building_id} />
                   ))}
                 </Picker>
               </View>
-            </View>
-
-            <View style={{ marginTop: 8 }}>
-              <Text style={styles.dropdownLabel}>Stall SN</Text>
-              <TextInput style={styles.input} placeholder="e.g. S-100" placeholderTextColor="#9aa5b1" value={stallSn} onChangeText={setStallSn} />
-            </View>
-
-            {/* --- Status (fixed) --- */}
-            <View style={{ marginTop: 8 }}>
-              <Text style={styles.dropdownLabel}>Status</Text>
-              <View style={[styles.chip, styles.chipActive]}>
-                <Text style={[styles.chipText, styles.chipTextActive]}>AVAILABLE</Text>
-              </View>
-              <Text style={{ color: "#94a3b8", marginTop: 4, fontSize: 12 }}>
-                New stalls are always created as AVAILABLE. You can assign a tenant later from Edit.
-              </Text>
-            </View>
-
-            {/* Tenant only if not available */}
-            {status !== "available" && (
-              <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>Tenant</Text>
-                <View style={styles.pickerWrapper}>
-                  <Picker selectedValue={tenantId} onValueChange={(v) => setTenantId(String(v))} style={styles.picker}>
-                    {tenantsForCreate.map((t) => (
-                      <Picker.Item key={t.tenant_id} label={`${t.tenant_name} (${t.tenant_id})`} value={t.tenant_id} />
-                    ))}
-                  </Picker>
-                </View>
-              </View>
-            )}
-          </ModalShell>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* EDIT modal */}
-      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <ModalShell
-            title="Edit Stall"
-            footer={
-              <>
-                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
-                  <Text style={styles.btnGhostText}>Cancel</Text>
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setBuildingPickerVisible(false)}>
+                  <Text style={styles.btnGhostTextAlt}>Close</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} disabled={submitting} onPress={onUpdate}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save</Text>}
+                <TouchableOpacity style={styles.btn} onPress={() => setBuildingPickerVisible(false)}>
+                  <Text style={styles.btnText}>Apply</Text>
                 </TouchableOpacity>
-              </>
-            }
-          >
-            {editStall && (
-              <>
-                {/* Building (admin can change; operator is locked) */}
-                <View style={{ marginTop: 8, opacity: isAdmin ? 1 : 0.7 }}>
-                  <Text style={styles.dropdownLabel}>Building</Text>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Create Modal */}
+        <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Create Stall</Text>
+              <View style={styles.modalDivider} />
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Building</Text>
                   <View style={styles.pickerWrapper}>
-                    <Picker
-                      enabled={isAdmin}
-                      selectedValue={isAdmin ? editStall.building_id : userBuildingId || editStall.building_id}
-                      onValueChange={(v) => setEditStall((s) => (s ? { ...s, building_id: String(v) } : s))}
-                      style={styles.picker}
-                    >
-                      {(isAdmin ? buildings : buildings.filter((b) => b.building_id === userBuildingId)).map((b) => (
-                        <Picker.Item key={b.building_id} label={`${b.building_name} (${b.building_id})`} value={b.building_id} />
+                    <Picker selectedValue={c_buildingId} onValueChange={(v) => setC_buildingId(String(v))} style={styles.picker}>
+                      {buildings.map((b) => (
+                        <Picker.Item key={b.building_id} label={b.building_name || b.building_id} value={b.building_id} />
                       ))}
                     </Picker>
                   </View>
                 </View>
 
-                <View style={{ marginTop: 8 }}>
-                  <Text style={styles.dropdownLabel}>Stall SN</Text>
-                  <TextInput style={styles.input} value={editStall.stall_sn} onChangeText={(v) => setEditStall((s) => (s ? { ...s, stall_sn: v } : s))} />
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Stall SN</Text>
+                  <TextInput
+                    value={c_stallSn}
+                    onChangeText={setC_stallSn}
+                    placeholder="e.g. STALL-A12"
+                    placeholderTextColor="#9aa5b1"
+                    style={styles.input}
+                  />
                 </View>
 
-                <View style={{ marginTop: 8 }}>
-                  <Text style={styles.dropdownLabel}>Status</Text>
-                  <View style={styles.pickerWrapper}>
-                    <Picker
-                      selectedValue={editStall.stall_status}
-                      onValueChange={(v) => setEditStall((s) => (s ? { ...s, stall_status: String(v) as any } : s))}
-                      style={styles.picker}
-                    >
-                      <Picker.Item label="Available" value="available" />
-                      <Picker.Item label="Occupied" value="occupied" />
-                      <Picker.Item label="Under Maintenance" value="under maintenance" />
-                    </Picker>
+                <Text style={styles.sectionTitle}>Status</Text>
+                <View style={styles.chipsRow}>
+                  <View style={[styles.chip, styles.chipActive]}>
+                    <Text style={[styles.chipText, styles.chipTextActive]}>AVAILABLE</Text>
                   </View>
                 </View>
+              </ScrollView>
 
-                {/* Tenant only if not available */}
-                {editStall.stall_status !== "available" && (
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={styles.dropdownLabel}>Tenant</Text>
-                    <View style={styles.pickerWrapper}>
-                      <Picker
-                        selectedValue={editStall.tenant_id || ""}
-                        onValueChange={(v) => setEditStall((s) => (s ? { ...s, tenant_id: String(v) } : s))}
-                        style={styles.picker}
-                      >
-                        {tenantsForEdit.map((t) => (
-                          <Picker.Item key={t.tenant_id} label={`${t.tenant_name} (${t.tenant_id})`} value={t.tenant_id} />
-                        ))}
-                      </Picker>
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
+                  <Text style={styles.btnGhostTextAlt}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
+                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Edit Modal */}
+        <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Edit Stall</Text>
+              <View style={styles.modalDivider} />
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+                {editStall && (
+                  <>
+                    <View style={styles.inputRow}>
+                      <Text style={styles.inputLabel}>Building</Text>
+                      <View style={styles.pickerWrapper}>
+                        <Picker
+                          selectedValue={editStall.building_id}
+                          onValueChange={(v) => setEditStall((s) => (s ? { ...s, building_id: String(v) } : s))}
+                          style={styles.picker}
+                        >
+                          {buildings.map((b) => (
+                            <Picker.Item key={b.building_id} label={b.building_name || b.building_id} value={b.building_id} />
+                          ))}
+                        </Picker>
+                      </View>
                     </View>
-                  </View>
+
+                    <View style={styles.inputRow}>
+                      <Text style={styles.inputLabel}>Stall SN</Text>
+                      <TextInput
+                        value={editStall.stall_sn}
+                        onChangeText={(v) => setEditStall((s) => (s ? { ...s, stall_sn: v } : s))}
+                        placeholder="e.g. STALL-A12"
+                        placeholderTextColor="#9aa5b1"
+                        style={styles.input}
+                      />
+                    </View>
+
+                    <View style={styles.inputRow}>
+                      <Text style={styles.inputLabel}>Status</Text>
+                      <View style={styles.pickerWrapper}>
+                        <Picker
+                          selectedValue={editStall.stall_status}
+                          onValueChange={(v) => setEditStall((s) => (s ? { ...s, stall_status: String(v) as any } : s))}
+                          style={styles.picker}
+                        >
+                          <Picker.Item label="Available" value="available" />
+                          <Picker.Item label="Occupied" value="occupied" />
+                          <Picker.Item label="Under Maintenance" value="under maintenance" />
+                        </Picker>
+                      </View>
+                    </View>
+
+                    {editStall.stall_status !== "available" && (
+                      <View style={styles.inputRow}>
+                        <Text style={styles.inputLabel}>Tenant</Text>
+                        <View style={styles.pickerWrapper}>
+                          <Picker
+                            selectedValue={editStall.tenant_id || ""}
+                            onValueChange={(v) => setEditStall((s) => (s ? { ...s, tenant_id: String(v) } : s))}
+                            style={styles.picker}
+                          >
+                            <Picker.Item label="-- select tenant --" value="" />
+                            {tenants
+                              .filter((t) => t.building_id === editStall.building_id)
+                              .map((t) => (
+                                <Picker.Item key={t.tenant_id} label={`${t.tenant_name} (${t.tenant_id})`} value={t.tenant_id} />
+                              ))}
+                          </Picker>
+                        </View>
+                      </View>
+                    )}
+                  </>
                 )}
-              </>
-            )}
-          </ModalShell>
-        </KeyboardAvoidingView>
-      </Modal>
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
+                  <Text style={styles.btnGhostTextAlt}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
+                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Save"}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      </View>
     </View>
   );
 }
 
-/* -------------------- styles (copied to match BuildingPanel) -------------------- */
+/** Styles — unified with BuildingPanel and optimized for mobile filter UX */
+const W = Dimensions.get("window").width;
 const styles = StyleSheet.create({
-  grid: { flex: 1, gap: 12 },
+  // NEW: make the page + grid + card flex containers so FlatList can occupy and scroll
+  page: {
+    flex: 1,
+    minHeight: 0,
+  },
+  grid: {
+    flex: 1,
+    padding: 14,
+    gap: 14,
+    minHeight: 0,
+  },
   card: {
     flex: 1,
     minHeight: 0,
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
+    borderRadius: 14,
+    padding: 14,
     ...(Platform.select({
-      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.05)" as any },
+      web: { boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)" } as any,
       default: { elevation: 2 },
     }) as any),
   },
@@ -686,173 +589,238 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 6,
+    marginBottom: 10,
   },
-  cardTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  btn: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
 
-  // top row: search + Filters button
+  // Toolbar
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginTop: 6,
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: "wrap",
   },
-
-  dropdownLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#486581",
-    marginBottom: 6,
-  },
-
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-
-  chip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#c7d2fe",
-    backgroundColor: "#eef2ff",
-  },
-  chipIdle: { backgroundColor: "#fff", borderColor: "#e2e8f0" },
-  chipActive: { backgroundColor: "#082cac", borderColor: "#082cac" },
-  chipText: { fontSize: 12 },
-  chipTextIdle: { color: "#082cac", fontWeight: "700" },
-  chipTextActive: { color: "#fff", fontWeight: "700" },
-
-  // search
   searchWrap: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
     borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 40,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8fafc",
   },
-  search: { flex: 1, fontSize: 14, color: "#0f172a" },
-
-  // list
-  row: {
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderColor: "#f1f5f9",
-    flexDirection: "row",
-    gap: 12,
+  search: {
+    flex: 1,
+    height: 40,
+    color: "#0f172a",
   },
-  rowTitle: { fontWeight: "700", color: "#102a43", fontSize: 14 },
-  rowSub: { color: "#708094", fontSize: 12, marginTop: 3 },
-  rowActions: { flexDirection: "row", gap: 8, alignItems: "center" },
-
-  // BuildingPanel-style action buttons
-  actionBtn: {
-    backgroundColor: "#082cac",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  actionBtnText: { color: "#fff", fontWeight: "700" },
-  actionBtnGhost: {
-    backgroundColor: "#edf2ff",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  actionBtnGhostText: { color: "#082cac", fontWeight: "700" },
-
-  // primary buttons
-  btn: {
-    backgroundColor: "#082cac",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  btnText: { color: "#fff", fontWeight: "700" },
   btnGhost: {
-    backgroundColor: "#f1f5f9",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#e2e8f0",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: "#cbd5e1",
-    paddingVertical: 8,
+  },
+  btnGhostText: { color: "#394e6a", fontWeight: "700" },
+
+  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
+
+  // Row (responsive like BuildingPanel)
+  row: {
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: "#fff",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  rowMobile: {
+    flexDirection: "column",
+    alignItems: "stretch",
+  },
+  rowMain: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  rowTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  rowSub: { color: "#64748b", fontWeight: "600" },
+  rowMeta: { color: "#334155", marginTop: 6 },
+  rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
+
+  // Actions
+  rowActions: {
+    width: 200,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  rowActionsMobile: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    justifyContent: "flex-start",
+    alignItems: "center",
+  },
+  actionBtn: {
+    height: 36,
     paddingHorizontal: 12,
     borderRadius: 10,
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
   },
-  btnGhostText: { color: "#394e6a", fontWeight: "700" },
-  btnDisabled: { opacity: 0.6 },
+  actionEdit: { backgroundColor: "#e2e8f0" },
+  actionDelete: { backgroundColor: "#ef4444" },
+  actionText: { fontWeight: "700" },
+  actionEditText: { color: "#1f2937" },
+  actionDeleteText: { color: "#fff" },
 
-  // empty + loader
-  empty: { textAlign: "center", color: "#94a3b8", paddingVertical: 30 },
-  loader: { padding: 18, alignItems: "center" },
+  // Empty state
+  emptyPad: { paddingVertical: 30 },
+  empty: { alignItems: "center", gap: 6 },
+  emptyTitle: { fontWeight: "800", color: "#0f172a" },
+  emptyText: { color: "#94a3b8" },
 
-  // picker + inputs
+  // Building filter header row (label + mobile "Select" button)
+  buildingHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  quickSelectBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#e0ecff",
+    borderColor: "#93c5fd",
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  quickSelectText: { color: "#1d4ed8", fontWeight: "800", letterSpacing: 0.3, fontSize: 12 },
+
+  // Chips (desktop/tablet wrap)
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  // Chips (mobile horizontal scroll)
+  chipsRowHorizontal: {
+    paddingRight: 4,
+    gap: 8,
+  },
+  chip: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f8fafc",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
+  chipIdle: {},
+  chipText: { fontWeight: "700" },
+  chipTextActive: { color: "#1d4ed8" },
+  chipTextIdle: { color: "#334155" },
+
+  // Modals
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.36)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 14,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    width: "100%",
+    maxWidth: 720,
+    padding: 14,
+    ...(Platform.select({
+      web: { boxShadow: "0 14px 44px rgba(15, 23, 42, 0.16)" } as any,
+      default: { elevation: 3 },
+    }) as any),
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
+  modalDivider: { height: 1, backgroundColor: "#e2e8f0", marginVertical: 10 },
+  modalActions: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  btnGhostAlt: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
+
+  inputRow: { marginBottom: 10 },
+  inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    height: 40,
+    paddingHorizontal: 10,
+    color: "#0f172a",
+  },
+  sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
+
   pickerWrapper: {
     borderWidth: 1,
-    borderColor: "#dbe2ea",
-    borderRadius: 8,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
     overflow: "hidden",
   },
   picker: { height: 40 },
 
-  input: {
-    borderWidth: 1,
-    borderColor: "#dbe2ea",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: "#f8fafc",
-    color: "#0f172a",
-  },
-
-  // Full modals
-  modalWrap: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.25)",
-    justifyContent: "center",
-    padding: 16,
-  },
-  modalCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    ...(Platform.select({
-      web: { boxShadow: "0 10px 30px rgba(0,0,0,0.07)" as any },
-      default: { elevation: 3 },
-    }) as any),
-    maxWidth: 560,
-    alignSelf: "center",
-    width: "100%",
-    maxHeight: 640,
-  },
-  modalTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
-  modalDivider: { height: 1, backgroundColor: "#eef2f7", marginBottom: 8 },
-  modalActions: { marginTop: 10, flexDirection: "row", gap: 8, justifyContent: "flex-end" },
-
-  // Filters prompt modal (small like BuildingPanel)
+  // Filter modal shell
   promptOverlay: {
     flex: 1,
-    backgroundColor: "rgba(16,42,67,0.25)",
-    justifyContent: "center",
+    backgroundColor: "rgba(15,23,42,0.36)",
     alignItems: "center",
-    padding: 16,
+    justifyContent: "center",
+    padding: 14,
   },
   promptCard: {
     backgroundColor: "#fff",
+    borderRadius: 14,
     width: "100%",
-    maxWidth: 520,
-    borderRadius: 12,
+    maxWidth: 560,
     padding: 14,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
     ...(Platform.select({
-      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any },
+      web: { boxShadow: "0 14px 44px rgba(15, 23, 42, 0.16)" } as any,
       default: { elevation: 3 },
     }) as any),
   },
+  dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
 });

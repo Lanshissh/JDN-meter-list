@@ -4,36 +4,39 @@ import {
   View,
   Text,
   StyleSheet,
-  TextInput,
-  TouchableOpacity,
   ActivityIndicator,
   Alert,
   FlatList,
-  Modal,
   Platform,
   KeyboardAvoidingView,
   ScrollView,
   Dimensions,
+  TouchableOpacity,
+  SafeAreaView,
+  TextInput,
+  useWindowDimensions,
 } from "react-native";
 import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 import { useAuth } from "../../contexts/AuthContext";
+import { Card, Button, Input, ModalSheet, tokens } from "../ui/ProUI";
 
-/** Types */
+/** ------------ Types ------------- */
 type Tenant = {
   tenant_id: string;
   tenant_sn: string;
   tenant_name: string;
   building_id: string;
-  bill_start: string; // YYYY-MM-DD
   tenant_status: "active" | "inactive";
-  last_updated: string;
-  updated_by: string;
+  vat_code: string | null;
+  wt_code: string | null;
+  for_penalty: boolean;
+  last_updated?: string;
+  updated_by?: string;
 };
 type Building = { building_id: string; building_name: string };
-
 type BuildingBaseRates = {
   building_id: string;
   erate_perKwH: number | null;
@@ -44,22 +47,6 @@ type BuildingBaseRates = {
   last_updated?: string;
   updated_by?: string;
 };
-
-type Rate = {
-  rate_id?: string;
-  tenant_id: string;
-  erate_perKwH: number | null;
-  e_vat: number | null;
-  emin_con: number | null;
-  wmin_con: number | null;
-  wrate_perCbM: number | null;
-  wnet_vat: number | null;
-  w_vat: number | null;
-  lrate_perKg: number | null;
-  last_updated?: string;
-  updated_by?: string;
-};
-
 type Stall = {
   stall_id: string;
   stall_sn: string;
@@ -69,28 +56,21 @@ type Stall = {
   last_updated?: string;
   updated_by?: string;
 };
+type VatRow = { tax_id: string | number; vat_code: string; vat_description?: string | null };
+type WtRow  = { wt_id: string; wt_code: string; wt_description?: string | null };
 
-/** Helpers */
+/** ------------ Utils ------------- */
 const cmp = (a: string | number, b: string | number) =>
-  String(a ?? "").localeCompare(String(b ?? ""), undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-
-const dateOf = (t: Tenant) =>
-  Date.parse(t.last_updated || t.bill_start || "") || 0;
-
-const today = () => new Date().toISOString().slice(0, 10);
+  String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
 
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
   try {
-    const part = token.split(".")[1];
-    const base64 = (part || "").replace(/-/g, "+").replace(/_/g, "/");
+    const part = token.split(".")[1] || "";
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
     const padLen = (4 - (base64.length % 4)) % 4;
     const padded = base64 + "=".repeat(padLen);
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
     let str = "";
     for (let i = 0; i < padded.length; i += 4) {
       const c1 = chars.indexOf(padded[i]);
@@ -98,286 +78,214 @@ function decodeJwtPayload(token: string | null): any | null {
       const c3 = chars.indexOf(padded[i + 2]);
       const c4 = chars.indexOf(padded[i + 3]);
       const n = (c1 << 18) | (c2 << 12) | ((c3 & 63) << 6) | (c4 & 63);
-      const b1 = (n >> 16) & 255,
-        b2 = (n >> 8) & 255,
-        b3 = n & 255;
+      const b1 = (n >> 16) & 255, b2 = (n >> 8) & 255, b3 = n & 255;
       if (c3 === 64) str += String.fromCharCode(b1);
       else if (c4 === 64) str += String.fromCharCode(b1, b2);
       else str += String.fromCharCode(b1, b2, b3);
     }
     const json = decodeURIComponent(
-      str
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join(""),
+      str.split("").map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)).join("")
     );
     return JSON.parse(json);
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function notify(title: string, message?: string) {
-  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert)
     window.alert(message ? `${title}\n\n${message}` : title);
-  } else {
-    Alert.alert(title, message);
-  }
+  else Alert.alert(title, message);
 }
-
 function errorText(err: any, fallback = "Server error.") {
   const d = err?.response?.data;
   if (typeof d === "string") return d;
   if (d?.error) return String(d.error);
   if (d?.message) return String(d.message);
   if (err?.message) return String(err.message);
-  try {
-    return JSON.stringify(d ?? err);
-  } catch {
-    return fallback;
-  }
+  try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
+const fmt = (n: number | null | undefined, unit?: string) => {
+  if (n == null || !isFinite(Number(n))) return "—";
+  const out = Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    .format(Number(n));
+  return unit ? `${out} ${unit}` : out;
+};
 
-function confirm(title: string, message: string): Promise<boolean> {
-  if (Platform.OS === "web" && typeof window !== "undefined") {
-    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
-  }
-  return new Promise((resolve) => {
-    Alert.alert(title, message, [
-      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-      { text: "OK", onPress: () => resolve(true) },
-    ]);
-  });
-}
+/** Heights for modal sheet inner scrollers */
+const H = Dimensions.get("window").height;
+const FOOTER_H = 68, HEADER_H = 56, V_MARGIN = 24;
+const MOBILE_MODAL_MAX_HEIGHT = Math.round(H - (FOOTER_H + HEADER_H + V_MARGIN));
 
-/** ---------- Chip helper (copied from StallsPanel) ---------- */
-function Chip({
-  label,
-  active,
-  onPress,
+/** Local Chip (matches StallsPanel look) */
+const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
+  <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
+    <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+  </TouchableOpacity>
+);
+
+/** Styled Picker for sheets */
+function PickerField({
+  label, value, onChange, children, placeholder, disabled,
 }: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
+  label: string; value: string; onChange: (v: string) => void;
+  children: React.ReactNode; placeholder?: string; disabled?: boolean;
 }) {
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
-    >
-      <Text
-        style={[
-          styles.chipText,
-          active ? styles.chipTextActive : styles.chipTextIdle,
-        ]}
-      >
-        {label}
-      </Text>
-    </TouchableOpacity>
+    <View style={{ marginBottom: 10 }}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={[styles.pickerShell, disabled && { opacity: 0.6 }]}>
+        <Picker
+          enabled={!disabled}
+          selectedValue={value}
+          onValueChange={(v) => onChange(String(v))}
+          mode={Platform.OS === "android" ? "dropdown" : undefined}
+          dropdownIconColor={tokens.color.ink}
+          style={styles.pickerNative}
+          itemStyle={styles.pickerItemIOS}
+          prompt={label}
+        >
+          {placeholder ? <Picker.Item label={placeholder} value="" /> : null}
+          {children}
+        </Picker>
+        <Ionicons name="chevron-down" size={16} color={tokens.color.ink} style={styles.pickerIcon} />
+      </View>
+    </View>
   );
 }
 
-/** Component */
-const MOBILE_MODAL_MAX_HEIGHT = Math.round(
-  Dimensions.get("window").height * 0.92,
-);
-
+/** ------------ Component ------------- */
 export default function TenantsPanel({ token }: { token: string | null }) {
   const { token: ctxToken } = useAuth();
   const mergedToken = token || ctxToken || null;
   const jwt = useMemo(() => decodeJwtPayload(mergedToken), [mergedToken]);
   const isAdmin = String(jwt?.user_level || "").toLowerCase() === "admin";
   const userBuildingId = String(jwt?.building_id || "");
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
 
-  const authHeader = useMemo(
-    () => ({ Authorization: `Bearer ${mergedToken ?? ""}` }),
-    [mergedToken],
-  );
-  const api = useMemo(
-    () =>
-      axios.create({
-        baseURL: BASE_API,
-        headers: authHeader,
-        timeout: 15000,
-      }),
-    [authHeader],
-  );
+  const authHeader = useMemo(() => ({ Authorization: `Bearer ${mergedToken ?? ""}` }), [mergedToken]);
+  const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
 
-  // Filters & state
-  const [buildingFilter, setBuildingFilter] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">(
-    "",
-  );
+  // data
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-  const [query, setQuery] = useState("");
+  const [vatCodes, setVatCodes] = useState<VatRow[]>([]);
+  const [wtCodes, setWtCodes] = useState<WtRow[]>([]);
 
+  // list filters (copied from StallsPanel UX)
+  const [query, setQuery] = useState("");
+  const [buildingFilter, setBuildingFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
-
-  // Filters modal (same behavior as StallsPanel)
   const [filtersVisible, setFiltersVisible] = useState(false);
 
-  // Details modal compound state
+  // mobile building picker
+  const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
+
+  // Quick Edit modal sheet
   const [detailsVisible, setDetailsVisible] = useState(false);
   const [detailsTenant, setDetailsTenant] = useState<Tenant | null>(null);
-  const [bRates, setBRates] = useState<BuildingBaseRates | null>(null);
-  const [tRate, setTRate] = useState<Rate | null>(null);
-  const [tRateDraft, setTRateDraft] = useState<Rate | null>(null);
   const [tenantDraft, setTenantDraft] = useState<Tenant | null>(null);
+  const [bRates, setBRates] = useState<BuildingBaseRates | null>(null);
   const [tenantStalls, setTenantStalls] = useState<Stall[]>([]);
   const [stallsBusy, setStallsBusy] = useState(false);
 
-  // ---------- CREATE TENANT ----------
+  // Create Tenant sheet
   const [createVisible, setCreateVisible] = useState(false);
-  const [cSN, setCSN] = useState("");
-  const [cName, setCName] = useState("");
-  const [cBillStart, setCBillStart] = useState(today());
+  const [cBuildingId, setCBuildingId] = useState<string>("");
+  const [cTenantSn, setCTenantSn] = useState<string>("");
+  const [cTenantName, setCTenantName] = useState<string>("");
   const [cStatus, setCStatus] = useState<"active" | "inactive">("active");
-  const [cBuildingId, setCBuildingId] = useState("");
+  const [cPenalty, setCPenalty] = useState<boolean>(false);
+  const [cVat, setCVat] = useState<string>("");
+  const [cWt, setCWt] = useState<string>("");
 
-  useEffect(() => {
-    loadAll();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mergedToken, statusFilter]);
-
+  /** load data */
+  useEffect(() => { loadAll(); /* eslint-disable react-hooks/exhaustive-deps */ }, [mergedToken, statusFilter]);
   const loadAll = async () => {
-    if (!mergedToken) {
-      setBusy(false);
-      notify("Not logged in", "Please log in to view tenants.");
-      return;
-    }
+    if (!mergedToken) { setBusy(false); notify("Not logged in", "Please log in to view tenants."); return; }
     try {
       setBusy(true);
+
       const params: any = {};
       if (statusFilter) params.status = statusFilter;
       const tRes = await api.get<Tenant[]>("/tenants", { params });
-      setTenants(tRes.data || []);
+      setTenants((tRes.data || []).map((t: any) => ({
+        ...t,
+        vat_code: t.vat_code ?? null,
+        wt_code: t.wt_code ?? null,
+        for_penalty: !!t.for_penalty,
+      })));
 
-      let bData: Building[] = [];
-      if (isAdmin) {
-        const bRes = await api.get<Building[]>("/buildings");
-        bData = bRes.data || [];
-        setBuildings(bData);
-      } else {
-        setBuildings([]);
-      }
+      try { const bRes = await api.get<Building[]>("/buildings"); setBuildings(bRes.data || []); }
+      catch { setBuildings([]); }
 
-      setBuildingFilter((prev) => {
-        if (prev) return prev;
-        if (!isAdmin && userBuildingId) return userBuildingId;
-        return bData?.[0]?.building_id ?? "";
-      });
+      setBuildingFilter((prev) => prev || (!isAdmin && userBuildingId) || "");
+      setCBuildingId((!isAdmin && userBuildingId) || "");
 
-      // default create building if empty
-      setCBuildingId((prev) => {
-        if (prev) return prev;
-        if (!isAdmin && userBuildingId) return userBuildingId;
-        return bData?.[0]?.building_id ?? "";
-      });
+      try {
+        const [vRes, wRes] = await Promise.all([api.get<VatRow[]>("/vat"), api.get<WtRow[]>("/wt")]);
+        setVatCodes(vRes.data || []); setWtCodes(wRes.data || []);
+      } catch { setVatCodes([]); setWtCodes([]); }
     } catch (err: any) {
       notify("Load failed", errorText(err, "Connection error."));
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
 
-  /** Derived lists */
+  /** derived list (like StallsPanel) */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = tenants;
-    if (buildingFilter)
-      list = list.filter((t) => t.building_id === buildingFilter);
-    if (statusFilter)
-      list = list.filter((t) => t.tenant_status === statusFilter);
+    if (buildingFilter) list = list.filter((t) => t.building_id === buildingFilter);
+    if (statusFilter) list = list.filter((t) => t.tenant_status === statusFilter);
     if (!q) return list;
     return list.filter((t) =>
-      [
-        t.tenant_id,
-        t.tenant_sn,
-        t.tenant_name,
-        t.building_id,
-        t.bill_start,
-        t.tenant_status,
-      ]
+      [t.tenant_id, t.tenant_sn, t.tenant_name, t.building_id, t.tenant_status, t.vat_code ?? "", t.wt_code ?? ""]
         .map((v) => String(v).toLowerCase())
-        .some((v) => v.includes(q)),
+        .some((v) => v.includes(q))
     );
   }, [tenants, query, buildingFilter, statusFilter]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
+    const dateOf = (t: Tenant) => Date.parse(t.last_updated || "") || 0;
     switch (sortMode) {
-      case "newest":
-        return arr.sort((a, b) => dateOf(b) - dateOf(a));
-      case "oldest":
-        return arr.sort((a, b) => dateOf(a) - dateOf(b));
-      case "idAsc":
-        return arr.sort((a, b) => cmp(a.tenant_id, b.tenant_id));
-      case "idDesc":
-        return arr.sort((a, b) => cmp(b.tenant_id, a.tenant_id));
-      default:
-        return arr;
+      case "newest": return arr.sort((a, b) => dateOf(b) - dateOf(a));
+      case "oldest": return arr.sort((a, b) => dateOf(a) - dateOf(b));
+      case "idAsc":  return arr.sort((a, b) => cmp(a.tenant_id, b.tenant_id));
+      case "idDesc": return arr.sort((a, b) => cmp(b.tenant_id, a.tenant_id));
+      default: return arr;
     }
   }, [filtered, sortMode]);
 
-  /** Open details */
+  /** helpers */
+  const buildingName = (id: string) => {
+    const b = buildings.find((x) => x.building_id === id);
+    return b ? `${b.building_name} (${b.building_id})` : id;
+  };
+
+  /** quick-edit open / save / delete */
   const openDetails = async (row: Tenant) => {
     setDetailsTenant(row);
     setTenantDraft({ ...row });
     setBRates(null);
-    setTRate(null);
-    setTRateDraft(null);
     setTenantStalls([]);
     setDetailsVisible(true);
 
     try {
-      const bRes = await api.get<BuildingBaseRates>(
-        `/buildings/${encodeURIComponent(row.building_id)}/base-rates`,
-      );
+      const bRes = await api.get<BuildingBaseRates>(`/buildings/${encodeURIComponent(row.building_id)}/base-rates`);
       setBRates(bRes.data);
-    } catch {
-      setBRates(null);
-    }
-
-    try {
-      const rRes = await api.get<Rate>(
-        `/rates/buildings/${encodeURIComponent(row.building_id)}/tenants/${encodeURIComponent(row.tenant_id)}`,
-      );
-      setTRate(rRes.data);
-      setTRateDraft(rRes.data);
-    } catch {
-      setTRate(null);
-      setTRateDraft({
-        tenant_id: row.tenant_id,
-        erate_perKwH: null,
-        e_vat: null,
-        emin_con: null,
-        wmin_con: null,
-        wrate_perCbM: null,
-        wnet_vat: null,
-        w_vat: null,
-        lrate_perKg: null,
-      });
-    }
+    } catch { setBRates(null); }
 
     try {
       setStallsBusy(true);
       const sRes = await api.get<Stall[]>(`/stalls`);
-      const mine = (sRes.data || []).filter(
-        (s) => s.tenant_id === row.tenant_id,
-      );
-      setTenantStalls(mine);
-    } catch {
-      setTenantStalls([]);
-    } finally {
-      setStallsBusy(false);
-    }
+      setTenantStalls((sRes.data || []).filter((s) => s.tenant_id === row.tenant_id));
+    } catch { setTenantStalls([]); } finally { setStallsBusy(false); }
   };
 
-  /** Save tenant panel */
   const saveTenant = async () => {
     if (!tenantDraft) return;
     try {
@@ -385,12 +293,14 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       await api.put(`/tenants/${encodeURIComponent(tenantDraft.tenant_id)}`, {
         tenant_sn: tenantDraft.tenant_sn,
         tenant_name: tenantDraft.tenant_name,
-        building_id: tenantDraft.building_id,
-        bill_start: tenantDraft.bill_start,
         tenant_status: tenantDraft.tenant_status,
+        vat_code: tenantDraft.vat_code ?? null,
+        wt_code: tenantDraft.wt_code ?? null,
+        for_penalty: !!tenantDraft.for_penalty,
       });
-      notify("Updated", "Tenant updated successfully.");
+      notify("Saved", "Tenant updated.");
       await loadAll();
+      setDetailsVisible(false);
     } catch (err) {
       notify("Update failed", errorText(err));
     } finally {
@@ -398,35 +308,29 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     }
   };
 
-  /** Save tenant rate panel */
-  const saveRate = async () => {
-    if (!detailsTenant || !tRateDraft) return;
-    try {
-      setSubmitting(true);
-      const path = `/rates/buildings/${encodeURIComponent(detailsTenant.building_id)}/tenants/${encodeURIComponent(detailsTenant.tenant_id)}`;
-      const body = { ...tRateDraft } as any;
-      delete body.rate_id;
-      delete body.last_updated;
-      delete body.updated_by;
-      await api.put(path, body);
-      notify("Saved", "Tenant rate saved.");
-      const rRes = await api.get<Rate>(path);
-      setTRate(rRes.data);
-      setTRateDraft(rRes.data);
-    } catch (err) {
-      notify("Save failed", errorText(err));
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const deleteTenant = async (t: Tenant) => {
+    const go = async () => {
+      try {
+        setSubmitting(true);
+        await api.delete(`/tenants/${encodeURIComponent(t.tenant_id)}`);
+        notify("Deleted", `Tenant ${t.tenant_name} removed.`);
+        setDetailsVisible(false);
+        await loadAll();
+      } catch (err) {
+        notify("Delete failed", errorText(err, "Unable to delete tenant."));
+      } finally {
+        setSubmitting(false);
+      }
+    };
 
-  /** Stalls editing */
-  const updateStallRow = (idx: number, patch: Partial<Stall>) => {
-    setTenantStalls((prev) => {
-      const arr = [...prev];
-      arr[idx] = { ...prev[idx], ...patch } as Stall;
-      return arr;
-    });
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      if (window.confirm(`Delete ${t.tenant_name} (${t.tenant_id})?`)) go();
+    } else {
+      Alert.alert("Confirm delete", `Delete ${t.tenant_name}?`, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: go },
+      ]);
+    }
   };
 
   const saveStall = async (s: Stall) => {
@@ -444,13 +348,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
-
   const unassignStall = async (s: Stall) => {
-    const ok = await confirm(
-      "Unassign stall",
-      `Remove ${s.stall_id} from this tenant?`,
-    );
-    if (!ok) return;
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      if (!window.confirm(`Remove ${s.stall_id} from this tenant?`)) return;
+    }
     try {
       setSubmitting(true);
       await api.put(`/stalls/${encodeURIComponent(s.stall_id)}`, {
@@ -467,732 +368,644 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     }
   };
 
-  /** Modal UI shell (details modal) */
-  const ModalCard: React.FC<{ title: string; children?: React.ReactNode; onClose: () => void }>
-    = ({ title, children, onClose }) => (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
-      style={styles.modalWrap}
-    >
-      {/* Render zoom wrapper ONLY on web */}
-      {Platform.OS === "web" ? (
-        <View style={styles.webZoom80}>
-          <View style={[styles.modalCard]}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle} numberOfLines={1} ellipsizeMode="tail">
-                {title}
-              </Text>
-            </View>
-            <View style={styles.modalDivider} />
-
-            <View style={{ flexGrow: 1, flexShrink: 1 }}>
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 14 }}>
-                {children}
-              </ScrollView>
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={onClose}>
-                <Text style={[styles.btnText, styles.actionBtnGhostText]}>Close</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, submitting && styles.btnDisabled]}
-                onPress={async () => { await saveTenant(); await saveRate(); }}
-                disabled={submitting}
-              >
-                <Text style={styles.btnText}>{submitting ? "Saving…" : "Save All"}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      ) : (
-        <View style={[styles.modalCard, { maxHeight: MOBILE_MODAL_MAX_HEIGHT }]}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitle} numberOfLines={1} ellipsizeMode="tail">
-              {title}
-            </Text>
-          </View>
-          <View style={styles.modalDivider} />
-
-          <View style={{ flexGrow: 1, flexShrink: 1 }}>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 14 }}>
-              {children}
-            </ScrollView>
-          </View>
-
-          <View style={styles.modalActions}>
-            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={onClose}>
-              <Text style={[styles.btnText, styles.actionBtnGhostText]}>Close</Text>
+  /** ---------- UI (copied structure from StallsPanel) ---------- */
+  return (
+    <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.page}>
+      <View style={styles.grid}>
+        <View style={styles.card}>
+          {/* Header */}
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Tenants</Text>
+            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+              <Text style={styles.btnText}>+ Create Tenant</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.actionBtn, submitting && styles.btnDisabled]}
-              onPress={async () => { await saveTenant(); await saveRate(); }}
+          </View>
+
+          {/* Toolbar: Search + Filters button */}
+          <View style={styles.filtersBar}>
+            <View style={[styles.searchWrap, { flex: 1 }]}>
+              <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search by ID, SN, name, VAT/WT…"
+                placeholderTextColor="#9aa5b1"
+                style={styles.search}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
+              <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+              <Text style={styles.btnGhostText}>Filters</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Building filter (chips below search) + mobile quick select */}
+          <View style={{ marginTop: 6, marginBottom: 15 }}>
+            <View style={styles.buildingHeaderRow}>
+              <Text style={styles.dropdownLabel}>Building</Text>
+            </View>
+
+            {isMobile ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRowHorizontal}>
+                <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+                {(isAdmin ? buildings : buildings.filter((b) => b.building_id === userBuildingId))
+                  .slice()
+                  .sort((a, b) => a.building_name.localeCompare(b.building_name))
+                  .map((b) => (
+                    <Chip
+                      key={b.building_id}
+                      label={b.building_name || b.building_id}
+                      active={buildingFilter === b.building_id}
+                      onPress={() => setBuildingFilter(b.building_id)}
+                    />
+                  ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.chipsRow}>
+                <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+                {(isAdmin ? buildings : buildings.filter((b) => b.building_id === userBuildingId))
+                  .slice()
+                  .sort((a, b) => a.building_name.localeCompare(b.building_name))
+                  .map((b) => (
+                    <Chip
+                      key={b.building_id}
+                      label={b.building_name || b.building_id}
+                      active={buildingFilter === b.building_id}
+                      onPress={() => setBuildingFilter(b.building_id)}
+                    />
+                  ))}
+              </View>
+            )}
+          </View>
+
+          {/* LIST — FlatList is the ONLY vertical scroller */}
+          {busy ? (
+            <View style={styles.loader}><ActivityIndicator /></View>
+          ) : (
+            <FlatList
+              data={sorted}
+              keyExtractor={(item) => item.tenant_id}
+              style={{ flex: 1 }}
+              contentContainerStyle={sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }}
+              ListEmptyComponent={<Text style={styles.empty}>No tenants found.</Text>}
+              renderItem={({ item }) => (
+                <View style={[styles.row, isMobile && styles.rowMobile]}>
+                  {/* Main details */}
+                  <View style={styles.rowMain}>
+                    <Text style={styles.rowTitle}>
+                      {item.tenant_name} <Text style={styles.rowSub}>({item.tenant_id})</Text>
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      SN: {item.tenant_sn || "—"} · {buildingName(item.building_id)}
+                    </Text>
+                    <Text style={styles.rowMetaSmall}>
+                      Status: {item.tenant_status.toUpperCase()} · VAT: {item.vat_code || "—"} · WT: {item.wt_code || "—"} · Penalty: {item.for_penalty ? "Yes" : "No"}
+                    </Text>
+                  </View>
+
+                  {/* Actions (desktop right; mobile below) */}
+                  {isMobile ? (
+                    <View style={styles.rowActionsMobile}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openDetails(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => deleteTenant(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.rowActions}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openDetails(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => deleteTenant(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+            />
+          )}
+        </View>
+      </View>
+
+      {/* FILTERS modal (status + sort; building chips live under search) */}
+      <ModalSheet
+        visible={filtersVisible}
+        title="Filters & Sort"
+        onClose={() => setFiltersVisible(false)}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onPress={() => { setQuery(""); setStatusFilter(""); setSortMode("newest"); }}
+            >
+              Reset
+            </Button>
+            <Button onPress={() => setFiltersVisible(false)}>Apply</Button>
+          </>
+        }
+      >
+        <Text style={styles.dropdownLabel}>Status</Text>
+        <View style={styles.chipsRow}>
+          <Chip label="All" active={statusFilter === ""} onPress={() => setStatusFilter("")} />
+          <Chip label="Active" active={statusFilter === "active"} onPress={() => setStatusFilter("active")} />
+          <Chip label="Inactive" active={statusFilter === "inactive"} onPress={() => setStatusFilter("inactive")} />
+        </View>
+
+        <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
+        <View style={styles.chipsRow}>
+          <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
+          <Chip label="Oldest" active={sortMode === "oldest"} onPress={() => setSortMode("oldest")} />
+          <Chip label="ID ↑"   active={sortMode === "idAsc"}  onPress={() => setSortMode("idAsc")} />
+          <Chip label="ID ↓"   active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
+        </View>
+      </ModalSheet>
+
+      {/* MOBILE building picker (user-friendly for long building lists) */}
+      <ModalSheet
+        visible={buildingPickerVisible}
+        title="Select Building"
+        onClose={() => setBuildingPickerVisible(false)}
+        footer={<Button onPress={() => setBuildingPickerVisible(false)}>Done</Button>}
+      >
+        <View style={styles.pickerShell}>
+          <Picker
+            selectedValue={buildingFilter}
+            onValueChange={(v) => setBuildingFilter(String(v))}
+            mode={Platform.OS === "android" ? "dropdown" : undefined}
+            dropdownIconColor={tokens.color.ink}
+            style={styles.pickerNative}
+            itemStyle={styles.pickerItemIOS}
+          >
+            <Picker.Item label="All" value="" />
+            {(isAdmin ? buildings : buildings.filter((b) => b.building_id === userBuildingId))
+              .map((b) => (
+                <Picker.Item key={b.building_id} label={`${b.building_name} (${b.building_id})`} value={b.building_id} />
+              ))}
+          </Picker>
+          <Ionicons name="chevron-down" size={16} color={tokens.color.ink} style={styles.pickerIcon} />
+        </View>
+      </ModalSheet>
+
+      {/* QUICK EDIT SHEET */}
+      <ModalSheet
+        visible={detailsVisible}
+        title={detailsTenant ? `Quick Edit • ${detailsTenant.tenant_name}` : "Quick Edit"}
+        onClose={() => setDetailsVisible(false)}
+        footer={
+          <>
+            <Button
+              variant="danger"
+              icon="trash-outline"
+              onPress={() => detailsTenant && deleteTenant(detailsTenant)}
               disabled={submitting}
             >
-              <Text style={styles.btnText}>{submitting ? "Saving…" : "Save All"}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-    </KeyboardAvoidingView>
-  );
-
-  const ReadOnlyKV: React.FC<{ label: string; value: any }> = ({ label, value }) => (
-    <View style={styles.kvRow}>
-      <Text style={styles.kvLabel}>{label}</Text>
-      <Text style={styles.kvValue}>
-        {value === null || value === undefined || value === "" ? "—" : String(value)}
-      </Text>
-    </View>
-  );
-
-  // ---------- Create handler ----------
-  const onCreateTenant = async () => {
-    const finalBldg = isAdmin ? cBuildingId : (userBuildingId || cBuildingId);
-    if (!cSN || !cName || !finalBldg || !cBillStart) {
-      notify("Missing info", "Please fill in all fields.");
-      return;
-    }
-    try {
-      setSubmitting(true);
-      await api.post("/tenants", {
-        tenant_sn: cSN,
-        tenant_name: cName,
-        building_id: finalBldg,
-        bill_start: cBillStart,
-        tenant_status: cStatus,
-      });
-      setCreateVisible(false);
-      setCSN(""); setCName(""); setCBillStart(today()); setCStatus("active");
-      await loadAll();
-      notify("Success", "Tenant created.");
-    } catch (err) {
-      notify("Create failed", errorText(err));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <View style={styles.card}>
-      {/* Header */}
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>Tenants</Text>
-
-        {/* Create button */}
-        <TouchableOpacity
-          onPress={() => {
-            setCBillStart(today());   // ⟵ force to current date every time
-            setCreateVisible(true);
-          }}
-          style={styles.btn}
-        >
-          <Text style={styles.btnText}>+ Create Tenant</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Top bar: search + Filters button */}
-      <View style={styles.filtersBar}>
-        <View style={[styles.searchWrap, { flex: 1 }]}>
-          <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search by ID, SN, name, status…"
-            placeholderTextColor="#9aa5b1"
-            style={styles.search}
-          />
-        </View>
-
-        <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
-          <Ionicons name="filter-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
-          <Text style={styles.btnGhostText}>Filters</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* List */}
-      {busy ? (
-        <View style={styles.loader}><ActivityIndicator /></View>
-      ) : (
-        <FlatList
-          data={sorted}
-          keyExtractor={(t) => t.tenant_id}
-          style={{ flexGrow: 1, marginTop: 4 }}
-          contentContainerStyle={{ paddingBottom: 8 }}
-          nestedScrollEnabled
-          ListEmptyComponent={<Text style={styles.empty}>No tenants found.</Text>}
-          renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => openDetails(item)} style={styles.listRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{item.tenant_name} • {item.tenant_id}</Text>
-                <Text style={styles.rowSub}>
-                  SN: {item.tenant_sn} • Building: {item.building_id} • Date Created: {item.bill_start} • {item.tenant_status}
-                </Text>
-              </View>
-              <View style={styles.badge}><Text style={styles.badgeText}>View</Text></View>
-            </TouchableOpacity>
-          )}
-        />
-      )}
-
-      {/* FILTERS modal */}
-      <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
-        <View style={styles.promptOverlay}>
-          <View style={styles.promptCard}>
-            <Text style={styles.modalTitle}>Filters & Sort</Text>
-            <View style={styles.modalDivider} />
-
-            <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Building</Text>
-            <View style={styles.chipsRow}>
-              {[
-                { label: "All", value: "" },
-                ...(isAdmin
-                  ? buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))
-                  : userBuildingId
-                  ? [{ label: userBuildingId, value: userBuildingId }]
-                  : []),
-              ].map((opt) => (
-                <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value}
-                  onPress={() => setBuildingFilter(opt.value)} />
-              ))}
-            </View>
-
-            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Status</Text>
-            <View style={styles.chipsRow}>
-              {[
-                { label: "All", value: "" },
-                { label: "Active", value: "active" },
-                { label: "Inactive", value: "inactive" },
-              ].map((opt) => (
-                <Chip key={opt.value || "all"} label={opt.label} active={statusFilter === (opt.value as any)}
-                  onPress={() => setStatusFilter(opt.value as any)} />
-              ))}
-            </View>
-
-            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
-            <View style={styles.chipsRow}>
-              {[
-                { label: "Newest", val: "newest" },
-                { label: "Oldest", val: "oldest" },
-                { label: "ID ↑", val: "idAsc" },
-                { label: "ID ↓", val: "idDesc" },
-              ].map(({ label, val }) => (
-                <Chip key={val} label={label} active={sortMode === (val as any)}
-                  onPress={() => setSortMode(val as any)} />
-              ))}
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnGhost]}
-                onPress={() => { setQuery(""); setBuildingFilter(""); setStatusFilter(""); setSortMode("newest"); setFiltersVisible(false); }}
-              >
-                <Text style={styles.btnGhostText}>Reset</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={() => setFiltersVisible(false)}>
-                <Text style={styles.btnText}>Apply</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* CREATE TENANT modal (WIDE on web, now FULL-WIDTH on mobile) */}
-      <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView
-          behavior={Platform.select({ ios: "padding", android: "height" })}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
-          style={styles.modalWrap}
-        >
-          {/* No webZoom wrapper so width isn't shrunk on web */}
-          <View>
-            <View style={[styles.modalCard, styles.modalCardWide]}>
-              <Text style={styles.modalTitle}>Create Tenant</Text>
-              <View style={styles.modalDivider} />
-
-              <View style={{ flexShrink: 1 }}>
-                <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
-                  <Text style={styles.inputLabel}>Tenant SN</Text>
-                  <TextInput style={styles.input} value={cSN} onChangeText={setCSN} placeholder="e.g. T-000123" placeholderTextColor="#9aa5b1" autoCapitalize="characters" />
-
-                  <Text style={styles.inputLabel}>Tenant name</Text>
-                  <TextInput style={styles.input} value={cName} onChangeText={setCName} placeholder="Tenant full name" placeholderTextColor="#9aa5b1" />
-
-                  <Text style={styles.inputLabel}>Building</Text>
-                  <View style={styles.dropdownBox}>
-                    <Picker
-                      enabled={isAdmin || !!userBuildingId}
-                      selectedValue={isAdmin ? cBuildingId : (userBuildingId || cBuildingId)}
-                      onValueChange={(v) => setCBuildingId(String(v))}
-                      style={styles.dropdown}
-                    >
-                      {(isAdmin
-                        ? buildings.map((b) => ({ label: `${b.building_name} (${b.building_id})`, value: b.building_id }))
-                        : userBuildingId
-                        ? [{ label: userBuildingId, value: userBuildingId }]
-                        : []
-                      ).map((opt) => (
-                        <Picker.Item key={opt.value} label={opt.label} value={opt.value} />
-                      ))}
-                    </Picker>
-                  </View>
-
-                  {/* Bill Start (auto) - READ ONLY */}
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={styles.dropdownLabel}>Date Created</Text>
-                    <View style={styles.readonlyField}>
-                      <Text style={styles.readonlyText}>{cBillStart}</Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.inputLabel}>Status</Text>
-                  <View style={styles.dropdownBox}>
-                    <Picker selectedValue={cStatus} onValueChange={(v) => setCStatus((v || "active") as "active" | "inactive")} style={styles.dropdown}>
-                      <Picker.Item label="Active" value="active" />
-                      <Picker.Item label="Inactive" value="inactive" />
-                    </Picker>
-                  </View>
-                </ScrollView>
-              </View>
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => setCreateVisible(false)}>
-                  <Text style={[styles.btnText, styles.actionBtnGhostText]}>Close</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionBtn, submitting && styles.btnDisabled]} onPress={onCreateTenant} disabled={submitting}>
-                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* DETAILS modal */}
-      <Modal visible={detailsVisible} animationType="fade" transparent onRequestClose={() => setDetailsVisible(false)}>
-        <ModalCard
-          title={`Tenant Details${detailsTenant ? ` · ${detailsTenant.tenant_name}` : ""}`}
-          onClose={() => setDetailsVisible(false)}
-        >
-          {/* GRID */}
-          <View style={styles.gridWrap}>
-            {/* Tenant (editable) */}
-            <View style={[styles.gridItem, styles.gridSpan2]}>
-              <Text style={styles.sectionTitle}>Tenant</Text>
-              {tenantDraft ? (
-                <View>
-                  <Text style={styles.inputLabel}>Tenant SN</Text>
-                  <TextInput style={styles.input} value={tenantDraft.tenant_sn} onChangeText={(v) => setTenantDraft({ ...tenantDraft, tenant_sn: v })} />
-
-                  <Text style={styles.inputLabel}>Tenant name</Text>
-                  <TextInput style={styles.input} value={tenantDraft.tenant_name} onChangeText={(v) => setTenantDraft({ ...tenantDraft, tenant_name: v })} />
-
-                  <Text style={styles.inputLabel}>Date created (YYYY-MM-DD)</Text>
-                  <TextInput style={styles.input} value={tenantDraft.bill_start} onChangeText={(v) => setTenantDraft({ ...tenantDraft, bill_start: v })} placeholder="YYYY-MM-DD" />
-
-                  <Text style={styles.inputLabel}>Status</Text>
-                  <View style={styles.dropdownBox}>
-                    <Picker selectedValue={tenantDraft.tenant_status} onValueChange={(v) => setTenantDraft({ ...tenantDraft, tenant_status: v as any })} style={styles.dropdown}>
-                      <Picker.Item label="Active" value="active" />
-                      <Picker.Item label="Inactive" value="inactive" />
-                    </Picker>
-                  </View>
-                </View>
-              ) : (
-                <Text style={styles.muted}>Loading…</Text>
-              )}
-            </View>
-
-            {/* Building base rates (read-only) */}
-            <View style={[styles.gridItem]}>
-              <Text style={styles.sectionTitle}>Building Rates</Text>
-              {bRates ? (
-                <View style={{ gap: 6 }}>
-                  <ReadOnlyKV label="Electric (rate/kWh)" value={bRates.erate_perKwH} />
-                  <ReadOnlyKV label="Electric min. consumption" value={bRates.emin_con} />
-                  <ReadOnlyKV label="Water (rate/cbm)" value={bRates.wrate_perCbM} />
-                  <ReadOnlyKV label="Water min. consumption" value={bRates.wmin_con} />
-                  <ReadOnlyKV label="LPG (rate/kg)" value={bRates.lrate_perKg} />
-                </View>
-              ) : (
-                <Text style={styles.muted}>No building base rates.</Text>
-              )}
-            </View>
-
-            {/* Tenant rate (editable) */}
-            <View style={[styles.gridItem]}>
-              <Text style={styles.sectionTitle}>Tenant Rates</Text>
-              {tRateDraft ? (
-                <View>
-                  <Text style={styles.inputLabel}>Electric VAT (e_vat)</Text>
-                  <TextInput style={styles.input} keyboardType="decimal-pad" value={String(tRateDraft.e_vat ?? "")}
-                    onChangeText={(v) => setTRateDraft({ ...tRateDraft, e_vat: v.trim() === "" ? null : Number(v) })} />
-
-                  <Text style={styles.inputLabel}>Water VAT (w_vat)</Text>
-                  <TextInput style={styles.input} keyboardType="decimal-pad" value={String(tRateDraft.w_vat ?? "")}
-                    onChangeText={(v) => setTRateDraft({ ...tRateDraft, w_vat: v.trim() === "" ? null : Number(v) })} />
-
-                  <Text style={styles.inputLabel}>Water Net VAT (wnet_vat)</Text>
-                  <TextInput style={styles.input} keyboardType="decimal-pad" value={String(tRateDraft.wnet_vat ?? "")}
-                    onChangeText={(v) => setTRateDraft({ ...tRateDraft, wnet_vat: v.trim() === "" ? null : Number(v) })} />
-                </View>
-              ) : (
-                <Text style={styles.muted}>No tenant rate yet.</Text>
-              )}
-            </View>
-
-            {/* Stalls list (editable) */}
-            <View style={[styles.gridItem, styles.gridSpan2]}>
-              <Text style={styles.sectionTitle}>Stalls</Text>
-              {stallsBusy ? (
-                <ActivityIndicator />
-              ) : tenantStalls.length === 0 ? (
-                <Text style={styles.muted}>No stalls assigned to this tenant.</Text>
-              ) : (
-                <View style={{ gap: 8 }}>
-                  {tenantStalls.map((s, i) => (
-                    <View key={s.stall_id} style={styles.stallRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.smallLabel}>Stall ID</Text>
-                        <Text style={styles.smallValue}>{s.stall_id}</Text>
+              {submitting ? "Deleting…" : "Delete"}
+            </Button>
+            <Button variant="ghost" onPress={() => setDetailsVisible(false)}>Close</Button>
+            <Button icon="save-outline" onPress={saveTenant} disabled={submitting}>
+              {submitting ? "Saving…" : "Save changes"}
+            </Button>
+          </>
+        }
+      >
+        <SafeAreaView style={{ width: "100%" }}>
+          <View style={styles.sheetBody}>
+            <ScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              <View style={styles.quickGrid}>
+                {/* LEFT column: Tenant & Taxes */}
+                <View style={styles.quickCol}>
+                  <Card title="Tenant">
+                    <View style={{ gap: 10 }}>
+                      <View>
+                        <Text style={styles.fieldLabel}>Tenant SN</Text>
+                        <Input
+                          placeholder="e.g., SN-001"
+                          value={tenantDraft?.tenant_sn || ""}
+                          onChangeText={(v) => setTenantDraft((t) => (t ? { ...t, tenant_sn: v } : t))}
+                        />
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.smallLabel}>Stall SN</Text>
-                        <TextInput style={styles.inputSm} value={s.stall_sn} onChangeText={(v) => updateStallRow(i, { stall_sn: v })} />
+
+                      <View>
+                        <Text style={styles.fieldLabel}>Tenant Name</Text>
+                        <Input
+                          placeholder="Tenant name"
+                          value={tenantDraft?.tenant_name || ""}
+                          onChangeText={(v) => setTenantDraft((t) => (t ? { ...t, tenant_name: v } : t))}
+                        />
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.smallLabel}>Status</Text>
-                        <View style={[styles.dropdownBox, { height: 36 }]}>
-                          <Picker selectedValue={s.stall_status} onValueChange={(v) => updateStallRow(i, { stall_status: String(v) })} style={styles.dropdown}>
-                            <Picker.Item label="Available" value="available" />
-                            <Picker.Item label="Occupied" value="occupied" />
-                            <Picker.Item label="Maintenance" value="maintenance" />
-                          </Picker>
+
+                      <View style={styles.rowInline}>
+                        <View style={[styles.flex1, { marginRight: 8 }]}>
+                          <PickerField
+                            label="Status"
+                            value={tenantDraft?.tenant_status || "active"}
+                            onChange={(v) => setTenantDraft((t) => (t ? { ...t, tenant_status: v as "active" | "inactive" } : t))}
+                          >
+                            <Picker.Item label="Active" value="active" />
+                            <Picker.Item label="Inactive" value="inactive" />
+                          </PickerField>
+                        </View>
+
+                        <View style={[styles.flex1, { marginLeft: 8 }]}>
+                          <Text style={styles.fieldLabel}>Penalty</Text>
+                          <Button
+                            variant="ghost"
+                            icon={tenantDraft?.for_penalty ? "checkbox" : "square-outline" as any}
+                            onPress={() => setTenantDraft((t) => (t ? { ...t, for_penalty: !t.for_penalty } : t))}
+                          >
+                            {tenantDraft?.for_penalty ? "For penalty" : "No penalty"}
+                          </Button>
                         </View>
                       </View>
-                      <View style={{ flexDirection: "row", gap: 8 }}>
-                        <TouchableOpacity style={styles.btnGhost} onPress={() => saveStall(tenantStalls[i])}>
-                          <Text style={styles.btnGhostText}>Save</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.btnDanger} onPress={() => unassignStall(tenantStalls[i])}>
-                          <Text style={styles.btnDangerText}>Unassign</Text>
-                        </TouchableOpacity>
+
+                      <View>
+                        <Text style={styles.fieldLabel}>Building (read-only)</Text>
+                        <View style={styles.readonlyBox}>
+                          <Text style={styles.readonlyText}>
+                            {detailsTenant ? buildingName(detailsTenant.building_id) : "—"}
+                          </Text>
+                        </View>
                       </View>
                     </View>
-                  ))}
+                  </Card>
+
+                  <Card title="Taxes" style={{ marginTop: 12 }}>
+                    <View style={{ gap: 10 }}>
+                      <PickerField
+                        label="VAT Code"
+                        value={tenantDraft?.vat_code ?? ""}
+                        onChange={(v) => setTenantDraft((t) => (t ? { ...t, vat_code: v || null } : t))}
+                        placeholder="— None —"
+                      >
+                        {vatCodes.map((v) => (
+                          <Picker.Item
+                            key={String(v.tax_id)}
+                            label={`${v.vat_code}${v.vat_description ? ` — ${v.vat_description}` : ""}`}
+                            value={v.vat_code}
+                          />
+                        ))}
+                      </PickerField>
+
+                      <PickerField
+                        label="Withholding Code"
+                        value={tenantDraft?.wt_code ?? ""}
+                        onChange={(v) => setTenantDraft((t) => (t ? { ...t, wt_code: v || null } : t))}
+                        placeholder="— None —"
+                      >
+                        {wtCodes.map((w) => (
+                          <Picker.Item
+                            key={w.wt_id}
+                            label={`${w.wt_code}${w.wt_description ? ` — ${w.wt_description}` : ""}`}
+                            value={w.wt_code}
+                          />
+                        ))}
+                      </PickerField>
+                    </View>
+                  </Card>
                 </View>
-              )}
+
+                {/* RIGHT column: Building & Stalls */}
+                <View style={styles.quickCol}>
+                  <Card title="Building">
+                    <Text style={styles.kv}><Text style={styles.kvKey}>ID:</Text> {detailsTenant?.building_id || "—"}</Text>
+                    <Text style={styles.kv}>
+                      <Text style={styles.kvKey}>Name:</Text>{" "}
+                      {detailsTenant ? buildingName(detailsTenant.building_id).replace(` (${detailsTenant.building_id})`, "") : "—"}
+                    </Text>
+                  </Card>
+
+                  <Card title="Base Rates (Read-only)" style={{ marginTop: 12 }}>
+                    <Text style={styles.kv}><Text style={styles.kvKey}>Electric Rate:</Text> {fmt(bRates?.erate_perKwH, "per kWh")}</Text>
+                    <Text style={styles.kv}><Text style={styles.kvKey}>Electric Min:</Text> {fmt(bRates?.emin_con, "kWh")}</Text>
+                    <Text style={styles.kv}><Text style={styles.kvKey}>Water Rate:</Text> {fmt(bRates?.wrate_perCbM, "per cu.m")}</Text>
+                    <Text style={styles.kv}><Text style={styles.kvKey}>Water Min:</Text> {fmt(bRates?.wmin_con, "cu.m")}</Text>
+                    <Text style={styles.kv}><Text style={styles.kvKey}>LPG Rate:</Text> {fmt(bRates?.lrate_perKg, "per kg")}</Text>
+                  </Card>
+
+                  <Card
+                    title="Stalls"
+                    right={stallsBusy ? <ActivityIndicator /> : undefined}
+                    style={{ marginTop: 12 }}
+                  >
+                    {stallsBusy ? null : tenantStalls.length === 0 ? (
+                      <Text style={styles.empty}>No stalls assigned.</Text>
+                    ) : (
+                      tenantStalls.map((s) => (
+                        <View key={s.stall_id} style={styles.stallRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.rowTitle}>
+                              {s.stall_sn} <Text style={styles.rowSub}>({s.stall_id})</Text>
+                            </Text>
+                            <Text style={styles.rowMetaSmall}>Status: {String(s.stall_status).toUpperCase()}</Text>
+                          </View>
+
+                          <Button variant="ghost" onPress={() => unassignStall(s)}>Unassign</Button>
+                          <Button onPress={() => saveStall(s)}>Save</Button>
+                        </View>
+                      ))
+                    )}
+                  </Card>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        </SafeAreaView>
+      </ModalSheet>
+
+      {/* CREATE TENANT SHEET */}
+      <ModalSheet
+        visible={createVisible}
+        title="Create Tenant"
+        onClose={() => setCreateVisible(false)}
+        footer={
+          <>
+            <Button variant="ghost" onPress={() => setCreateVisible(false)}>Cancel</Button>
+            <Button
+              icon="save-outline"
+              onPress={async () => {
+                if (!isAdmin && !userBuildingId) { notify("Building required", "Your account is missing a building assignment."); return; }
+                const building_id = isAdmin ? (cBuildingId || userBuildingId) : userBuildingId;
+                if (!building_id) { notify("Building required", "Please choose a building."); return; }
+                if (!cTenantName.trim()) { notify("Missing name", "Please enter tenant name."); return; }
+
+                try {
+                  setSubmitting(true);
+                  await api.post("/tenants", {
+                    tenant_sn: cTenantSn.trim() || null,
+                    tenant_name: cTenantName.trim(),
+                    building_id,
+                    tenant_status: cStatus,
+                    vat_code: cVat || null,
+                    wt_code: cWt || null,
+                    for_penalty: !!cPenalty,
+                  });
+                  setCreateVisible(false);
+                  setCTenantSn(""); setCTenantName(""); setCStatus("active"); setCPenalty(false); setCVat(""); setCWt("");
+                  await loadAll();
+                  notify("Created", "Tenant created successfully.");
+                } catch (err) {
+                  notify("Create failed", errorText(err, "Unable to create tenant."));
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+              disabled={submitting}
+            >
+              {submitting ? "Saving…" : "Create"}
+            </Button>
+          </>
+        }
+      >
+        <View style={{ gap: 12 }}>
+          <View style={styles.rowInline}>
+            <View style={[styles.flex1, { marginRight: 8 }]}>
+              <PickerField
+                label="Building"
+                value={isAdmin ? cBuildingId : userBuildingId}
+                onChange={setCBuildingId}
+                disabled={!isAdmin}
+                placeholder={isAdmin ? "Select building…" : undefined}
+              >
+                {(isAdmin ? buildings : buildings.filter(b => b.building_id === userBuildingId)).map((b) => (
+                  <Picker.Item key={b.building_id} label={`${b.building_name} (${b.building_id})`} value={b.building_id} />
+                ))}
+              </PickerField>
+            </View>
+
+            <View style={[styles.flex1, { marginLeft: 8 }]}>
+              <PickerField label="Status" value={cStatus} onChange={(v) => setCStatus(v as any)}>
+                <Picker.Item label="Active" value="active" />
+                <Picker.Item label="Inactive" value="inactive" />
+              </PickerField>
             </View>
           </View>
-        </ModalCard>
-      </Modal>
-    </View>
+
+          <View style={styles.rowInline}>
+            <View style={[styles.flex1, { marginRight: 8 }]}>
+              <Text style={styles.fieldLabel}>Tenant SN</Text>
+              <Input placeholder="e.g., SN-001" value={cTenantSn} onChangeText={setCTenantSn} />
+            </View>
+            <View style={[styles.flex1, { marginLeft: 8 }]}>
+              <Text style={styles.fieldLabel}>Tenant Name</Text>
+              <Input placeholder="Tenant name" value={cTenantName} onChangeText={setCTenantName} />
+            </View>
+          </View>
+
+          <View style={styles.rowInline}>
+            <View style={[styles.flex1, { marginRight: 8 }]}>
+              <PickerField label="VAT Code" value={cVat} onChange={setCVat} placeholder="— None —">
+                {vatCodes.map((v) => (
+                  <Picker.Item key={String(v.tax_id)} label={`${v.vat_code}${v.vat_description ? ` — ${v.vat_description}` : ""}`} value={v.vat_code} />
+                ))}
+              </PickerField>
+            </View>
+            <View style={[styles.flex1, { marginLeft: 8 }]}>
+              <PickerField label="Withholding Code" value={cWt} onChange={setCWt} placeholder="— None —">
+                {wtCodes.map((w) => (
+                  <Picker.Item key={w.wt_id} label={`${w.wt_code}${w.wt_description ? ` — ${w.wt_description}` : ""}`} value={w.wt_code} />
+                ))}
+              </PickerField>
+            </View>
+          </View>
+
+          <View style={{ marginTop: 6 }}>
+            <Text style={styles.fieldLabel}>Penalty</Text>
+            <Button
+              variant="ghost"
+              icon={cPenalty ? "checkbox" : "square-outline" as any}
+              onPress={() => setCPenalty((v) => !v)}
+            >
+              {cPenalty ? "For penalty" : "No penalty"}
+            </Button>
+          </View>
+
+          <Text style={styles.helpText}>You can assign stalls from the Stalls/Assign panel after creating the tenant.</Text>
+        </View>
+      </ModalSheet>
+    </KeyboardAvoidingView>
   );
 }
 
+/** ------------ Styles (copied look from StallsPanel) ------------- */
 const styles = StyleSheet.create({
-  grid: { flex: 1, padding: 12, gap: 12 },
+  // outer layout so FlatList can scroll
+  page: { flex: 1, minHeight: 0 },
+  grid: { flex: 1, padding: 14, gap: 14, minHeight: 0 },
   card: {
     flex: 1,
     minHeight: 0,
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
-    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 2 } }) as any),
+    borderRadius: 14,
+    padding: 14,
+    ...(Platform.select({
+      web: { boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)" } as any,
+      default: { elevation: 2 },
+    }) as any),
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-  cardTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
 
-  topBar: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
+  // header + toolbar
+  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
 
-  // top bar
-  filtersBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 8,
-    flexWrap: "wrap",
-  },
+  btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
+
+  filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#f1f5f9",
+    borderRadius: 10,
     paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: "#f8fafc",
+    height: 40,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    borderRadius: 10,
-    minWidth: 160,
   },
-  search: { flex: 1, color: "#0f172a" },
-
-  // list
-  loader: { paddingVertical: 18, alignItems: "center" },
-  empty: { textAlign: "center", color: "#64748b", padding: 12 },
-  listRow: {
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  rowTitle: { fontWeight: "700", color: "#0f172a" },
-  rowSub: { color: "#64748b", fontSize: 12, marginTop: 2 },
-  badge: {
-    backgroundColor: "#bfbfbfff",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  badgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-
-  // buttons
-  btn: {
-    backgroundColor: "#082cac",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  btnText: { color: "#fff", fontWeight: "700" },
+  search: { flex: 1, height: 40, color: "#0f172a" },
   btnGhost: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
     flexDirection: "row",
     alignItems: "center",
-  },
-  btnGhostText: { color: "#082cac", fontWeight: "700" },
-  btnDisabled: { opacity: 0.6 },
-
-  btnDanger: {
-    backgroundColor: "#ef4444",
+    backgroundColor: "#e2e8f0",
     borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: "center",
     paddingHorizontal: 12,
-  },
-  btnDangerText: { color: "#fff", fontWeight: "700" },
-
-  // form
-  inputLabel: {
-    marginTop: 8,
-    marginBottom: 6,
-    color: "#334155",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  input: {
+    paddingVertical: 10,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: Platform.OS === "web" ? 10 : 8,
+    borderColor: "#cbd5e1",
+  },
+  btnGhostText: { color: "#394e6a", fontWeight: "700" },
+
+  // Building filter header row (label + mobile "Select" button)
+  buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  quickSelectBtn: {
+    flexDirection: "row", alignItems: "center", backgroundColor: "#e0ecff", borderColor: "#93c5fd", borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+  },
+  quickSelectText: { color: "#1d4ed8", fontWeight: "800", letterSpacing: 0.3, fontSize: 12 },
+
+  // Chips (desktop/tablet wrap)
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  // Chips (mobile horizontal scroll)
+  chipsRowHorizontal: {
+    paddingRight: 4,
+    gap: 8,
+  },
+  chip: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
     backgroundColor: "#f8fafc",
-    color: "#0f172a",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
+  chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
+  chipIdle: {},
+  chipText: { fontWeight: "700" },
+  chipTextActive: { color: "#1d4ed8" },
+  chipTextIdle: { color: "#334155" },
 
-  // Modal overlay
-  modalWrap: {
-    flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.28)",
-    justifyContent: "center",
-    alignItems: "center",
-    ...(Platform.select({
-      web: { padding: 16 } as any,
-      default: { paddingVertical: 16, paddingHorizontal: 0 } as any, // ← no side padding on mobile
-    }) as any),
+  // row item (matches StallsPanel)
+  row: {
+    borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 12, padding: 12, marginBottom: 10,
+    backgroundColor: "#fff", flexDirection: "row", alignItems: "center",
   },
+  rowMobile: { flexDirection: "column", alignItems: "stretch" },
+  rowMain: { flex: 1, paddingRight: 10 },
+  rowTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  rowSub: { color: "#64748b", fontWeight: "600" },
+  rowMeta: { color: "#334155", marginTop: 6 },
+  rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
 
-  // Base modal card (Details modal uses this; mobile height set in JSX)
-  modalCard: {
-    width: "100%",
-    maxWidth: 1000,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    ...(Platform.select({
-      web: { boxShadow: "0 18px 44px rgba(15,23,42,0.08)" as any },
-      default: { elevation: 6 },
-    }) as any),
-  },
-
-  // Create Tenant — wide on web, FULL WIDTH on mobile
-  modalCardWide: {
-    alignSelf: "center",
-    ...(Platform.select({
-      web: {
-        width: "200%",
-        maxWidth: 1000,
-        position: "relative",
-        left: "100%",
-        transform: "translateX(-50%)",
-      },
-      default: {
-        width: "100%",          // ← full width on mobile
-        maxWidth: 560,          // optional cap; remove or raise if you want even wider
-        maxHeight: MOBILE_MODAL_MAX_HEIGHT,
-      },
-    }) as any),
-  },
-
-  modalDivider: { height: 1, backgroundColor: "#eef2f7", marginVertical: 10 },
-  modalHeaderRow: { flexDirection: "row", alignItems: "center" },
-  modalTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a", flexShrink: 1 },
-
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 8,
-  },
+  rowActions: { width: 200, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 },
+  rowActionsMobile: { flexDirection: "row", gap: 8, marginTop: 10, justifyContent: "flex-start", alignItems: "center" },
 
   actionBtn: {
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: "#082cac",
+    height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6,
   },
-  actionBtnGhost: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  actionBtnGhostText: { color: "#082cac", fontWeight: "700" },
+  actionEdit: { backgroundColor: "#e2e8f0" },
+  actionDelete: { backgroundColor: "#ef4444" },
+  actionText: { fontWeight: "700" },
+  actionEditText: { color: "#1f2937" },
+  actionDeleteText: { color: "#fff" },
 
-  // grid
-  gridWrap: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    flexWrap: "wrap",
-    gap: 12,
-  },
-  gridItem: {
-    borderWidth: 1,
-    borderColor: "#eef2f7",
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: "#fafcff",
-    flexBasis: Platform.OS === "web" ? "48%" : "100%",
-    flexGrow: 1,
-  },
-  gridSpan2: { flexBasis: Platform.OS === "web" ? "100%" : "100%" },
+  // empty + loader
+  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
+  emptyPad: { paddingVertical: 30 },
+  empty: { paddingVertical: 12, textAlign: "center", color: "#64748b" },
 
-  // readonly key-value
-  kvRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
+  // modal sheet helpers
+  fieldLabel: { fontSize: 12, color: tokens.color.inkSubtle, marginBottom: 6, fontWeight: "700" },
+  rowInline: { flexDirection: "row", alignItems: "center" },
+  flex1: { flex: 1 },
+  readonlyBox: {
+    height: 42, borderRadius: 10, borderWidth: 1, borderColor: tokens.color.line,
+    backgroundColor: "#fff", justifyContent: "center", paddingHorizontal: 12,
   },
-  kvLabel: { color: "#475569" },
-  kvValue: { color: "#0f172a", fontWeight: "700" },
+  readonlyText: { color: tokens.color.ink, fontWeight: "700" },
+  pickerShell: {
+    position: "relative", borderWidth: 1, borderColor: tokens.color.line,
+    backgroundColor: "#fff", borderRadius: 12, overflow: "hidden",
+  },
+  pickerNative: { width: "100%", height: 44, paddingLeft: 8, color: tokens.color.ink, fontSize: 14 },
+  pickerItemIOS: { fontSize: 16, color: tokens.color.ink },
+  pickerIcon: { position: "absolute", right: 10, top: 14, opacity: 0.8 },
+  dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
 
-  // stalls
+  kv: { fontSize: 13, color: tokens.color.ink, marginTop: 6 },
+  kvKey: { color: tokens.color.inkSubtle, fontWeight: "700" },
   stallRow: {
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    gap: 10,
-    alignItems: Platform.OS === "web" ? "center" : "stretch",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 10,
-    padding: 10,
-    backgroundColor: "#fff",
+    flexDirection: "row", alignItems: "center", paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: tokens.color.line, gap: 8,
   },
-  smallLabel: { fontSize: 11, color: "#64748b", marginBottom: 4 },
-  smallValue: { fontSize: 12, color: "#0f172a", fontWeight: "700" },
-  inputSm: {
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: "#f8fafc",
-    color: "#0f172a",
+  helpText: { color: tokens.color.inkMuted, fontSize: 12, lineHeight: 16, marginTop: 2 },
+
+  // Quick Edit sheet layout (two columns on web, wraps on native)
+  quickGrid: {
+    gap: 12,
+    ...(Platform.OS === "web"
+      ? ({
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          columnGap: 12,
+          rowGap: 12,
+        } as any)
+      : {
+          flexDirection: "row",
+          flexWrap: "wrap",
+        }),
+  },
+  quickCol: {
+    ...(Platform.OS === "web"
+      ? {}
+      : {
+          flexGrow: 1,
+          flexBasis: "48%",
+          minWidth: 280,
+        }),
   },
 
-  // -------- copied filter chips modal styles (from StallsPanel) --------
-  dropdownLabel: { fontSize: 12, fontWeight: "700", color: "#486581", marginBottom: 6 },
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  sheetBody: { maxHeight: MOBILE_MODAL_MAX_HEIGHT, flexShrink: 1, width: "100%" },
+  sheetScroll: { maxHeight: MOBILE_MODAL_MAX_HEIGHT },
+  sheetContent: { paddingVertical: 12, gap: 12, paddingBottom: 96 },
 
-  chip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#c7d2fe",
-    backgroundColor: "#eef2ff",
-  },
-  chipIdle: { backgroundColor: "#fff", borderColor: "#e2e8f0" },
-  chipActive: { backgroundColor: "#082cac", borderColor: "#082cac" },
-  chipText: { fontSize: 12 },
-  chipTextIdle: { color: "#082cac", fontWeight: "700" },
-  chipTextActive: { color: "#fff", fontWeight: "700" },
-
-  // Filters prompt modal (small like BuildingPanel/StallsPanel)
-  promptOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(16,42,67,0.25)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 16,
-  },
-  promptCard: {
-    backgroundColor: "#fff",
-    width: "100%",
-    maxWidth: 520,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
-    ...(Platform.select({
-      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any },
-      default: { elevation: 3 },
-    }) as any),
-  },
-
-  // picker used in details grid
-  dropdownBox: {
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 10,
-    overflow: "hidden",
-    backgroundColor: "#f8fafc",
-  },
-  dropdown: { height: 36 },
-  sectionTitle: { fontSize: 14, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
-  muted: { color: "#94a3b8" },
-
-  readonlyField: {
-    backgroundColor: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  readonlyText: {
-    color: "#0f172a",
-    fontSize: 14,
-  },
-
-  // web-only zoom (used by details modal shell)
-  webZoom80: {
-    ...(Platform.select({
-      web: { zoom: 0.8 } as any,
-      default: {},
-    }) as any),
-  },
+  sep: { height: 1, backgroundColor: tokens.color.line, marginVertical: 10 },
 });

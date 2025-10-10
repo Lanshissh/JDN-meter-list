@@ -93,6 +93,33 @@ async function safeCount(
   }
 }
 
+// after makeApi / safeCount …
+
+async function countRates(
+  api: ReturnType<typeof makeApi>,
+  role: "admin" | "operator" | "biller" | "unknown",
+  buildingId?: string
+) {
+  // biller/operator: count rates in their building
+  if (role !== "admin" && buildingId) {
+    return await safeCount(api, `/rates/buildings/${encodeURIComponent(buildingId)}`);
+  }
+
+  // admin: sum across all buildings
+  try {
+    const bRes = await api.get("/buildings");
+    let total = 0;
+    for (const b of bRes.data || []) {
+      const r = await api.get(`/rates/buildings/${encodeURIComponent(b.building_id)}`);
+      total += Array.isArray(r.data) ? r.data.length : 0;
+    }
+    return { count: total };
+  } catch {
+    return { count: 0 };
+  }
+}
+
+
 export default function Dashboard() {
   const router = useRouter();
   const { token } = useAuth();
@@ -163,8 +190,15 @@ export default function Dashboard() {
         readings: false,
       };
 
-      // Kick off only what we need for this role
       const tasks = wantedTiles.map(async (t) => {
+        if (t.key === "rates") {
+          const { count, restricted } = await countRates(api, role as any, decodeRole(token).buildingId);
+          if (!alive) return;
+          if (typeof count === "number") nextCounts[t.key] = count;
+          if (restricted) nextRestr[t.key] = true;
+          return;
+        }
+
         const { count, restricted } = await safeCount(api, `/${t.key}`);
         if (!alive) return;
         if (typeof count === "number") nextCounts[t.key] = count;
