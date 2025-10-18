@@ -284,6 +284,32 @@ const Badge = ({ value }: { value: number | null | undefined }) => {
   );
 };
 
+/* ---------- Dual-path ROC base ---------- */
+const ROC_BASES = ["/rateofchange", "/roc"];
+
+async function getRocMeter(api: any, id: string, ymd: string) {
+  for (const base of ROC_BASES) {
+    try {
+      const { data } = await api.get(`${base}/meters/${encodeURIComponent(id)}/period-end/${encodeURIComponent(ymd)}`);
+      return data as RocMeter;
+    } catch (e: any) {
+      if ([401, 403].includes(e?.response?.status)) throw e;
+    }
+  }
+  return null;
+}
+async function getRocTenant(api: any, id: string, ymd: string) {
+  for (const base of ROC_BASES) {
+    try {
+      const { data } = await api.get(`${base}/tenants/${encodeURIComponent(id)}/period-end/${encodeURIComponent(ymd)}`);
+      return data as RocTenant;
+    } catch (e: any) {
+      if ([401, 403].includes(e?.response?.status)) throw e;
+    }
+  }
+  return null;
+}
+
 /* ==================== UI Bits ==================== */
 function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
@@ -349,12 +375,16 @@ export default function BillingScreen() {
           const q = penaltyQS(penaltyRate);
           const billRes = await api.get<BillingV2>(`/billings/meters/${encodeURIComponent(meterId.trim())}/period-end/${encodeURIComponent(ymd)}${q}`);
           setV2(billRes.data);
-          getSafe<RocMeter>(api, `/rateofchange/meters/${encodeURIComponent(meterId.trim())}/period-end/${encodeURIComponent(ymd)}`, setRocErr)
-            .then((roc) => setRocMeter(roc));
+
+          // ROC (dual-path)
+          const rm = await getRocMeter(api, meterId.trim(), ymd);
+          if (!rm) setRocErr("ROC endpoint not found (tried /rateofchange and /roc).");
+          setRocMeter(rm);
         } else if (tenantId.trim()) {
           const id = tenantId.trim().toUpperCase();
           const q = penaltyQS(penaltyRate);
           const billRes = await api.get(`/billings/tenants/${encodeURIComponent(id)}/period-end/${encodeURIComponent(ymd)}${q}`);
+
           if (Array.isArray(billRes.data) && billRes.data.length && (billRes.data[0] as any)?.meter) {
             const items = billRes.data as BillingV2[];
             const rollup = items.reduce(
@@ -376,20 +406,17 @@ export default function BillingScreen() {
             if (!normalized.meters.length) notify("No meters in legacy response", "Tenant found, but no readable meter rows.");
             setMode("tenant");
 
-            // Fan-out per-meter ROC when tenant ROC not available
+            // Fan-out per-meter ROC when tenant ROC not available (dual-path)
             const ids = (normalized.meters || []).map(m => m.meter_id).filter(Boolean);
-            Promise.all(
-              ids.map(id2 =>
-                getSafe<RocMeter>(api, `/rateofchange/meters/${encodeURIComponent(id2)}/period-end/${encodeURIComponent(ymd)}`, setRocErr)
-              )
-            ).then(results => {
-              const map: Record<string, number | null> = {};
-              results.forEach(r => { if (r) map[r.meter_id] = r.rate_of_change ?? null; });
-              setRocMap(map);
-            });
+            const results = await Promise.all(ids.map(id2 => getRocMeter(api, id2, ymd)));
+            const map: Record<string, number | null> = {};
+            results.forEach(r => { if (r) map[r.meter_id] = r.rate_of_change ?? null; });
+            setRocMap(map);
           }
-          getSafe<RocTenant>(api, `/rateofchange/tenants/${encodeURIComponent(id)}/period-end/${encodeURIComponent(ymd)}`, setRocErr)
-            .then((roc) => setRocTenant(roc));
+
+          const rt = await getRocTenant(api, id, ymd);
+          if (!rt) setRocErr("ROC endpoint not found (tried /rateofchange and /roc).");
+          setRocTenant(rt);
         } else {
           notify("Missing ID", "Enter a Meter ID or Tenant ID.");
         }
@@ -406,8 +433,10 @@ export default function BillingScreen() {
           };
           setLegacy(pack);
         }
-        getSafe<RocMeter>(api, `/rateofchange/meters/${encodeURIComponent(meterId.trim())}/period-end/${encodeURIComponent(ymd)}`, setRocErr)
-          .then((roc) => setRocMeter(roc));
+
+        const rm = await getRocMeter(api, meterId.trim(), ymd);
+        if (!rm) setRocErr("ROC endpoint not found (tried /rateofchange and /roc).");
+        setRocMeter(rm);
       } else {
         const id = tenantId.trim().toUpperCase();
         const q = penaltyQS(penaltyRate);
@@ -415,20 +444,16 @@ export default function BillingScreen() {
         const normalized = normalizeLegacyTenant(billRes.data);
         setLegacy(normalized);
 
-        // Fan-out per-meter ROC when tenant ROC not available
+        // Fan-out per-meter ROC when tenant ROC not available (dual-path)
         const ids = (normalized.meters || []).map(m => m.meter_id).filter(Boolean);
-        Promise.all(
-          ids.map(mid =>
-            getSafe<RocMeter>(api, `/rateofchange/meters/${encodeURIComponent(mid)}/period-end/${encodeURIComponent(ymd)}`, setRocErr)
-          )
-        ).then(results => {
-          const map: Record<string, number | null> = {};
-          results.forEach(r => { if (r) map[r.meter_id] = r.rate_of_change ?? null; });
-          setRocMap(map);
-        });
+        const results = await Promise.all(ids.map(mid => getRocMeter(api, mid, ymd)));
+        const map: Record<string, number | null> = {};
+        results.forEach(r => { if (r) map[r.meter_id] = r.rate_of_change ?? null; });
+        setRocMap(map);
 
-        getSafe<RocTenant>(api, `/rateofchange/tenants/${encodeURIComponent(id)}/period-end/${encodeURIComponent(ymd)}`, setRocErr)
-          .then((roc) => setRocTenant(roc));
+        const rt = await getRocTenant(api, id, ymd);
+        if (!rt) setRocErr("ROC endpoint not found (tried /rateofchange and /roc).");
+        setRocTenant(rt);
 
         if (!billRes.data || typeof billRes.data !== "object") notify("Unexpected response", "Server returned a non-object for legacy tenant.");
         else if ((billRes.data as any).error) notify("Server error", String((billRes.data as any).error));
@@ -626,8 +651,8 @@ export default function BillingScreen() {
         <Text style={styles.sectionTitle}>Tenant</Text>
         <Text style={styles.metaLine}>ID: <Text style={styles.metaStrong}>{r.tenant?.tenant_id || "—"}</Text></Text>
         <Text style={styles.metaLine}>Name: <Text style={styles.metaStrong}>{r.tenant?.tenant_name || "—"}</Text></Text>
-        <Text style={styles.metaLine}>VAT: <Text style={styles.metaStrong}>{r.tenant?.vat_code || "—"}</Text></Text>
-        <Text style={styles.metaLine}>WT: <Text style={styles.metaStrong}>{r.tenant?.wt_code || "—"}</Text></Text>
+        <Text style={styles.metaLine}>VAT Code: <Text style={styles.metaStrong}>{r.tenant?.vat_code ?? "—"}</Text></Text>
+        <Text style={styles.metaLine}>WT Code: <Text style={styles.metaStrong}>{r.tenant?.wt_code ?? "—"}</Text></Text>
         <Text style={styles.metaLine}>Penalty?: <Text style={styles.metaStrong}>{r.tenant?.for_penalty ? "Yes" : "No"}</Text></Text>
       </View>
 
@@ -644,8 +669,23 @@ export default function BillingScreen() {
         <Text style={styles.sectionTitle}>Charges</Text>
         <View style={styles.row}><Text style={styles.rowKey}>Consumption</Text><Text style={styles.rowVal}>{fmt(r.billing.consumption, 0)}</Text></View>
         <View style={styles.row}><Text style={styles.rowKey}>Base</Text><Text style={styles.rowVal}>{peso(r.billing.base)}</Text></View>
-        <View style={styles.row}><Text style={styles.rowKey}>VAT</Text><Text style={styles.rowVal}>{peso(r.billing.vat)}</Text></View>
-        <View style={styles.row}><Text style={styles.rowKey}>Withholding</Text><Text style={styles.rowVal}>{peso(r.billing.wt)}</Text></View>
+
+        <View style={styles.row}>
+          <Text style={styles.rowKey}>VAT</Text>
+          <Text style={styles.rowVal}>{peso(r.billing.vat)}</Text>
+        </View>
+        {r.billing.vat === 0 && (
+          <Text style={styles.noteSmall}>No VAT applied (missing/expired rate or tenant has no vat_code).</Text>
+        )}
+
+        <View style={styles.row}>
+          <Text style={styles.rowKey}>Withholding</Text>
+          <Text style={styles.rowVal}>{peso(r.billing.wt)}</Text>
+        </View>
+        {r.billing.wt === 0 && (
+          <Text style={styles.noteSmall}>No Withholding applied (missing/expired rate or tenant has no wt_code).</Text>
+        )}
+
         <View style={styles.row}>
           <Text style={styles.rowKey}>
             Penalty{r.tenant?.for_penalty === false ? " — disabled for tenant" : ""}
@@ -866,4 +906,6 @@ const styles = StyleSheet.create({
   badgeDownText: { color: "#991b1b" },
   badgeNeutralBox: { backgroundColor: "#e5e7eb" },
   badgeNeutralText: { color: "#111827" },
+
+  noteSmall: { color: "#64748b", fontSize: 12, marginTop: 2 },
 });
