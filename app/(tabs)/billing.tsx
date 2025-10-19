@@ -48,7 +48,6 @@ type TenantBillingLegacy = {
   generated_at: string;
 };
 
-// ROC API shapes
 type RocMeter = {
   meter_id: string;
   meter_type: string;
@@ -106,7 +105,6 @@ const penaltyQS = (rateStr: string): string => {
   return Number.isFinite(n) && n >= 0 ? `?penalty_rate=${encodeURIComponent(String(n))}` : "";
 };
 
-// Optional GET: returns null on any error and passes a message to onError (stringifies unknown bodies)
 const getSafe = async <T,>(
   api: ReturnType<typeof axios.create>,
   path: string,
@@ -129,7 +127,6 @@ const getSafe = async <T,>(
   }
 };
 
-/* ---------- Normalizers ---------- */
 const normNum = (v: unknown): number | null => {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
@@ -228,7 +225,6 @@ function normalizeLegacyTenant(payload: unknown): TenantBillingLegacy {
     (Array.isArray(p["meter_list"]) ? (p["meter_list"] as unknown[]) : null) ?? [];
   const meters: MeterBillingLegacy[] = metersSource.map((x) => normalizeLegacyMeter(x));
 
-  // compute sums (used as fallback if server omitted previous)
   const currentSum = meters.reduce<number>((sum, m2) => sum + (m2.current_consumption ?? 0), 0);
   const previousSum = meters.reduce<number>((sum, m2) => sum + (m2.previous_consumption ?? 0), 0);
   const chargeSum = meters.reduce<number>((sum, m2) => sum + (m2.charge ?? 0), 0);
@@ -267,7 +263,6 @@ function normalizeLegacyTenant(payload: unknown): TenantBillingLegacy {
   };
 }
 
-/* ==================== ROC helpers & Badge ==================== */
 const computeROC = (curr?: number | null, prev?: number | null): number | null => {
   if (curr == null || prev == null || !Number.isFinite(curr) || !Number.isFinite(prev) || prev === 0) return null;
   return Math.round(((curr - prev) / prev) * 100);
@@ -277,14 +272,16 @@ const Badge = ({ value }: { value: number | null | undefined }) => {
   const isUp = value != null && value >= 0;
   const boxStyle = value == null ? styles.badgeNeutralBox : isUp ? styles.badgeUpBox : styles.badgeDownBox;
   const textStyle = value == null ? styles.badgeNeutralText : isUp ? styles.badgeUpText : styles.badgeDownText;
+  const icon = value == null ? null : isUp ? "trending-up" : "trending-down";
+  
   return (
     <View style={[styles.badgeBox, boxStyle]}>
-      <Text style={[styles.badgeText, textStyle]}>{value == null ? "N/A" : `${value}%`}</Text>
+      {icon && <Ionicons name={icon} size={14} color={isUp ? "#166534" : "#991b1b"} style={{ marginRight: 4 }} />}
+      <Text style={[styles.badgeText, textStyle]}>{value == null ? "N/A" : `${value > 0 ? '+' : ''}${value}%`}</Text>
     </View>
   );
 };
 
-/* ---------- Dual-path ROC base ---------- */
 const ROC_BASES = ["/rateofchange", "/roc"];
 
 async function getRocMeter(api: any, id: string, ymd: string) {
@@ -310,11 +307,10 @@ async function getRocTenant(api: any, id: string, ymd: string) {
   return null;
 }
 
-/* ==================== UI Bits ==================== */
 function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
-      <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+    <TouchableOpacity onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -335,11 +331,9 @@ export default function BillingScreen() {
   const [legacy, setLegacy] = useState<TenantBillingLegacy | null>(null);
   const [v2, setV2] = useState<BillingV2 | null>(null);
 
-  // ROC state
   const [rocMeter, setRocMeter] = useState<RocMeter | null>(null);
   const [rocTenant, setRocTenant] = useState<RocTenant | null>(null);
 
-  // Per-meter ROC map & last error note
   const [rocMap, setRocMap] = useState<Record<string, number | null>>({});
   const [rocErr, setRocErr] = useState<string | null>(null);
 
@@ -376,7 +370,6 @@ export default function BillingScreen() {
           const billRes = await api.get<BillingV2>(`/billings/meters/${encodeURIComponent(meterId.trim())}/period-end/${encodeURIComponent(ymd)}${q}`);
           setV2(billRes.data);
 
-          // ROC (dual-path)
           const rm = await getRocMeter(api, meterId.trim(), ymd);
           if (!rm) setRocErr("ROC endpoint not found (tried /rateofchange and /roc).");
           setRocMeter(rm);
@@ -406,7 +399,6 @@ export default function BillingScreen() {
             if (!normalized.meters.length) notify("No meters in legacy response", "Tenant found, but no readable meter rows.");
             setMode("tenant");
 
-            // Fan-out per-meter ROC when tenant ROC not available (dual-path)
             const ids = (normalized.meters || []).map(m => m.meter_id).filter(Boolean);
             const results = await Promise.all(ids.map(id2 => getRocMeter(api, id2, ymd)));
             const map: Record<string, number | null> = {};
@@ -444,7 +436,6 @@ export default function BillingScreen() {
         const normalized = normalizeLegacyTenant(billRes.data);
         setLegacy(normalized);
 
-        // Fan-out per-meter ROC when tenant ROC not available (dual-path)
         const ids = (normalized.meters || []).map(m => m.meter_id).filter(Boolean);
         const results = await Promise.all(ids.map(mid => getRocMeter(api, mid, ymd)));
         const map: Record<string, number | null> = {};
@@ -466,7 +457,6 @@ export default function BillingScreen() {
     }
   };
 
-  /* ==================== CSV (unchanged) ==================== */
   const exportCsv = () => {
     const stamp = (endDate || today()).replace(/-/g, "");
     const esc = (s: unknown): string => {
@@ -565,10 +555,17 @@ export default function BillingScreen() {
     }
   };
 
-  /* ==================== Render ==================== */
   const Header = (
-    <View style={styles.header}>
-      <Text style={styles.title}>Generate Billing</Text>
+    <View style={styles.headerContainer}>
+      <View style={styles.headerTop}>
+        <View>
+          <Text style={styles.title}>Billing Generator</Text>
+          <Text style={styles.subtitle}>Generate and export billing reports</Text>
+        </View>
+        <View style={styles.iconCircle}>
+          <Ionicons name="receipt-outline" size={24} color="#3b82f6" />
+        </View>
+      </View>
       <View style={styles.modeChips}>
         <Chip label="New JSON" active={mode === "v2"} onPress={() => setMode("v2")} />
         <Chip label="Tenant (legacy)" active={mode === "tenant"} onPress={() => setMode("tenant")} />
@@ -578,138 +575,331 @@ export default function BillingScreen() {
   );
 
   const Inputs = (
-    <View style={styles.inputs}>
-      {mode !== "meter" && (
-        <TextInput
-          value={tenantId}
-          onChangeText={setTenantId}
-          placeholder="Tenant ID (e.g., TNT-1)"
-          placeholderTextColor="#9aa5b1"
-          style={[styles.input, { minWidth: 180 }]}
-          autoCapitalize="characters"
-        />
-      )}
-      {mode !== "tenant" && (
-        <TextInput
-          value={meterId}
-          onChangeText={setMeterId}
-          placeholder="Meter ID (e.g., MTR-1)"
-          placeholderTextColor="#9aa5b1"
-          style={[styles.input, { minWidth: 160 }]}
-          autoCapitalize="characters"
-        />
-      )}
-      <TextInput
-        value={endDate}
-        onChangeText={setEndDate}
-        placeholder="YYYY-MM-DD (period end)"
-        placeholderTextColor="#9aa5b1"
-        style={[styles.input, { width: 170 }]}
-      />
-      <TextInput
-        value={penaltyRate}
-        onChangeText={setPenaltyRate}
-        placeholder="Penalty % (optional)"
-        placeholderTextColor="#9aa5b1"
-        keyboardType="numeric"
-        style={[styles.input, { width: 150 }]}
-      />
-      <TouchableOpacity style={[styles.btn, (!canRun || busy) && styles.btnDisabled]} onPress={run} disabled={!canRun || busy}>
-        {busy ? <ActivityIndicator color="#fff" /> : (<><Ionicons name="flash-outline" size={16} color="#fff" style={{ marginRight: 6 }} /><Text style={styles.btnText}>Generate</Text></>)}
-      </TouchableOpacity>
-      <TouchableOpacity style={[styles.btnGhost, !(v2 || legacy) && styles.btnGhostDisabled]} onPress={exportCsv} disabled={!(v2 || legacy)}>
-        <Ionicons name="download-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
-        <Text style={styles.btnGhostText}>Export CSV</Text>
-      </TouchableOpacity>
+    <View style={styles.inputsCard}>
+      <View style={styles.inputRow}>
+        {mode !== "meter" && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>
+              <Ionicons name="person-outline" size={14} color="#64748b" /> Tenant ID
+            </Text>
+            <TextInput
+              value={tenantId}
+              onChangeText={setTenantId}
+              placeholder="e.g., TNT-1"
+              placeholderTextColor="#94a3b8"
+              style={styles.input}
+              autoCapitalize="characters"
+            />
+          </View>
+        )}
+        {mode !== "tenant" && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>
+              <Ionicons name="speedometer-outline" size={14} color="#64748b" /> Meter ID
+            </Text>
+            <TextInput
+              value={meterId}
+              onChangeText={setMeterId}
+              placeholder="e.g., MTR-1"
+              placeholderTextColor="#94a3b8"
+              style={styles.input}
+              autoCapitalize="characters"
+            />
+          </View>
+        )}
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputLabel}>
+            <Ionicons name="calendar-outline" size={14} color="#64748b" /> Period End
+          </Text>
+          <TextInput
+            value={endDate}
+            onChangeText={setEndDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor="#94a3b8"
+            style={styles.input}
+          />
+        </View>
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputLabel}>
+            <Ionicons name="alert-circle-outline" size={14} color="#64748b" /> Penalty %
+          </Text>
+          <TextInput
+            value={penaltyRate}
+            onChangeText={setPenaltyRate}
+            placeholder="Optional"
+            placeholderTextColor="#94a3b8"
+            keyboardType="numeric"
+            style={styles.input}
+          />
+        </View>
+      </View>
+      
+      <View style={styles.actionRow}>
+        <TouchableOpacity 
+          style={[styles.btnPrimary, (!canRun || busy) && styles.btnDisabled]} 
+          onPress={run} 
+          disabled={!canRun || busy}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <>
+              <Ionicons name="flash" size={18} color="#fff" />
+              <Text style={styles.btnPrimaryText}>Generate</Text>
+            </>
+          )}
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.btnSecondary, !(v2 || legacy) && styles.btnSecondaryDisabled]} 
+          onPress={exportCsv} 
+          disabled={!(v2 || legacy)}
+        >
+          <Ionicons name="download" size={18} color="#3b82f6" />
+          <Text style={styles.btnSecondaryText}>Export CSV</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
   const UsageTrendCard = ({ curr, prev, roc }: { curr: number | null | undefined; prev: number | null | undefined; roc: number | null | undefined }) => {
     const computed = computeROC(curr ?? null, prev ?? null);
+    const displayRoc = roc ?? computed;
+    
     return (
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Usage Trend</Text>
-        <View style={styles.row}><Text style={styles.rowKey}>Current Consumption</Text><Text style={styles.rowVal}>{fmt(curr, 0)}</Text></View>
-        <View style={styles.row}><Text style={styles.rowKey}>Previous Consumption</Text><Text style={styles.rowVal}>{fmt(prev, 0)}</Text></View>
-        <View style={[styles.row, styles.rowStrong]}>
-          <Text style={[styles.rowKey, styles.rowStrongText]}>Rate of Change</Text>
-          <Badge value={roc ?? computed} />
+      <View style={styles.trendCard}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={styles.iconBadge}>
+              <Ionicons name="analytics" size={18} color="#8b5cf6" />
+            </View>
+            <Text style={styles.cardTitle}>Usage Trend</Text>
+          </View>
+          <Badge value={displayRoc} />
+        </View>
+        
+        <View style={styles.trendContent}>
+          <View style={styles.trendItem}>
+            <Text style={styles.trendLabel}>Current Period</Text>
+            <Text style={styles.trendValue}>{fmt(curr, 0)}</Text>
+            <Text style={styles.trendUnit}>kWh</Text>
+          </View>
+          
+          <View style={styles.trendDivider} />
+          
+          <View style={styles.trendItem}>
+            <Text style={styles.trendLabel}>Previous Period</Text>
+            <Text style={styles.trendValue}>{fmt(prev, 0)}</Text>
+            <Text style={styles.trendUnit}>kWh</Text>
+          </View>
         </View>
       </View>
     );
   };
 
   const V2Block = ({ r }: { r: BillingV2 }) => (
-    <View>
-      <View style={styles.card}>
-        <Text style={styles.metaLine}>Generated: <Text style={styles.metaStrong}>{r.generated_at}</Text></Text>
-        <Text style={styles.metaLine}>Current Period: <Text style={styles.metaStrong}>{r.period.current.start} → {r.period.current.end}</Text></Text>
-        <Text style={styles.metaLine}>Previous Period: <Text style={styles.metaStrong}>{r.period.previous.start} → {r.period.previous.end}</Text></Text>
+    <View style={styles.resultsContainer}>
+      {/* Period Info */}
+      <View style={styles.infoCard}>
+        <View style={styles.infoRow}>
+          <Ionicons name="time-outline" size={16} color="#64748b" />
+          <Text style={styles.infoText}>
+            Generated {new Date(r.generated_at).toLocaleDateString()}
+          </Text>
+        </View>
+        <View style={styles.periodRow}>
+          <View style={styles.periodItem}>
+            <Text style={styles.periodLabel}>Current Period</Text>
+            <Text style={styles.periodValue}>{r.period.current.start} → {r.period.current.end}</Text>
+          </View>
+          <View style={styles.periodItem}>
+            <Text style={styles.periodLabel}>Previous Period</Text>
+            <Text style={styles.periodValue}>{r.period.previous.start} → {r.period.previous.end}</Text>
+          </View>
+        </View>
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Tenant</Text>
-        <Text style={styles.metaLine}>ID: <Text style={styles.metaStrong}>{r.tenant?.tenant_id || "—"}</Text></Text>
-        <Text style={styles.metaLine}>Name: <Text style={styles.metaStrong}>{r.tenant?.tenant_name || "—"}</Text></Text>
-        <Text style={styles.metaLine}>VAT Code: <Text style={styles.metaStrong}>{r.tenant?.vat_code ?? "—"}</Text></Text>
-        <Text style={styles.metaLine}>WT Code: <Text style={styles.metaStrong}>{r.tenant?.wt_code ?? "—"}</Text></Text>
-        <Text style={styles.metaLine}>Penalty?: <Text style={styles.metaStrong}>{r.tenant?.for_penalty ? "Yes" : "No"}</Text></Text>
+      {/* Tenant Card */}
+      <View style={styles.dataCard}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={[styles.iconBadge, { backgroundColor: '#dbeafe' }]}>
+              <Ionicons name="business" size={18} color="#3b82f6" />
+            </View>
+            <Text style={styles.cardTitle}>Tenant Information</Text>
+          </View>
+        </View>
+        <View style={styles.dataGrid}>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>ID</Text>
+            <Text style={styles.dataValue}>{r.tenant?.tenant_id || "—"}</Text>
+          </View>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>Name</Text>
+            <Text style={styles.dataValue}>{r.tenant?.tenant_name || "—"}</Text>
+          </View>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>VAT Code</Text>
+            <Text style={styles.dataValue}>{r.tenant?.vat_code ?? "—"}</Text>
+          </View>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>WT Code</Text>
+            <Text style={styles.dataValue}>{r.tenant?.wt_code ?? "—"}</Text>
+          </View>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>Penalty Applied</Text>
+            <View style={[styles.statusBadge, r.tenant?.for_penalty ? styles.statusActive : styles.statusInactive]}>
+              <Text style={[styles.statusText, r.tenant?.for_penalty ? styles.statusActiveText : styles.statusInactiveText]}>
+                {r.tenant?.for_penalty ? "Yes" : "No"}
+              </Text>
+            </View>
+          </View>
+        </View>
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Meter</Text>
-        <Text style={styles.metaLine}>ID: <Text style={styles.metaStrong}>{r.meter.meter_id}</Text></Text>
-        <Text style={styles.metaLine}>SN: <Text style={styles.metaStrong}>{r.meter.meter_sn}</Text></Text>
-        <Text style={styles.metaLine}>Type: <Text style={styles.metaStrong}>{String(r.meter.meter_type).toUpperCase()}</Text></Text>
-        <Text style={styles.metaLine}>Multiplier: <Text style={styles.metaStrong}>{r.meter.meter_mult ?? "—"}</Text></Text>
-        <Text style={[styles.metaLine, { marginTop: 8 }]}>Prev Index: <Text style={styles.metaStrong}>{fmt(r.indices.prev_index, 0)}</Text>   •   Curr Index: <Text style={styles.metaStrong}>{fmt(r.indices.curr_index, 0)}</Text></Text>
+      {/* Meter Card */}
+      <View style={styles.dataCard}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={[styles.iconBadge, { backgroundColor: '#fef3c7' }]}>
+              <Ionicons name="speedometer" size={18} color="#f59e0b" />
+            </View>
+            <Text style={styles.cardTitle}>Meter Details</Text>
+          </View>
+          <View style={styles.meterTypeBadge}>
+            <Text style={styles.meterTypeText}>{String(r.meter.meter_type).toUpperCase()}</Text>
+          </View>
+        </View>
+        <View style={styles.dataGrid}>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>Meter ID</Text>
+            <Text style={styles.dataValue}>{r.meter.meter_id}</Text>
+          </View>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>Serial Number</Text>
+            <Text style={styles.dataValue}>{r.meter.meter_sn}</Text>
+          </View>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>Multiplier</Text>
+            <Text style={styles.dataValue}>{r.meter.meter_mult ?? "—"}</Text>
+          </View>
+        </View>
+        
+        <View style={styles.readingsRow}>
+          <View style={styles.readingBox}>
+            <Text style={styles.readingLabel}>Previous</Text>
+            <Text style={styles.readingValue}>{fmt(r.indices.prev_index, 0)}</Text>
+          </View>
+          <Ionicons name="arrow-forward" size={24} color="#cbd5e1" />
+          <View style={styles.readingBox}>
+            <Text style={styles.readingLabel}>Current</Text>
+            <Text style={styles.readingValue}>{fmt(r.indices.curr_index, 0)}</Text>
+          </View>
+        </View>
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Charges</Text>
-        <View style={styles.row}><Text style={styles.rowKey}>Consumption</Text><Text style={styles.rowVal}>{fmt(r.billing.consumption, 0)}</Text></View>
-        <View style={styles.row}><Text style={styles.rowKey}>Base</Text><Text style={styles.rowVal}>{peso(r.billing.base)}</Text></View>
+      {/* Charges Card */}
+      <View style={styles.dataCard}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={[styles.iconBadge, { backgroundColor: '#dcfce7' }]}>
+              <Ionicons name="calculator" size={18} color="#16a34a" />
+            </View>
+            <Text style={styles.cardTitle}>Billing Breakdown</Text>
+          </View>
+        </View>
+        
+        <View style={styles.chargeRow}>
+          <Text style={styles.chargeLabel}>Consumption</Text>
+          <Text style={styles.chargeValue}>{fmt(r.billing.consumption, 0)} kWh</Text>
+        </View>
+        
+        <View style={styles.chargeRow}>
+          <Text style={styles.chargeLabel}>Base Charge</Text>
+          <Text style={styles.chargeValue}>{peso(r.billing.base)}</Text>
+        </View>
 
-        <View style={styles.row}>
-          <Text style={styles.rowKey}>VAT</Text>
-          <Text style={styles.rowVal}>{peso(r.billing.vat)}</Text>
+        <View style={styles.chargeRow}>
+          <Text style={styles.chargeLabel}>VAT (12%)</Text>
+          <Text style={styles.chargeValue}>{peso(r.billing.vat)}</Text>
         </View>
         {r.billing.vat === 0 && (
-          <Text style={styles.noteSmall}>No VAT applied (missing/expired rate or tenant has no vat_code).</Text>
+          <Text style={styles.warningText}>
+            <Ionicons name="information-circle" size={12} /> No VAT applied
+          </Text>
         )}
 
-        <View style={styles.row}>
-          <Text style={styles.rowKey}>Withholding</Text>
-          <Text style={styles.rowVal}>{peso(r.billing.wt)}</Text>
+        <View style={styles.chargeRow}>
+          <Text style={styles.chargeLabel}>Withholding Tax</Text>
+          <Text style={[styles.chargeValue, { color: '#dc2626' }]}>-{peso(r.billing.wt)}</Text>
         </View>
         {r.billing.wt === 0 && (
-          <Text style={styles.noteSmall}>No Withholding applied (missing/expired rate or tenant has no wt_code).</Text>
+          <Text style={styles.warningText}>
+            <Ionicons name="information-circle" size={12} /> No withholding applied
+          </Text>
         )}
 
-        <View style={styles.row}>
-          <Text style={styles.rowKey}>
-            Penalty{r.tenant?.for_penalty === false ? " — disabled for tenant" : ""}
+        <View style={styles.chargeRow}>
+          <Text style={styles.chargeLabel}>
+            Penalty {r.tenant?.for_penalty === false && "(disabled)"}
           </Text>
-          <Text style={styles.rowVal}>{peso(r.billing.penalty)}</Text>
+          <Text style={styles.chargeValue}>{peso(r.billing.penalty)}</Text>
         </View>
-        <View style={[styles.row, styles.rowStrong]}><Text style={[styles.rowKey, styles.rowStrongText]}>TOTAL</Text><Text style={[styles.rowVal, styles.rowStrongText]}>{peso(r.billing.total)}</Text></View>
+
+        <View style={styles.dividerLine} />
+        
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>TOTAL AMOUNT DUE</Text>
+          <Text style={styles.totalValue}>{peso(r.billing.total)}</Text>
+        </View>
       </View>
 
+      {/* Usage Trend */}
       <UsageTrendCard
         curr={rocMeter?.meter_id === r.meter.meter_id ? rocMeter?.current_consumption : r.billing.consumption}
         prev={rocMeter?.meter_id === r.meter.meter_id ? rocMeter?.previous_consumption : undefined}
         roc={rocMeter?.meter_id === r.meter.meter_id ? rocMeter?.rate_of_change : undefined}
       />
 
+      {/* Totals if available */}
       {r.totals && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Totals (All)</Text>
-          <View style={styles.row}><Text style={styles.rowKey}>Consumption</Text><Text style={styles.rowVal}>{fmt(r.totals.consumption, 0)}</Text></View>
-          <View style={styles.row}><Text style={styles.rowKey}>Base</Text><Text style={styles.rowVal}>{peso(r.totals.base)}</Text></View>
-          <View style={styles.row}><Text style={styles.rowKey}>VAT</Text><Text style={styles.rowVal}>{peso(r.totals.vat)}</Text></View>
-          <View style={styles.row}><Text style={styles.rowKey}>Withholding</Text><Text style={styles.rowVal}>{peso(r.totals.wt)}</Text></View>
-          <View style={styles.row}><Text style={styles.rowKey}>Penalty</Text><Text style={styles.rowVal}>{peso(r.totals.penalty)}</Text></View>
-          <View style={[styles.row, styles.rowStrong]}><Text style={[styles.rowKey, styles.rowStrongText]}>TOTAL</Text><Text style={[styles.rowVal, styles.rowStrongText]}>{peso(r.totals.total)}</Text></View>
+        <View style={styles.dataCard}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderLeft}>
+              <View style={[styles.iconBadge, { backgroundColor: '#e0e7ff' }]}>
+                <Ionicons name="list" size={18} color="#6366f1" />
+              </View>
+              <Text style={styles.cardTitle}>Summary Totals</Text>
+            </View>
+          </View>
+          
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Total Consumption</Text>
+            <Text style={styles.chargeValue}>{fmt(r.totals.consumption, 0)} kWh</Text>
+          </View>
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Total Base</Text>
+            <Text style={styles.chargeValue}>{peso(r.totals.base)}</Text>
+          </View>
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Total VAT</Text>
+            <Text style={styles.chargeValue}>{peso(r.totals.vat)}</Text>
+          </View>
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Total Withholding</Text>
+            <Text style={[styles.chargeValue, { color: '#dc2626' }]}>-{peso(r.totals.wt)}</Text>
+          </View>
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Total Penalty</Text>
+            <Text style={styles.chargeValue}>{peso(r.totals.penalty)}</Text>
+          </View>
+          
+          <View style={styles.dividerLine} />
+          
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>GRAND TOTAL</Text>
+            <Text style={styles.totalValue}>{peso(r.totals.total)}</Text>
+          </View>
         </View>
       )}
     </View>
@@ -718,7 +908,6 @@ export default function BillingScreen() {
   const LegacyBlock = ({ r }: { r: TenantBillingLegacy }) => {
     const empty = !r.meters || r.meters.length === 0;
 
-    // Meter ROC chooser: tenant ROC -> fan-out map -> local compute -> single-meter ROC
     const meterROC = (m: MeterBillingLegacy): number | null => {
       const fromTenant = rocTenant?.meters?.find(x => x.meter_id === m.meter_id)?.rate_of_change;
       if (fromTenant != null) return fromTenant;
@@ -735,7 +924,6 @@ export default function BillingScreen() {
       return null;
     };
 
-    // ---- Robust trend inputs (ALWAYS try to get prev/curr)
     const sumPrevFromMeters = (r.meters || []).reduce(
       (s, m) => s + (typeof m.previous_consumption === "number" ? m.previous_consumption : 0),
       0
@@ -758,67 +946,126 @@ export default function BillingScreen() {
     const trendROC =
       (rocTenant?.totals?.rate_of_change ?? null) ??
       computeROC(trendCurr, trendPrev);
-    // -----------------------------------------------
 
     return (
-      <View>
-        <View style={styles.card}>
-          <Text style={styles.metaLine}>Tenant: <Text style={styles.metaStrong}>{r.tenant_id}</Text></Text>
-          <Text style={styles.metaLine}>Period End: <Text style={styles.metaStrong}>{r.end_date}</Text></Text>
-          <Text style={styles.metaLine}>Generated: <Text style={styles.metaStrong}>{r.generated_at}</Text></Text>
+      <View style={styles.resultsContainer}>
+        {/* Header Info */}
+        <View style={styles.infoCard}>
+          <View style={styles.infoRow}>
+            <Ionicons name="business-outline" size={16} color="#64748b" />
+            <Text style={styles.infoText}>Tenant: <Text style={styles.infoBold}>{r.tenant_id}</Text></Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Ionicons name="calendar-outline" size={16} color="#64748b" />
+            <Text style={styles.infoText}>Period End: <Text style={styles.infoBold}>{r.end_date}</Text></Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Ionicons name="time-outline" size={16} color="#64748b" />
+            <Text style={styles.infoText}>Generated: <Text style={styles.infoBold}>{new Date(r.generated_at).toLocaleDateString()}</Text></Text>
+          </View>
         </View>
 
         {empty && (
-          <View style={[styles.card, { backgroundColor: "#fff7ed", borderColor: "#fdba74" }]}>
-            <Text style={{ color: "#9a3412", fontWeight: "700", marginBottom: 4 }}>No meters found for this tenant.</Text>
-            <Text style={{ color: "#9a3412" }}>Tips: Check the tenant ID (uppercase), permissions, and meters assignment.</Text>
+          <View style={styles.emptyCard}>
+            <Ionicons name="alert-circle" size={48} color="#f59e0b" style={{ marginBottom: 12 }} />
+            <Text style={styles.emptyTitle}>No Meters Found</Text>
+            <Text style={styles.emptyDesc}>
+              Check the tenant ID, permissions, and meter assignments.
+            </Text>
           </View>
         )}
 
         {!empty && (
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Meters</Text>
+          <View style={styles.dataCard}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardHeaderLeft}>
+                <View style={[styles.iconBadge, { backgroundColor: '#fef3c7' }]}>
+                  <Ionicons name="speedometer" size={18} color="#f59e0b" />
+                </View>
+                <Text style={styles.cardTitle}>Meters ({r.meters.length})</Text>
+              </View>
+            </View>
+            
             <FlatList
               data={r.meters || []}
               keyExtractor={(m, i) => (m.meter_id ? String(m.meter_id) : `m-${i}`)}
               renderItem={({ item }) => (
-                <View style={styles.rowItem}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.rowTitle}>
-                      {(item.meter_id || "—")} <Text style={styles.rowSub}>({String(item.meter_type || "—").toUpperCase()})</Text>
-                    </Text>
-                    <Text style={styles.rowMetaSmall}>
-                      Current: {fmt(item.current_index)} • Previous: {fmt(item.previous_index)} • Cons: {fmt(item.current_consumption)}
-                      {item.previous_consumption !== null && item.previous_consumption !== undefined
-                        ? ` (prev ${fmt(item.previous_consumption)})`
-                        : ""}
-                    </Text>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      <Text style={styles.rowMetaSmall}>ROC:</Text>
-                      <Badge value={meterROC(item)} />
+                <View style={styles.meterCard}>
+                  <View style={styles.meterHeader}>
+                    <View style={styles.meterIdSection}>
+                      <Text style={styles.meterIdText}>{item.meter_id || "—"}</Text>
+                      <View style={styles.meterTypeBadgeSmall}>
+                        <Text style={styles.meterTypeTextSmall}>{String(item.meter_type || "—").toUpperCase()}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.meterCharge}>{peso(item.charge)}</Text>
+                  </View>
+                  
+                  <View style={styles.meterDetails}>
+                    <View style={styles.meterDetailItem}>
+                      <Text style={styles.meterDetailLabel}>Current</Text>
+                      <Text style={styles.meterDetailValue}>{fmt(item.current_index)}</Text>
+                    </View>
+                    <View style={styles.meterDetailItem}>
+                      <Text style={styles.meterDetailLabel}>Previous</Text>
+                      <Text style={styles.meterDetailValue}>{fmt(item.previous_index)}</Text>
+                    </View>
+                    <View style={styles.meterDetailItem}>
+                      <Text style={styles.meterDetailLabel}>Consumption</Text>
+                      <Text style={styles.meterDetailValue}>{fmt(item.current_consumption)}</Text>
                     </View>
                   </View>
-                  <Text style={styles.charge}>{peso(item.charge)}</Text>
+                  
+                  {(item.previous_consumption !== null && item.previous_consumption !== undefined) && (
+                    <Text style={styles.meterPrevCons}>
+                      Previous consumption: {fmt(item.previous_consumption)}
+                    </Text>
+                  )}
+                  
+                  <View style={styles.meterRocRow}>
+                    <Text style={styles.meterRocLabel}>Rate of Change</Text>
+                    <Badge value={meterROC(item)} />
+                  </View>
                 </View>
               )}
               scrollEnabled={false}
-              ListEmptyComponent={<Text style={styles.emptySmall}>No meters found.</Text>}
+              ListEmptyComponent={<Text style={styles.emptyText}>No meters found.</Text>}
             />
-            {rocErr ? (
-              <Text style={{ marginTop: 6, color: "#9a3412" }}>
-                ROC note: {rocErr}
+            
+            {rocErr && (
+              <Text style={styles.warningText}>
+                <Ionicons name="information-circle" size={12} /> {rocErr}
               </Text>
-            ) : null}
+            )}
           </View>
         )}
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Grand Totals</Text>
-          <View style={styles.row}><Text style={styles.rowKey}>Consumption</Text><Text style={styles.rowVal}>{fmt(r.grand_totals.current_consumption, 0)}</Text></View>
-          <View style={styles.row}><Text style={styles.rowKey}>Meters</Text><Text style={styles.rowVal}>{fmt(r.grand_totals.meters, 0)}</Text></View>
-          <View style={[styles.row, styles.rowStrong, { alignItems: "center" }]}>
-            <Text style={[styles.rowKey, styles.rowStrongText]}>Charge</Text>
-            <Text style={[styles.rowVal, styles.rowStrongText]}>{peso(r.grand_totals.charge)}</Text>
+        {/* Grand Totals */}
+        <View style={styles.dataCard}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderLeft}>
+              <View style={[styles.iconBadge, { backgroundColor: '#dcfce7' }]}>
+                <Ionicons name="calculator" size={18} color="#16a34a" />
+              </View>
+              <Text style={styles.cardTitle}>Grand Totals</Text>
+            </View>
+          </View>
+          
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Total Consumption</Text>
+            <Text style={styles.chargeValue}>{fmt(r.grand_totals.current_consumption, 0)} kWh</Text>
+          </View>
+          
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Active Meters</Text>
+            <Text style={styles.chargeValue}>{fmt(r.grand_totals.meters, 0)}</Text>
+          </View>
+          
+          <View style={styles.dividerLine} />
+          
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>TOTAL CHARGE</Text>
+            <Text style={styles.totalValue}>{peso(r.grand_totals.charge)}</Text>
           </View>
         </View>
 
@@ -828,84 +1075,658 @@ export default function BillingScreen() {
   };
 
   return (
-    <View style={styles.wrap}>
-      {Header}
-      {Inputs}
-      {!v2 && !legacy ? (
-        <View style={styles.empty}><Text style={styles.emptyText}>Enter IDs and date, then tap Generate.</Text></View>
-      ) : (
-        <ScrollView style={{ flex: 1 }}>
-          {v2 && <V2Block r={v2} />}
-          {legacy && <LegacyBlock r={legacy} />}
-        </ScrollView>
-      )}
+    <View style={styles.container}>
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {Header}
+        {Inputs}
+        
+        {!v2 && !legacy ? (
+          <View style={styles.placeholderCard}>
+            <Ionicons name="document-text-outline" size={64} color="#cbd5e1" style={{ marginBottom: 16 }} />
+            <Text style={styles.placeholderTitle}>Ready to Generate</Text>
+            <Text style={styles.placeholderText}>
+              Enter the required IDs and date above, then tap Generate to create a billing report.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {v2 && <V2Block r={v2} />}
+            {legacy && <LegacyBlock r={legacy} />}
+          </>
+        )}
+      </ScrollView>
     </View>
   );
 }
 
 /* ==================== Styles ==================== */
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, backgroundColor: "#f6f8fb" },
-  header: { flexDirection: "row", alignItems: "center", marginBottom: 10, justifyContent: "space-between" },
-  title: { fontSize: 18, fontWeight: "700", color: "#102a43" },
-  modeChips: { flexDirection: "row", gap: 8 },
-
-  inputs: { flexDirection: "row", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 },
-  input: {
-    backgroundColor: "#fff",
-    borderColor: "#dbe2ef",
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: "#102a43",
+  container: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
   },
-
-  btn: { flexDirection: "row", alignItems: "center", backgroundColor: "#2563eb", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10 },
-  btnDisabled: { opacity: 0.6 },
-  btnText: { color: "#fff", fontWeight: "600" },
-
-  btnGhost: { flexDirection: "row", alignItems: "center", backgroundColor: "#e8eefc", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10 },
-  btnGhostDisabled: { opacity: 0.5 },
-  btnGhostText: { color: "#394e6a", fontWeight: "600" },
-
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  emptyText: { color: "#7b8794" },
-  emptySmall: { color: "#7b8794", paddingHorizontal: 8, paddingVertical: 14 },
-
-  card: { backgroundColor: "#fff", borderRadius: 12, borderWidth: 1, borderColor: "#e5e7eb", padding: 12, marginBottom: 10 },
-  sectionTitle: { marginBottom: 6, color: "#0f172a", fontWeight: "700" },
-  metaLine: { color: "#334155", marginBottom: 2 },
-  metaStrong: { fontWeight: "700" },
-
-  row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#f0f2f7" },
-  rowStrong: { borderBottomWidth: 0, paddingTop: 12, backgroundColor: "#f1f5ff", borderRadius: 8 },
-  rowKey: { color: "#475569", fontWeight: "700" },
-  rowVal: { color: "#1e293b" },
-  rowStrongText: { fontWeight: "900", color: "#0f172a", letterSpacing: 0.25, fontSize: 16 },
-
-  rowItem: { backgroundColor: "#fff", borderRadius: 12, borderWidth: 1, borderColor: "#e5e7eb", padding: 12, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 10 },
-  rowTitle: { fontWeight: "700", color: "#0f172a" },
-  rowSub: { color: "#64748b", fontWeight: "400" },
-  rowMetaSmall: { color: "#64748b", marginTop: 2, fontSize: 12 },
-  charge: { fontSize: 16, fontWeight: "800", color: "#111827" },
-
-  chip: { borderRadius: 999, borderWidth: 1, borderColor: "#cbd5e1", paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#fff" },
-  chipActive: { backgroundColor: "#e7efff", borderColor: "#93c5fd" },
-  chipIdle: {},
-  chipText: { fontSize: 12, color: "#0f172a" },
-  chipTextActive: { color: "#1d4ed8", fontWeight: "700" },
-  chipTextIdle: { color: "#334155" },
-
-  // ROC badges
-  badgeBox: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, alignSelf: "flex-start" },
-  badgeText: { fontWeight: "800", fontSize: 12 },
-  badgeUpBox: { backgroundColor: "#dcfce7" },
-  badgeUpText: { color: "#166534" },
-  badgeDownBox: { backgroundColor: "#fee2e2" },
-  badgeDownText: { color: "#991b1b" },
-  badgeNeutralBox: { backgroundColor: "#e5e7eb" },
-  badgeNeutralText: { color: "#111827" },
-
-  noteSmall: { color: "#64748b", fontSize: 12, marginTop: 2 },
+  scrollView: {
+    flex: 1,
+  },
+  
+  // Header
+  headerContainer: {
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
+  headerTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  iconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#eff6ff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  
+  // Mode Chips
+  modeChips: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  chip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  chipActive: {
+    backgroundColor: "#3b82f6",
+    borderColor: "#3b82f6",
+  },
+  chipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  chipTextActive: {
+    color: "#fff",
+  },
+  
+  // Inputs Card
+  inputsCard: {
+    backgroundColor: "#fff",
+    marginHorizontal: 20,
+    marginTop: 16,
+    borderRadius: 16,
+    padding: 20,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
+  },
+  inputRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginBottom: 16,
+  },
+  inputGroup: {
+    flex: 1,
+    minWidth: 140,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748b",
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#0f172a",
+    fontWeight: "500",
+  },
+  
+  // Action Buttons
+  actionRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  btnPrimary: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#3b82f6",
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#3b82f6",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
+  btnPrimaryText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  btnSecondary: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#eff6ff",
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+  },
+  btnSecondaryDisabled: {
+    opacity: 0.4,
+  },
+  btnSecondaryText: {
+    color: "#3b82f6",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  
+  // Placeholder
+  placeholderCard: {
+    backgroundColor: "#fff",
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 32,
+    borderRadius: 16,
+    padding: 48,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#e2e8f0",
+    borderStyle: "dashed",
+  },
+  placeholderTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#334155",
+    marginBottom: 8,
+  },
+  placeholderText: {
+    fontSize: 14,
+    color: "#64748b",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  
+  // Results Container
+  resultsContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 32,
+  },
+  
+  // Info Card
+  infoCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  infoText: {
+    fontSize: 14,
+    color: "#64748b",
+  },
+  infoBold: {
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  periodRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 8,
+  },
+  periodItem: {
+    flex: 1,
+  },
+  periodLabel: {
+    fontSize: 12,
+    color: "#94a3b8",
+    marginBottom: 4,
+  },
+  periodValue: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#334155",
+  },
+  
+  // Data Cards
+  dataCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
+  },
+  cardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  cardHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  iconBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  
+  // Data Grid
+  dataGrid: {
+    gap: 16,
+  },
+  dataItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  dataLabel: {
+    fontSize: 14,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  dataValue: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#0f172a",
+  },
+  
+  // Status Badges
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusActive: {
+    backgroundColor: "#dcfce7",
+  },
+  statusInactive: {
+    backgroundColor: "#fee2e2",
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  statusActiveText: {
+    color: "#166534",
+  },
+  statusInactiveText: {
+    color: "#991b1b",
+  },
+  
+  // Meter Type Badge
+  meterTypeBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#fef3c7",
+  },
+  meterTypeText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#92400e",
+  },
+  
+  // Readings Row
+  readingsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+  },
+  readingBox: {
+    alignItems: "center",
+    flex: 1,
+  },
+  readingLabel: {
+    fontSize: 13,
+    color: "#64748b",
+    marginBottom: 6,
+    fontWeight: "500",
+  },
+  readingValue: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  
+  // Charge Rows
+  chargeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  chargeLabel: {
+    fontSize: 15,
+    color: "#475569",
+    fontWeight: "500",
+  },
+  chargeValue: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  
+  // Warning Text
+  warningText: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: -8,
+    marginBottom: 8,
+    fontStyle: "italic",
+  },
+  
+  // Divider
+  dividerLine: {
+    height: 1,
+    backgroundColor: "#e2e8f0",
+    marginVertical: 16,
+  },
+  
+  // Total Row
+  totalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  totalLabel: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#334155",
+    letterSpacing: 0.5,
+  },
+  totalValue: {
+    fontSize: 24,
+    fontWeight: "900",
+    color: "#3b82f6",
+  },
+  
+  // Trend Card
+  trendCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#8b5cf6",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
+  },
+  trendContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 16,
+  },
+  trendItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  trendLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 8,
+    fontWeight: "500",
+  },
+  trendValue: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 4,
+  },
+  trendUnit: {
+    fontSize: 13,
+    color: "#94a3b8",
+    fontWeight: "600",
+  },
+  trendDivider: {
+    width: 1,
+    height: 60,
+    backgroundColor: "#e2e8f0",
+    marginHorizontal: 20,
+  },
+  
+  // ROC Badges
+  badgeBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  badgeText: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  badgeUpBox: {
+    backgroundColor: "#dcfce7",
+  },
+  badgeUpText: {
+    color: "#166534",
+  },
+  badgeDownBox: {
+    backgroundColor: "#fee2e2",
+  },
+  badgeDownText: {
+    color: "#991b1b",
+  },
+  badgeNeutralBox: {
+    backgroundColor: "#f1f5f9",
+  },
+  badgeNeutralText: {
+    color: "#475569",
+  },
+  
+  // Meter Cards (Legacy)
+  meterCard: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  meterHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  meterIdSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  meterIdText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  meterTypeBadgeSmall: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: "#fef3c7",
+  },
+  meterTypeTextSmall: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#92400e",
+  },
+  meterCharge: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#16a34a",
+  },
+  meterDetails: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 8,
+  },
+  meterDetailItem: {
+    flex: 1,
+  },
+  meterDetailLabel: {
+    fontSize: 11,
+    color: "#64748b",
+    marginBottom: 4,
+    fontWeight: "500",
+  },
+  meterDetailValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  meterPrevCons: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 8,
+    fontStyle: "italic",
+  },
+  meterRocRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
+  },
+  meterRocLabel: {
+    fontSize: 13,
+    color: "#475569",
+    fontWeight: "600",
+  },
+  
+  // Empty States
+  emptyCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 48,
+    marginBottom: 12,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#fef3c7",
+    borderStyle: "dashed",
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#92400e",
+    marginBottom: 8,
+  },
+  emptyDesc: {
+    fontSize: 14,
+    color: "#78350f",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: "#94a3b8",
+    textAlign: "center",
+    paddingVertical: 24,
+  },
 });
