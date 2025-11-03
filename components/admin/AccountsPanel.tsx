@@ -1,3 +1,4 @@
+// components/admin/AccountsPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -18,21 +19,18 @@ import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 
-const { width } = Dimensions.get("window");
-
-/** Types */
-type Role = "admin" | "operator" | "biller";
+/** ===== Types (match updated backend) =====
+ * Backend now uses arrays: user_roles: string[], building_ids: string[], utility_role: string[]
+ * See routes/users.js for details. */
+type Role = "admin" | "operator" | "biller" | "reader";
 type Util = "electric" | "water" | "lpg";
-const UTIL_OPTIONS: Util[] = ["electric", "water", "lpg"];
 
 type User = {
   user_id: string;
   user_fullname: string;
-  user_level: Role;
-  building_id: string | null;
-  utility_role?: Util[] | null;
-  last_updated?: string;
-  updated_by?: string;
+  user_roles: Role[];
+  building_ids: string[];
+  utility_role: Util[];
 };
 
 type Building = {
@@ -40,86 +38,77 @@ type Building = {
   building_name: string;
 };
 
-const notify = (title: string, message: string) => {
-  if (Platform.OS === "web" && typeof window !== "undefined") {
-    window.alert(`${title}\n\n${message}`);
+const ALL_ROLES: Role[] = ["admin", "operator", "biller", "reader"];
+const ALL_UTILS: Util[] = ["electric", "water", "lpg"];
+
+const { width: W } = Dimensions.get("window");
+
+/* ---------- helpers ---------- */
+const notify = (title: string, message?: string) => {
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}\n\n${message}` : title);
   } else {
     Alert.alert(title, message);
   }
 };
-
-const confirm = (title: string, message: string): Promise<boolean> => {
-  if (Platform.OS === "web" && typeof window !== "undefined") {
-    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
-  }
-  return new Promise((resolve) => {
-    Alert.alert(title, message, [
-      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
-    ]);
-  });
+const errorText = (err: any, fallback = "Server error.") => {
+  const d = err?.response?.data;
+  if (typeof d === "string") return d;
+  if (d?.error) return String(d.error);
+  if (d?.message) return String(d.message);
+  if (err?.message) return String(err.message);
+  try { return JSON.stringify(d ?? err); } catch { return fallback; }
 };
+const toggleIn = <T,>(v: T, list: T[], set: (x: T[]) => void) =>
+  list.includes(v) ? set(list.filter((x) => x !== v)) : set([...list, v]);
 
-const fmtDate = (iso?: string) => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString();
-};
+/** Tiny chip */
+const Chip = ({
+  label,
+  active,
+  onPress,
+  style,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  style?: any;
+}) => (
+  <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle, style]}>
+    <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+  </TouchableOpacity>
+);
 
-const parseUtils = (val: any): Util[] | null => {
-  if (val == null) return null;
-  if (Array.isArray(val)) return val as Util[];
-  try {
-    const arr = JSON.parse(String(val));
-    return Array.isArray(arr) ? (arr as Util[]) : null;
-  } catch {
-    return null;
-  }
-};
-
-/** Component */
 export default function AccountsPanel({ token }: { token: string | null }) {
   const [busy, setBusy] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [query, setQuery] = useState("");
-
-  // Building filter (shown below search)
-  const [filterBuilding, setFilterBuilding] = useState<string>("");
-
-  // NEW: “Other filters” modal state
-  const [otherFiltersVisible, setOtherFiltersVisible] = useState(false);
-  const [filterRole, setFilterRole] = useState<Role | "">(""); // empty = any
-  const [filterUtils, setFilterUtils] = useState<Util[]>([]);   // multi-select
+  const [roleFilter, setRoleFilter] = useState<Role | "">("");
+  const [buildingFilter, setBuildingFilter] = useState<string>("");
 
   // Create form
   const [createVisible, setCreateVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [fullname, setFullname] = useState("");
-  const [password, setPassword] = useState("");
-  const [level, setLevel] = useState<Role>("operator");
-  const [buildingId, setBuildingId] = useState<string>("");
-  const [utilRoles, setUtilRoles] = useState<Util[]>([]);
+  const [c_fullname, setC_fullname] = useState("");
+  const [c_password, setC_password] = useState("");
+  const [c_roles, setC_roles] = useState<Role[]>(["operator"]);
+  const [c_buildings, setC_buildings] = useState<string[]>([]);
+  const [c_utils, setC_utils] = useState<Util[]>([]);
 
   // Edit form
-  const [editUser, setEditUser] = useState<User | null>(null);
-  const [editFullname, setEditFullname] = useState("");
-  const [editPassword, setEditPassword] = useState("");
-  const [editLevel, setEditLevel] = useState<Role>("operator");
-  const [editBuildingId, setEditBuildingId] = useState<string>("");
-  const [editUtilRoles, setEditUtilRoles] = useState<Util[]>([]);
   const [editVisible, setEditVisible] = useState(false);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [e_fullname, setE_fullname] = useState("");
+  const [e_password, setE_password] = useState("");
+  const [e_roles, setE_roles] = useState<Role[]>([]);
+  const [e_buildings, setE_buildings] = useState<string[]>([]);
+  const [e_utils, setE_utils] = useState<Util[]>([]);
 
-  const authHeader = useMemo(
-    () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token]
-  );
-  const api = useMemo(
-    () => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
-    [authHeader]
-  );
+  const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
+  const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
 
+  /* ---------- load ---------- */
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
@@ -128,707 +117,367 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     }
     try {
       setBusy(true);
-      const [uRes, bRes] = await Promise.all([
-        api.get<User[]>("/users"),
-        api.get<Building[]>("/buildings"),
-      ]);
-
-      setUsers(
-        (uRes.data || []).map((u: any) => ({
-          ...u,
-          user_level: String(u.user_level).toLowerCase(),
-          building_id: u.building_id == null ? null : String(u.building_id),
-          utility_role: parseUtils(u.utility_role),
-        }))
-      );
-
+      // /users is admin-only; /buildings is also admin-only (used for selecting building_ids)
+      const [uRes, bRes] = await Promise.all([api.get<User[]>("/users"), api.get<Building[]>("/buildings")]);
+      setUsers((uRes.data || []).map((u: any) => ({
+        user_id: String(u.user_id),
+        user_fullname: String(u.user_fullname ?? ""),
+        user_roles: Array.isArray(u.user_roles) ? (u.user_roles as Role[]) : [],
+        building_ids: Array.isArray(u.building_ids) ? (u.building_ids as string[]) : [],
+        utility_role: Array.isArray(u.utility_role) ? (u.utility_role as Util[]) : [],
+      })));
       setBuildings(bRes.data || []);
-      if (!buildingId && bRes.data?.length) setBuildingId(bRes.data[0].building_id);
-    } catch (err: any) {
-      console.error(err?.message || err);
-      notify(
-        "Load failed",
-        err?.response?.data?.error || err?.message || "Unable to load accounts."
-      );
+    } catch (err) {
+      notify("Load failed", errorText(err, "Unable to load users."));
     } finally {
       setBusy(false);
     }
   };
 
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [token]);
 
-  // Helpers
-  const roleNeedsBuilding = (r: Role) => r !== "admin";
-  const roleUsesUtilities = (r: Role) => r !== "admin";
-  const toggleUtilLocal = (u: Util, list: Util[], setter: (v: Util[]) => void) =>
-    list.includes(u) ? setter(list.filter((x) => x !== u)) : setter([...list, u]);
-
-  // Apply text + building + other-filters
+  /* ---------- derived ---------- */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return users.filter((u) => {
-      // text
-      const s = `${u.user_id} ${u.user_fullname} ${u.user_level} ${u.building_id ?? ""}`.toLowerCase();
+      const s = `${u.user_id} ${u.user_fullname} ${u.user_roles.join(",")} ${u.building_ids.join(",")} ${(u.utility_role||[]).join(",")}`.toLowerCase();
       const textOk = q ? s.includes(q) : true;
-
-      // building
-      const bldgOk = filterBuilding ? u.building_id === filterBuilding : true;
-
-      // role (optional)
-      const roleOk = filterRole ? u.user_level === filterRole : true;
-
-      // utilities (if any selected, require overlap)
-      const utilsOk =
-        filterUtils.length === 0
-          ? true
-          : (u.utility_role || []).some((x) => filterUtils.includes(x as Util));
-
-      return textOk && bldgOk && roleOk && utilsOk;
+      const roleOk = roleFilter ? u.user_roles.includes(roleFilter) : true;
+      const bldgOk = buildingFilter ? u.building_ids.includes(buildingFilter) : true;
+      return textOk && roleOk && bldgOk;
     });
-  }, [users, query, filterBuilding, filterRole, filterUtils]);
+  }, [users, query, roleFilter, buildingFilter]);
 
+  /* ---------- create ---------- */
   const resetCreate = () => {
-    setFullname("");
-    setPassword("");
-    setLevel("operator");
-    setBuildingId(buildings[0]?.building_id ?? "");
-    setUtilRoles([]);
+    setC_fullname(""); setC_password("");
+    setC_roles(["operator"]);
+    setC_buildings([]);
+    setC_utils([]);
   };
 
   const onCreate = async () => {
-    if (!fullname || !password || !level) {
-      notify("Missing fields", "Full name, password, and role are required.");
+    if (!c_fullname || !c_password) {
+      notify("Missing fields", "Full name and password are required.");
       return;
     }
-    if (roleNeedsBuilding(level) && !buildingId) {
-      notify("Missing building", "Select a building for non-admin users.");
+    if (c_roles.length === 0) {
+      notify("Missing roles", "Select at least one role.");
       return;
     }
     try {
       setSubmitting(true);
-      const payload: any = {
-        user_fullname: fullname,
-        user_password: password,
-        user_level: level,
-      };
-      payload.building_id = level === "admin" ? null : buildingId || null;
-      payload.utility_role = roleUsesUtilities(level) ? utilRoles : null;
-      await api.post("/users", payload);
+      await api.post("/users", {
+        user_fullname: c_fullname,
+        user_password: c_password,
+        user_roles: c_roles,
+        building_ids: c_buildings,
+        utility_role: c_utils,
+      });
       setCreateVisible(false);
       resetCreate();
       await loadAll();
       notify("Success", "Account created.");
-    } catch (e: any) {
-      notify("Create failed", e?.response?.data?.error || e?.message || "Unable to create.");
+    } catch (err) {
+      notify("Create failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
+  /* ---------- edit ---------- */
   const openEdit = (u: User) => {
     setEditUser(u);
-    setEditFullname(u.user_fullname);
-    setEditPassword("");
-    setEditLevel(u.user_level);
-    setEditBuildingId(u.building_id ?? "");
-    setEditUtilRoles(u.utility_role ?? []);
+    setE_fullname(u.user_fullname);
+    setE_password("");
+    setE_roles(u.user_roles || []);
+    setE_buildings(u.building_ids || []);
+    setE_utils(u.utility_role || []);
     setEditVisible(true);
   };
 
   const onUpdate = async () => {
     if (!editUser) return;
-    if (roleNeedsBuilding(editLevel) && !editBuildingId) {
-      notify("Missing building", "Select a building for non-admin users.");
+    if (!e_fullname) {
+      notify("Missing fields", "Full name is required.");
+      return;
+    }
+    if (e_roles.length === 0) {
+      notify("Missing roles", "Select at least one role.");
       return;
     }
     try {
       setSubmitting(true);
-      const payload: any = { user_fullname: editFullname, user_level: editLevel };
-      if (editPassword) payload.user_password = editPassword;
-      payload.building_id = editLevel === "admin" ? (editBuildingId || null) : editBuildingId;
-      payload.utility_role = roleUsesUtilities(editLevel) ? editUtilRoles : null;
-
+      const payload: any = {
+        user_fullname: e_fullname,
+        user_roles: e_roles,
+        building_ids: e_buildings,
+        utility_role: e_utils,
+      };
+      if (e_password) payload.user_password = e_password;
       await api.put(`/users/${encodeURIComponent(editUser.user_id)}`, payload);
       setEditVisible(false);
       await loadAll();
       notify("Updated", "Account updated.");
-    } catch (e: any) {
-      notify("Update failed", e?.response?.data?.error || e?.message || "Unable to update.");
+    } catch (err) {
+      notify("Update failed", errorText(err));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const onDelete = async (u: User) => {
-    const ok = await confirm("Delete account", `Are you sure you want to delete ${u.user_fullname}?`);
-    if (!ok) return;
-    try {
-      setSubmitting(true);
-      await api.delete(`/users/${encodeURIComponent(u.user_id)}`);
-      await loadAll();
-      notify("Deleted", "Account removed.");
-    } catch (e: any) {
-      notify("Delete failed", e?.response?.data?.error || e?.message || "Unable to delete.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // UI helpers (chips & dropdown)
-  const RoleChip = ({ value, selected, onPress }: { value: Role; selected: boolean; onPress: () => void }) => (
-    <TouchableOpacity onPress={onPress} style={[styles.chip, selected && styles.chipActive]}>
-      <Text style={[styles.chipText, selected && styles.chipTextActive]}>
-        {value === "admin" ? "Admin" : value === "operator" ? "Operator" : "Biller"}
-      </Text>
-    </TouchableOpacity>
-  );
-
-  const UtilChip = ({ value, selected, onPress }: { value: Util; selected: boolean; onPress: () => void }) => (
-    <TouchableOpacity onPress={onPress} style={[styles.chip, selected && styles.chipActive]}>
-      <Text style={[styles.chipText, selected && styles.chipTextActive]}>
-        {value === "electric" ? "Electric" : value === "water" ? "Water" : "LPG"}
-      </Text>
-    </TouchableOpacity>
-  );
-
-  const BuildingDropdown = ({
-    value,
-    onChange,
-    small,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-    small?: boolean;
-  }) => (
-    <View style={[styles.selectWrap, small && { height: 36 }]}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: "center" }}>
-        <TouchableOpacity
-          style={[styles.selectItem, value === "" && styles.selectItemActive]}
-          onPress={() => onChange("")}
-        >
-          <Ionicons name="business-outline" size={14} color={value === "" ? "#082cac" : "#475569"} />
-          <Text style={[styles.selectItemText, value === "" && styles.selectItemTextActive]}>All</Text>
-        </TouchableOpacity>
-        {buildings.map((b) => {
-          const active = value === b.building_id;
-          return (
-            <TouchableOpacity
-              key={b.building_id}
-              style={[styles.selectItem, active && styles.selectItemActive]}
-              onPress={() => onChange(b.building_id)}
-            >
-              <Ionicons name="business-outline" size={14} color={active ? "#082cac" : "#475569"} />
-              <Text style={[styles.selectItemText, active && styles.selectItemTextActive]}>
-                {b.building_name}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
-
-  // Row renderer
-  const renderItem = ({ item }: { item: User }) => {
-    const b = buildings.find((bb) => bb.building_id === item.building_id);
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>{item.user_fullname}</Text>
-            <Text style={styles.cardSub}>
-              {item.user_id} • <Text style={{ textTransform: "capitalize" }}>{item.user_level}</Text>
-              {item.utility_role?.length ? ` • ${item.utility_role.join(", ")}` : ""}
-              {item.building_id ? ` • ${b?.building_name || item.building_id}` : ""}
-            </Text>
-          </View>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => openEdit(item)}>
-              <Ionicons name="create-outline" size={16} color="#082cac" />
-              <Text style={[styles.btnText, { color: "#082cac" }]}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.btnDanger]} onPress={() => onDelete(item)}>
-              <Ionicons name="trash-outline" size={16} color="#fff" />
-              <Text style={[styles.btnText, { color: "#fff" }]}>Delete</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.metaRow}>
-          <View style={styles.metaPill}>
-            <Ionicons name="time-outline" size={14} color="#475569" />
-            <Text style={styles.metaText}>Updated: {fmtDate(item.last_updated)}</Text>
-          </View>
-          {!!item.updated_by && (
-            <View style={styles.metaPill}>
-              <Ionicons name="person-outline" size={14} color="#475569" />
-              <Text style={styles.metaText}>By {item.updated_by}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    );
-  };
-
-  // Empty state
-  const Empty = () => (
-    <View style={styles.emptyWrap}>
-      <Ionicons name="people-circle-outline" size={40} color="#a3b0bf" />
-      <Text style={styles.emptyTitle}>No accounts found</Text>
-      <Text style={styles.emptySub}>Try adjusting your search or create a new account.</Text>
-      <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={() => setCreateVisible(true)}>
-        <Ionicons name="person-add-outline" size={16} color="#fff" />
-        <Text style={[styles.btnText, { color: "#fff" }]}>New Account</Text>
+  /* ---------- UI ---------- */
+  const Header = () => (
+    <View style={styles.headerRow}>
+      <Text style={styles.title}>Manage Accounts</Text>
+      <TouchableOpacity style={styles.primaryBtn} onPress={() => setCreateVisible(true)}>
+        <Ionicons name="add" size={16} color="#fff" />
+        <Text style={styles.primaryBtnText}>Create User</Text>
       </TouchableOpacity>
     </View>
   );
 
-  // Other Filters modal content
-  const OtherFiltersModal = () => (
-    <Modal
-      visible={otherFiltersVisible}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setOtherFiltersVisible(false)}
-    >
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={() => setOtherFiltersVisible(false)}
+  const Toolbar = () => (
+    <View style={styles.toolbar}>
+      <View style={[styles.searchWrap, { flex: 1 }]}>
+        <Ionicons name="search-outline" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search users…"
+          placeholderTextColor="#94a3b8"
+          style={styles.searchInput}
         />
-        <View style={styles.modalCard}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitle}>Other filters</Text>
-            <TouchableOpacity onPress={() => setOtherFiltersVisible(false)}>
-              <Ionicons name="close" size={22} color="#334155" />
-            </TouchableOpacity>
-          </View>
+      </View>
 
-          <ScrollView contentContainerStyle={{ paddingBottom: 10 }}>
-            {/* Role filter */}
-            <Text style={styles.fieldLabel}>Role</Text>
-            <View style={styles.chipsRow}>
-              <TouchableOpacity
-                onPress={() => setFilterRole("")}
-                style={[styles.chip, filterRole === "" && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, filterRole === "" && styles.chipTextActive]}>Any</Text>
-              </TouchableOpacity>
-              {(["operator", "biller", "admin"] as Role[]).map((r) => (
-                <RoleChip key={r} value={r} selected={filterRole === r} onPress={() => setFilterRole(r)} />
+      <View style={styles.toolbarChips}>
+        <View style={styles.filtersGroup}>
+          <Text style={styles.filterLabel}>Role:</Text>
+          <Chip label="All" active={roleFilter === ""} onPress={() => setRoleFilter("")} />
+          {ALL_ROLES.map((r) => (
+            <Chip key={r} label={r} active={roleFilter === r} onPress={() => setRoleFilter(r)} />
+          ))}
+        </View>
+
+        <View style={styles.filtersGroup}>
+          <Text style={styles.filterLabel}>Building:</Text>
+          <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+          {buildings.slice(0, 6).map((b) => (
+            <Chip
+              key={b.building_id}
+              label={b.building_name || b.building_id}
+              active={buildingFilter === b.building_id}
+              onPress={() => setBuildingFilter(b.building_id)}
+            />
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+
+  const Row = ({ item }: { item: User }) => (
+    <TouchableOpacity style={styles.row} onPress={() => openEdit(item)}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowName}>{item.user_fullname}</Text>
+        <Text style={styles.rowMeta}>
+          {item.user_id} • Roles: {item.user_roles.join(", ") || "—"}
+        </Text>
+        <Text style={styles.rowMeta}>
+          Buildings: {item.building_ids.join(", ") || "—"} • Utilities: {item.utility_role.join(", ") || "—"}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#475569" />
+    </TouchableOpacity>
+  );
+
+  const CreateModal = () => (
+    <Modal visible={createVisible} onRequestClose={() => setCreateVisible(false)} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Create User</Text>
+          <ScrollView contentContainerStyle={{ paddingBottom: 16 }}>
+            <Text style={styles.label}>Full name</Text>
+            <TextInput value={c_fullname} onChangeText={setC_fullname} style={styles.input} />
+
+            <Text style={styles.label}>Password</Text>
+            <TextInput value={c_password} onChangeText={setC_password} secureTextEntry style={styles.input} />
+
+            <Text style={styles.label}>Roles</Text>
+            <View style={styles.multiRow}>
+              {ALL_ROLES.map((r) => (
+                <Chip key={r} label={r} active={c_roles.includes(r)} onPress={() => toggleIn(r, c_roles, setC_roles)} />
               ))}
             </View>
 
-            {/* Utility filter */}
-            <Text style={styles.fieldLabel}>Utilities</Text>
-            <View style={styles.chipsRow}>
-              {UTIL_OPTIONS.map((u) => (
-                <UtilChip
-                  key={u}
-                  value={u}
-                  selected={filterUtils.includes(u)}
-                  onPress={() => toggleUtilLocal(u, filterUtils, setFilterUtils)}
+            <Text style={styles.label}>Buildings</Text>
+            <View style={styles.multiRow}>
+              {buildings.map((b) => (
+                <Chip
+                  key={b.building_id}
+                  label={b.building_name || b.building_id}
+                  active={c_buildings.includes(b.building_id)}
+                  onPress={() => toggleIn(b.building_id, c_buildings, setC_buildings)}
                 />
+              ))}
+            </View>
+
+            <Text style={styles.label}>Utility roles</Text>
+            <View style={styles.multiRow}>
+              {ALL_UTILS.map((u) => (
+                <Chip key={u} label={u} active={c_utils.includes(u)} onPress={() => toggleIn(u, c_utils, setC_utils)} />
               ))}
             </View>
           </ScrollView>
 
           <View style={styles.modalActions}>
-            <TouchableOpacity
-              style={[styles.btn, styles.btnGhost]}
-              onPress={() => {
-                setFilterRole("");
-                setFilterUtils([]);
-              }}
-            >
-              <Text style={[styles.btnText, { color: "#082cac" }]}>Reset</Text>
+            <TouchableOpacity style={styles.ghostBtn} onPress={() => setCreateVisible(false)}>
+              <Text style={styles.ghostBtnText}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.btn, styles.btnPrimary]}
-              onPress={() => setOtherFiltersVisible(false)}
-            >
-              <Text style={[styles.btnText, { color: "#fff" }]}>Apply</Text>
+            <TouchableOpacity style={styles.primaryBtn} disabled={submitting} onPress={onCreate}>
+              {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Create</Text>}
             </TouchableOpacity>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+
+  const EditModal = () => (
+    <Modal visible={editVisible} onRequestClose={() => setEditVisible(false)} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Edit User</Text>
+          <ScrollView contentContainerStyle={{ paddingBottom: 16 }}>
+            <Text style={styles.label}>User ID</Text>
+            <View style={[styles.input, { backgroundColor: "#f1f5f9" }]}>
+              <Text selectable style={{ color: "#475569" }}>{editUser?.user_id}</Text>
+            </View>
+
+            <Text style={styles.label}>Full name</Text>
+            <TextInput value={e_fullname} onChangeText={setE_fullname} style={styles.input} />
+
+            <Text style={styles.label}>New password (optional)</Text>
+            <TextInput value={e_password} onChangeText={setE_password} secureTextEntry style={styles.input} placeholder="Leave blank to keep current" />
+
+            <Text style={styles.label}>Roles</Text>
+            <View style={styles.multiRow}>
+              {ALL_ROLES.map((r) => (
+                <Chip key={r} label={r} active={e_roles.includes(r)} onPress={() => toggleIn(r, e_roles, setE_roles)} />
+              ))}
+            </View>
+
+            <Text style={styles.label}>Buildings</Text>
+            <View style={styles.multiRow}>
+              {buildings.map((b) => (
+                <Chip
+                  key={b.building_id}
+                  label={b.building_name || b.building_id}
+                  active={e_buildings.includes(b.building_id)}
+                  onPress={() => toggleIn(b.building_id, e_buildings, setE_buildings)}
+                />
+              ))}
+            </View>
+
+            <Text style={styles.label}>Utility roles</Text>
+            <View style={styles.multiRow}>
+              {ALL_UTILS.map((u) => (
+                <Chip key={u} label={u} active={e_utils.includes(u)} onPress={() => toggleIn(u, e_utils, setE_utils)} />
+              ))}
+            </View>
+          </ScrollView>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity style={styles.ghostBtn} onPress={() => setEditVisible(false)}>
+              <Text style={styles.ghostBtnText}>Close</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.primaryBtn} disabled={submitting} onPress={onUpdate}>
+              {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Save</Text>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 
   return (
-    <View style={{ flex: 1 }}>
-      {/* Header card */}
+    <View style={styles.page}>
       <View style={styles.card}>
-        <View style={styles.topRow}>
-          <Text style={styles.h1}>Accounts</Text>
-          <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={() => setCreateVisible(true)}>
-            <Ionicons name="person-add-outline" size={16} color="#fff" />
-            <Text style={[styles.btnText, { color: "#fff" }]}>New</Text>
-          </TouchableOpacity>
-        </View>
+        <Header />
+        <Toolbar />
 
-        {/* Search + Other Filters button (side by side) */}
-        <View style={styles.searchRow}>
-          <View style={[styles.searchWrap, { flex: 1 }]}>
-            <Ionicons name="search-outline" size={16} color="#64748b" />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search by name, ID, role, or building…"
-              placeholderTextColor="#94a3b8"
-              style={styles.search}
-            />
-          </View>
-          <TouchableOpacity
-            style={[styles.btn, styles.btnGhost, styles.otherBtn]}
-            onPress={() => setOtherFiltersVisible(true)}
-          >
-            <Ionicons name="options-outline" size={16} color="#082cac" />
-            <Text style={[styles.btnText, { color: "#082cac" }]}>Other filters</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Building filter BELOW search */}
-        <Text style={styles.filterLabel}>Filter by building</Text>
-        <BuildingDropdown value={filterBuilding} onChange={setFilterBuilding} />
+        {busy ? (
+          <View style={styles.loadingWrap}><ActivityIndicator size="large" /></View>
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={(u) => u.user_id}
+            ItemSeparatorComponent={() => <View style={styles.sep} />}
+            renderItem={Row}
+            contentContainerStyle={{ paddingBottom: 12 }}
+          />
+        )}
       </View>
 
-      {/* List */}
-      {busy ? (
-        <View style={{ padding: 20, alignItems: "center" }}>
-          <ActivityIndicator />
-        </View>
-      ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(it) => it.user_id}
-          contentContainerStyle={{ paddingVertical: 12, paddingBottom: 40 }}
-          renderItem={renderItem}
-          ListEmptyComponent={<Empty />}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-        />
-      )}
-
-      {/* Create Modal */}
-      <Modal visible={createVisible} transparent animationType="fade" onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => !submitting && setCreateVisible(false)}
-          />
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Create Account</Text>
-              <TouchableOpacity onPress={() => !submitting && setCreateVisible(false)}>
-                <Ionicons name="close" size={22} color="#334155" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={{ paddingBottom: 10 }}>
-              <Text style={styles.fieldLabel}>Full name</Text>
-              <TextInput
-                value={fullname}
-                onChangeText={setFullname}
-                placeholder="Enter full name"
-                placeholderTextColor="#94a3b8"
-                style={styles.input}
-              />
-
-              <Text style={styles.fieldLabel}>Password</Text>
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Enter password"
-                placeholderTextColor="#94a3b8"
-                style={styles.input}
-                secureTextEntry
-              />
-
-              <Text style={styles.fieldLabel}>Role</Text>
-              <View style={styles.chipsRow}>
-                {(["operator", "biller", "admin"] as Role[]).map((r) => (
-                  <RoleChip key={r} value={r} selected={r === level} onPress={() => setLevel(r)} />
-                ))}
-              </View>
-
-              {roleNeedsBuilding(level) && (
-                <>
-                  <Text style={styles.fieldLabel}>Building</Text>
-                  <BuildingDropdown value={buildingId} onChange={setBuildingId} small />
-                </>
-              )}
-
-              {roleUsesUtilities(level) && (
-                <>
-                  <Text style={styles.fieldLabel}>Utility Roles</Text>
-                  <View style={styles.chipsRow}>
-                    {UTIL_OPTIONS.map((u) => (
-                      <UtilChip
-                        key={u}
-                        value={u}
-                        selected={utilRoles.includes(u)}
-                        onPress={() => toggleUtilLocal(u, utilRoles, setUtilRoles)}
-                      />
-                    ))}
-                  </View>
-                </>
-              )}
-            </ScrollView>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btn, styles.btnGhost]} disabled={submitting} onPress={() => setCreateVisible(false)}>
-                <Text style={[styles.btnText, { color: "#082cac" }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, styles.btnPrimary]} disabled={submitting} onPress={onCreate}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={[styles.btnText, { color: "#fff" }]}>Create</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* Edit Modal */}
-      <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => !submitting && setEditVisible(false)}
-          />
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Edit Account</Text>
-              <TouchableOpacity onPress={() => !submitting && setEditVisible(false)}>
-                <Ionicons name="close" size={22} color="#334155" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={{ paddingBottom: 10 }}>
-              <Text style={styles.fieldLabel}>Full name</Text>
-              <TextInput
-                value={editFullname}
-                onChangeText={setEditFullname}
-                placeholder="Enter full name"
-                placeholderTextColor="#94a3b8"
-                style={styles.input}
-              />
-
-              <Text style={styles.fieldLabel}>Password (leave blank to keep)</Text>
-              <TextInput
-                value={editPassword}
-                onChangeText={setEditPassword}
-                placeholder="Enter new password"
-                placeholderTextColor="#94a3b8"
-                style={styles.input}
-                secureTextEntry
-              />
-
-              <Text style={styles.fieldLabel}>Role</Text>
-              <View style={styles.chipsRow}>
-                {(["operator", "biller", "admin"] as Role[]).map((r) => (
-                  <RoleChip key={r} value={r} selected={r === editLevel} onPress={() => setEditLevel(r)} />
-                ))}
-              </View>
-
-              {roleNeedsBuilding(editLevel) && (
-                <>
-                  <Text style={styles.fieldLabel}>Building</Text>
-                  <BuildingDropdown value={editBuildingId} onChange={setEditBuildingId} small />
-                </>
-              )}
-
-              {roleUsesUtilities(editLevel) && (
-                <>
-                  <Text style={styles.fieldLabel}>Utility Roles</Text>
-                  <View style={styles.chipsRow}>
-                    {UTIL_OPTIONS.map((u) => (
-                      <UtilChip
-                        key={u}
-                        value={u}
-                        selected={editUtilRoles.includes(u)}
-                        onPress={() => toggleUtilLocal(u, editUtilRoles, setEditUtilRoles)}
-                      />
-                    ))}
-                  </View>
-                </>
-              )}
-            </ScrollView>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btn, styles.btnGhost]} disabled={submitting} onPress={() => setEditVisible(false)}>
-                <Text style={[styles.btnText, { color: "#082cac" }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, styles.btnPrimary]} disabled={submitting} onPress={onUpdate}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={[styles.btnText, { color: "#fff" }]}>Save</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* Other Filters Modal */}
-      <OtherFiltersModal />
+      <CreateModal />
+      <EditModal />
     </View>
   );
 }
 
-/** Styles — light, clean, business-professional */
+/* ---------- styles ---------- */
 const styles = StyleSheet.create({
-  grid: { gap: 12 },
+  page: { flex: 1, padding: 16 },
   card: {
+    flex: 1,
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
-    ...(Platform.select({
-      web: { boxShadow: "0 8px 24px rgba(16,42,67,0.05)" as any },
-      default: { elevation: 2 },
-    }) as any),
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  cardTitle: { fontSize: 16, fontWeight: "800", color: "#102a43" },
-  cardSub: { marginTop: 2, color: "#64748b", fontSize: 12 },
-  metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  metaPill: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1, borderColor: "#e2e8f0",
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+  headerRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12,
   },
-  metaText: { color: "#475569", fontSize: 12 },
-
-  topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  h1: { fontSize: 20, fontWeight: "900", color: "#0b2447" },
-
-  // Search row with button
-  searchRow: {
-    marginTop: 12,
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
+  title: { fontSize: 20, fontWeight: "700", color: "#0f172a" },
+  primaryBtn: {
+    backgroundColor: "#1e3a8a", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 6,
   },
-
-  // Search input
+  primaryBtnText: { color: "#fff", fontWeight: "600" },
+  toolbar: { marginBottom: 10 },
   searchWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    height: 36,
+    flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 10,
+    paddingHorizontal: 10, height: 40,
   },
-  search: { flex: 1, color: "#102a43", paddingVertical: 6 },
+  searchInput: { flex: 1, color: "#0f172a" },
+  toolbarChips: { marginTop: 10, gap: 10 },
+  filtersGroup: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  filterLabel: { fontWeight: "600", color: "#334155", marginRight: 4 },
+  sep: { height: 1, backgroundColor: "#e2e8f0" },
+  row: { flexDirection: "row", alignItems: "center", paddingVertical: 12 },
+  rowName: { fontSize: 16, fontWeight: "600", color: "#0f172a" },
+  rowMeta: { color: "#475569", marginTop: 2, fontSize: 12 },
+  loadingWrap: { paddingVertical: 32, alignItems: "center", justifyContent: "center" },
 
-  // Other filters button (compact)
-  otherBtn: {
-    height: 36,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
+  chip: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: "#cbd5e1" },
+  chipActive: { backgroundColor: "#1e3a8a", borderColor: "#1e3a8a" },
+  chipIdle: { backgroundColor: "#f8fafc" },
+  chipText: { fontSize: 12 },
+  chipTextActive: { color: "#fff", fontWeight: "600" },
+  chipTextIdle: { color: "#334155" },
 
-  // Building filter label under search
-  filterLabel: {
-    marginTop: 8,
-    marginBottom: 6,
-    color: "#64748b",
-    fontSize: 12,
-    fontWeight: "700",
+  modalOverlay: {
+    flex: 1, backgroundColor: "rgba(15,23,42,0.35)", alignItems: "center", justifyContent: "center", padding: 16,
   },
-
-  btn: {
-    backgroundColor: "#082cac",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  btnText: { fontWeight: "800", fontSize: 13 },
-  btnPrimary: { backgroundColor: "#082cac" },
-  btnGhost: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#dbe3ec" },
-  btnDanger: { backgroundColor: "#dc2626" },
-
-  /** Dropdown (pills) */
-  selectWrap: {
-    height: 40,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e6eef6",
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    justifyContent: "center",
-  },
-  selectItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "transparent",
-    marginRight: 6,
-  },
-  selectItemActive: { backgroundColor: "rgba(8,44,172,0.06)", borderColor: "rgba(8,44,172,0.25)" },
-  selectItemText: { fontSize: 12, color: "#475569", fontWeight: "700" },
-  selectItemTextActive: { color: "#082cac" },
-
-  /** Chips */
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  chipActive: { backgroundColor: "rgba(8,44,172,0.06)", borderColor: "rgba(8,44,172,0.25)" },
-  chipText: { fontSize: 12, color: "#334155", fontWeight: "700" },
-  chipTextActive: { color: "#082cac" },
-
-  /** Modal */
-  modalWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(15,23,42,0.35)" },
   modalCard: {
-    width: Math.min(520, width - 24),
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#e7eef7",
-    ...(Platform.select({
-      web: { boxShadow: "0 18px 48px rgba(2,6,23,0.20)" as any },
-      default: { elevation: 4 },
-    }) as any),
+    width: Math.min(W - 24, 760), maxHeight: Math.min(680, Math.round(0.9 * Dimensions.get("window").height)),
+    backgroundColor: "#fff", borderRadius: 16, padding: 16,
   },
-  modalHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  modalTitle: { fontSize: 16, fontWeight: "900", color: "#0b2447" },
-
-  fieldLabel: { fontSize: 12, color: "#64748b", marginTop: 10, marginBottom: 6, fontWeight: "700" },
+  modalTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a", marginBottom: 10 },
+  label: { marginTop: 10, marginBottom: 6, fontWeight: "600", color: "#0f172a" },
   input: {
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: "#0f172a",
+    backgroundColor: "#f8fafc", borderRadius: 10, paddingHorizontal: 12, height: 44, borderWidth: 1, borderColor: "#e2e8f0", color: "#0f172a",
   },
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
-
-  /** Empty */
-  emptyWrap: { alignItems: "center", paddingVertical: 30, gap: 6 },
-  emptyTitle: { fontSize: 16, fontWeight: "900", color: "#0b2447" },
-  emptySub: { color: "#64748b", marginBottom: 8 },
+  multiRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 12 },
+  ghostBtn: { paddingHorizontal: 12, paddingVertical: 10 },
+  ghostBtnText: { color: "#1e293b", fontWeight: "600" },
 });
