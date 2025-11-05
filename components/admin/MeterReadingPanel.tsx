@@ -17,7 +17,7 @@ import {
   View,
   useWindowDimensions,
   Linking,
-  Image,
+  Image as RNImage,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Picker } from "@react-native-picker/picker";
@@ -123,16 +123,106 @@ function confirm(title: string, message: string): Promise<boolean> {
   return new Promise((resolve) => {
     Alert.alert(title, message, [
       { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+      { text: "Proceed", style: "default", onPress: () => resolve(true) },
     ]);
   });
 }
-// Convert any base64 / data URL into a usable preview URL for <Image>
 function toDataUrl(val?: string) {
   const s = (val || "").trim();
   if (!s) return "";
   if (s.startsWith("data:")) return s;
   return `data:image/jpeg;base64,${s}`;
+}
+
+/* ---------- image helpers ---------- */
+const MAX_IMAGE_BYTES = 400 * 1024;
+function base64Bytes(b64: string): number {
+  const len = (b64 || "").replace(/[^A-Za-z0-9+/=]/g, "").length;
+  if (!len) return 0;
+  const padding = (b64.endsWith("==") ? 2 : (b64.endsWith("=") ? 1 : 0));
+  return Math.floor(len * 3 / 4) - padding;
+}
+function asBase64(raw: string): string {
+  const s = (raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("data:")) {
+    const i = s.indexOf(",");
+    return i >= 0 ? s.slice(i + 1) : "";
+  }
+  return s;
+}
+function asDataUrl(raw: string, mime = "image/jpeg"): string {
+  const s = (raw || "").trim();
+  return s.startsWith("data:") ? s : `data:${mime};base64,${s}`;
+}
+async function compressDataUrlWeb(dataUrl: string, maxDim = 1024, quality = 0.7): Promise<string> {
+  if (Platform.OS !== "web" || typeof document === "undefined" || !(globalThis as any).Image) {
+    return Promise.resolve(dataUrl.split(",")[1] || "");
+  }
+  return new Promise((resolve) => {
+    try {
+      const ImgCtor: any = (globalThis as any).Image;
+      const img: any = new ImgCtor();
+      img.onload = () => {
+        let tw = img.naturalWidth || img.width;
+        let th = img.naturalHeight || img.height;
+        if (Math.max(tw, th) > maxDim) {
+          if (tw >= th) { th = Math.round((th / tw) * maxDim); tw = maxDim; }
+          else { tw = Math.round((tw / th) * maxDim); th = maxDim; }
+        }
+        const canvas: any = (document as any).createElement("canvas");
+        canvas.width = Math.max(1, tw);
+        canvas.height = Math.max(1, th);
+        const ctx: any = canvas.getContext("2d");
+        if (!ctx) return resolve((dataUrl.split(",")[1] || ""));
+        ctx.drawImage(img, 0, 0, tw, th);
+        const out: string = canvas.toDataURL("image/jpeg", quality);
+        resolve(out.split(",")[1] || "");
+      };
+      img.onerror = () => resolve(dataUrl.split(",")[1] || "");
+      img.src = dataUrl;
+    } catch {
+      resolve(dataUrl.split(",")[1] || "");
+    }
+  });
+}
+async function ensureSizedBase64(input: string, mime = "image/jpeg"): Promise<string> {
+  const raw = asBase64(input);
+  if (Platform.OS !== "web") {
+    if (base64Bytes(raw) > MAX_IMAGE_BYTES) {
+      throw new Error(`Image is too large (${(base64Bytes(raw)/1024).toFixed(0)} KB). Please pick a smaller image.`);
+    }
+    return raw;
+  }
+  if (base64Bytes(raw) <= MAX_IMAGE_BYTES) return raw;
+  const c1 = await compressDataUrlWeb(asDataUrl(raw, mime), 1024, 0.7);
+  if (base64Bytes(c1) <= MAX_IMAGE_BYTES) return c1;
+  const c2 = await compressDataUrlWeb(asDataUrl(c1, mime), 900, 0.6);
+  if (base64Bytes(c2) <= MAX_IMAGE_BYTES) return c2;
+  throw new Error(`Image is still too large (${(base64Bytes(c2)/1024).toFixed(0)} KB). Please choose a smaller image.`);
+}
+
+/* ---------- last two readings + % calc ---------- */
+function ts(d: string) {
+  const t = Date.parse(d);
+  return Number.isFinite(t) ? t : 0;
+}
+function getLastTwo(
+  readings: { meter_id: string; lastread_date: string; reading_value: number | string }[],
+  meterId: string
+) {
+  const arr = readings
+    .filter(r => r.meter_id === meterId)
+    .slice()
+    .sort((a, b) => ts(b.lastread_date) - ts(a.lastread_date));
+  return { latest: arr[0] || null, previous: arr[1] || null };
+}
+function pctUp(newVal: number, oldVal: number | string | null | undefined): number | null {
+  const oldN = oldVal == null ? null : Number(oldVal);
+  if (oldN == null || !isFinite(oldN) || oldN === 0) return null;
+  const nv = Number(newVal);
+  if (!isFinite(nv)) return null;
+  return (nv - oldN) / oldN;
 }
 
 /* ---------- types ---------- */
@@ -211,16 +301,16 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [readingsModalVisible, setReadingsModalVisible] = useState(false);
   const PAGE_SIZE = 30;
   const [page, setPage] = useState(1);
-  useEffect(() => {
-    setPage(1);
-  }, [selectedMeterId]);
+  useEffect(() => setPage(1), [selectedMeterId]);
 
   const [createVisible, setCreateVisible] = useState(false);
   const [formMeterId, setFormMeterId] = useState("");
   const [formValue, setFormValue] = useState("");
   const [formDate, setFormDate] = useState<string>(todayStr());
   const [formRemarks, setFormRemarks] = useState<string>("");
-  const [formImage, setFormImage] = useState<string>(""); // REQUIRED for POST
+  const [formImage, setFormImage] = useState<string>("");
+
+  const [createWarn, setCreateWarn] = useState(false);
 
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<Reading | null>(null);
@@ -228,7 +318,9 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [editValue, setEditValue] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editRemarks, setEditRemarks] = useState<string>("");
-  const [editImage, setEditImage] = useState<string>(""); // optional (do not send to keep current image)
+  const [editImage, setEditImage] = useState<string>("");
+
+  const [editWarn, setEditWarn] = useState(false);
 
   const [scanVisible, setScanVisible] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
@@ -237,7 +329,6 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [historyVisible, setHistoryVisible] = useState(false);
   const [historyTab, setHistoryTab] = useState<"all" | "pending" | "failed" | "approved">("all");
 
-  // Image tool modal
   const [imgToolVisible, setImgToolVisible] = useState(false);
 
   // ---------- AUTO-DETECT READING ENDPOINT ----------
@@ -248,20 +339,15 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     for (const p of READING_ENDPOINTS) {
       try {
         const res = await api.get(p, { validateStatus: () => true });
-        // accept list or a wrapper with items
         if ((res.status >= 200 && res.status < 400 && Array.isArray(res.data)) || (res.status === 200 && res.data && typeof res.data === "object" && "items" in res.data)) {
           setReadingBase(p);
           return p;
         }
-      } catch {
-        // try next
-      }
+      } catch {}
     }
-    // keep default if none matched; errors will be shown by errorText
     return READING_ENDPOINTS[0];
   }
 
-  // derived
   const filteredScans = useMemo(
     () => (historyTab === "all" ? scans : scans.filter((s) => s.status === historyTab)),
     [scans, historyTab]
@@ -274,7 +360,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   // load
   useEffect(() => {
     loadAll();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
   const loadAll = async () => {
     if (!token) {
@@ -284,11 +370,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     }
     try {
       setBusy(true);
-
-      // 1) detect the working readings route
       const base = await detectReadingEndpoint();
-
-      // 2) fetch using detected base
       const [rRes, mRes, sRes] = await Promise.all([
         api.get<Reading[]>(base),
         api.get<Meter[]>("/meters"),
@@ -309,10 +391,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       if (!isAdmin && userBuildingId) setBuildingFilter((prev) => prev || userBuildingId);
     } catch (err: any) {
       notify("Load failed", errorText(err, "Please check your connection and permissions."));
-      if (Platform.OS === "web") {
-        // eslint-disable-next-line no-console
-        console.error("LOAD ERROR", err?.response ?? err);
-      }
+      if (Platform.OS === "web") console.error("LOAD ERROR", err?.response ?? err);
     } finally {
       setBusy(false);
     }
@@ -382,19 +461,35 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       notify("Invalid value", "Reading must be a number.");
       return;
     }
+
+    if (createWarn) {
+      if (!formRemarks.trim()) {
+        notify("Remarks required", "Please add remarks because the value increased by 20% or more.");
+        return;
+      }
+      const ok = await confirm("Proceed with high change?", "The reading increased by ≥20%. Do you want to proceed?");
+      if (!ok) return;
+    }
+
     if (!formImage.trim()) {
-      notify(
-        "Image required",
-        "Your backend now requires an image (base64/base64url/data URL/hex). Paste it in the Image field."
-      );
+      notify("Image required", "Your backend requires an image (base64 / data URL / hex).");
       return;
     }
+
+    let imageB64: string;
+    try {
+      imageB64 = await ensureSizedBase64(formImage);
+    } catch (e: any) {
+      notify("Image too large", e?.message || "Please choose a smaller image.");
+      return;
+    }
+
     const payload = {
       meter_id: formMeterId,
       reading_value: valueNum,
       lastread_date: formDate || todayStr(),
       remarks: formRemarks.trim() || null,
-      image: formImage.trim(),
+      image: imageB64,
     };
 
     if (!online) {
@@ -404,7 +499,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       setFormRemarks("");
       setFormImage("");
       setCreateVisible(false);
-      notify("Saved offline", "The reading (with image) was added to Offline History. Approve it when you have internet.");
+      notify("Saved offline", "Reading added to Offline History. Approve it when you have internet.");
       return;
     }
 
@@ -432,11 +527,32 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     setEditDate(row.lastread_date);
     setEditRemarks(row.remarks ?? "");
     setEditImage("");
+    setEditWarn(false);
     setEditVisible(true);
   };
 
   const onUpdate = async () => {
     if (!canWrite || !editRow) return;
+
+    if (editWarn) {
+      if (!editRemarks.trim()) {
+        notify("Remarks required", "Please add remarks because the value increased by 20% or more.");
+        return;
+      }
+      const ok = await confirm("Proceed with high change?", "The reading increased by ≥20%. Do you want to proceed?");
+      if (!ok) return;
+    }
+
+    let newImageB64: string | undefined;
+    if (editImage.trim()) {
+      try {
+        newImageB64 = await ensureSizedBase64(editImage);
+      } catch (e: any) {
+        notify("Image too large", e?.message || "Please choose a smaller image.");
+        return;
+      }
+    }
+
     try {
       setSubmitting(true);
       const body: any = {
@@ -445,7 +561,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         lastread_date: editDate,
         remarks: editRemarks.trim() === "" ? null : editRemarks.trim(),
       };
-      if (editImage.trim()) body.image = editImage.trim();
+      if (newImageB64) body.image = newImageB64;
       await api.put(`${readingBase}/${encodeURIComponent(editRow.reading_id)}`, body);
       setEditVisible(false);
       await loadAll();
@@ -464,7 +580,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     }
     const target = row ?? editRow;
     if (!target) return;
-    const ok = await confirm("Delete reading?", `Are you sure you want to delete ${target.reading_id}? This cannot be undone.`);
+    const ok = await confirm("Delete reading?", `Are you sure you want to delete ${target.reading_id}?`);
     if (!ok) return;
     try {
       setSubmitting(true);
@@ -586,27 +702,49 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
             style={{ flex: 1 }}
             contentContainerStyle={metersVisible.length === 0 ? { paddingVertical: 24 } : { paddingBottom: 12 }}
             ListEmptyComponent={<Text style={styles.empty}>No meters found.</Text>}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                onPress={() => {
-                  setSelectedMeterId(item.meter_id);
-                  setQuery("");
-                  setPage(1);
-                  setReadingsModalVisible(true);
-                }}
-                style={styles.row}
-              >
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={styles.rowTitle}>
-                    <Text style={styles.meterLink}>{item.meter_id}</Text> • {item.meter_type.toUpperCase()}
-                  </Text>
-                  <Text style={styles.rowMeta}>
-                    SN: {item.meter_sn} · Mult: {item.meter_mult} · Stall: {item.stall_id}
-                  </Text>
-                  <Text style={styles.rowMetaSmall}>Status: {item.meter_status.toUpperCase()}</Text>
-                </View>
-              </TouchableOpacity>
-            )}
+            renderItem={({ item }) => {
+              const { latest, previous } = getLastTwo(readings, item.meter_id);
+              const warn =
+                latest && previous
+                  ? (pctUp(Number(latest.reading_value), Number(previous.reading_value)) ?? 0) >= 0.20
+                  : false;
+
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    setSelectedMeterId(item.meter_id);
+                    setQuery("");
+                    setPage(1);
+                    setReadingsModalVisible(true);
+                  }}
+                  style={styles.row}
+                >
+                  {/* LEFT: meter details */}
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={styles.rowTitle}>
+                      <Text style={styles.meterLink}>{item.meter_id}</Text> • {item.meter_type.toUpperCase()}{" "}
+                      {warn && <Text style={styles.warnInline}>⚠ 20%+ up</Text>}
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      SN: {item.meter_sn} · Mult: {item.meter_mult} · Stall: {item.stall_id}
+                    </Text>
+                    <Text style={styles.rowMetaSmall}>Status: {item.meter_status.toUpperCase()}</Text>
+                  </View>
+
+                  {/* RIGHT: warning icon */}
+                  <View style={styles.rightIconWrap} pointerEvents="none">
+                    {warn ? (
+                      <Ionicons
+                        name="warning"
+                        size={22}
+                        color="#f59e0b"
+                        accessibilityLabel="Warning: latest reading is 20% higher than previous"
+                      />
+                    ) : null}
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
           />
         )}
       </View>
@@ -716,7 +854,13 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                 <Dropdown
                   label="Meter"
                   value={formMeterId}
-                  onChange={setFormMeterId}
+                  onChange={(id) => {
+                    setFormMeterId(id);
+                    const v = Number(formValue);
+                    const { latest } = getLastTwo(readings, id);
+                    const p = latest ? pctUp(v, latest.reading_value) : null;
+                    setCreateWarn(!!p && p >= 0.20);
+                  }}
                   options={meters.map((m) => ({
                     label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
                     value: m.meter_id,
@@ -734,20 +878,35 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                     style={styles.input}
                     keyboardType="numeric"
                     value={formValue}
-                    onChangeText={setFormValue}
+                    onChangeText={(val) => {
+                      setFormValue(val);
+                      const v = Number(val);
+                      const { latest } = getLastTwo(readings, formMeterId);
+                      const p = latest ? pctUp(v, latest.reading_value) : null;
+                      setCreateWarn(!!p && p >= 0.20);
+                    }}
                     placeholder="Reading value"
                   />
                 </View>
                 <DatePickerField label="Date read" value={formDate} onChange={setFormDate} />
               </View>
 
+              {createWarn && (
+                <View style={styles.warnBox}>
+                  <Ionicons name="warning-outline" size={16} color="#b45309" style={{ marginRight: 6 }} />
+                  <Text style={styles.warnText}>
+                    This value is ≥20% higher than the previous reading. Remarks are required.
+                  </Text>
+                </View>
+              )}
+
               <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>Remarks (optional)</Text>
+                <Text style={styles.dropdownLabel}>Remarks {createWarn ? "(required)" : "(optional)"} </Text>
                 <TextInput
-                  style={[styles.input, { minHeight: 44 }]}
+                  style={[styles.input, { minHeight: 44, borderColor: createWarn && !formRemarks.trim() ? '#f59e0b' : '#d9e2ec' }]}
                   value={formRemarks}
                   onChangeText={setFormRemarks}
-                  placeholder="Notes for this reading"
+                  placeholder={createWarn ? "Add remarks (required due to ≥20% increase)" : "Notes for this reading"}
                 />
               </View>
 
@@ -764,32 +923,15 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                   onChangeText={setFormImage}
                   placeholder="Paste base64 / data URL / hex"
                 />
-                {/* Base64 → Image preview */}
                 {formImage.trim() ? (
                   <View style={{ marginTop: 8, alignItems: "flex-start" }}>
-                    <Image
+                    <RNImage
                       source={{ uri: toDataUrl(formImage) }}
                       style={{ width: 200, height: 200, borderRadius: 8, backgroundColor: "#f1f5f9" }}
                       resizeMode="contain"
                     />
-                    {Platform.OS === "web" && (
-                      <TouchableOpacity
-                        style={[styles.smallBtn, styles.ghostBtn, { marginTop: 8 }]}
-                        onPress={() => {
-                          const a = document.createElement("a");
-                          a.href = toDataUrl(formImage);
-                          a.download = "reading-image";
-                          document.body.appendChild(a);
-                          a.click();
-                          a.remove();
-                        }}
-                      >
-                        <Text style={[styles.smallBtnText, styles.ghostBtnText]}>Download image</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 ) : null}
-
                 <Text style={styles.helpTxtSmall}>
                   Tip: You can paste raw base64 (…AA==) or a full data URL. A preview will show automatically.
                 </Text>
@@ -808,7 +950,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* READINGS modal (paginated) */}
+      {/* READINGS modal */}
       <ReadingsModal
         visible={readingsModalVisible}
         onClose={() => {
@@ -836,7 +978,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           const arr = [...searched];
           switch (sortBy) {
             case "date_asc":
-              arr.sort((a, b) => a.lastread_date.localeCompare(b.lastread_date) || readNum(a.reading_id) - readNum(b.reading_id));
+              arr.sort((a, b) => ts(a.lastread_date) - ts(b.lastread_date) || readNum(a.reading_id) - readNum(b.reading_id));
               break;
             case "id_asc":
               arr.sort((a, b) => readNum(a.reading_id) - readNum(b.reading_id));
@@ -846,7 +988,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
               break;
             case "date_desc":
             default:
-              arr.sort((a, b) => b.lastread_date.localeCompare(a.lastread_date) || readNum(b.reading_id) - readNum(a.reading_id));
+              arr.sort((a, b) => ts(b.lastread_date) - ts(a.lastread_date) || readNum(b.reading_id) - readNum(a.reading_id));
           }
           return arr;
         })()}
@@ -857,7 +999,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         onDelete={onDelete}
         openEdit={openEdit}
         busy={busy}
-        readingBase={readingBase} // pass detected base to modal
+        readingBase={readingBase}
       />
 
       {/* EDIT modal */}
@@ -874,7 +1016,17 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
               <Dropdown
                 label="Meter"
                 value={editMeterId}
-                onChange={setEditMeterId}
+                onChange={(id) => {
+                  setEditMeterId(id);
+                  const v = Number(editValue);
+                  const { latest, previous } = getLastTwo(readings, id);
+                  const base =
+                    latest && editRow && latest.meter_id === editRow.meter_id && latest.lastread_date === editRow.lastread_date
+                      ? (previous?.reading_value ?? null)
+                      : (latest?.reading_value ?? null);
+                  const p = base != null ? pctUp(v, base) : null;
+                  setEditWarn(!!p && p >= 0.20);
+                }}
                 options={meters.map((m) => ({
                   label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
                   value: m.meter_id,
@@ -883,14 +1035,44 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
               <View style={styles.rowWrap}>
                 <View style={{ flex: 1, marginTop: 8 }}>
                   <Text style={styles.dropdownLabel}>Reading Value</Text>
-                  <TextInput style={styles.input} value={editValue} onChangeText={setEditValue} keyboardType="numeric" placeholder="Reading value" />
+                  <TextInput
+                    style={styles.input}
+                    value={editValue}
+                    onChangeText={(val) => {
+                      setEditValue(val);
+                      const v = Number(val);
+                      const { latest, previous } = getLastTwo(readings, editMeterId || editRow?.meter_id || "");
+                      const base =
+                        latest && editRow && latest.meter_id === editRow.meter_id && latest.lastread_date === editRow.lastread_date
+                          ? (previous?.reading_value ?? null)
+                          : (latest?.reading_value ?? null);
+                      const p = base != null ? pctUp(v, base) : null;
+                      setEditWarn(!!p && p >= 0.20);
+                    }}
+                    keyboardType="numeric"
+                    placeholder="Reading value"
+                  />
                 </View>
                 <DatePickerField label="Date read" value={editDate} onChange={setEditDate} />
               </View>
 
+              {editWarn && (
+                <View style={styles.warnBox}>
+                  <Ionicons name="warning-outline" size={16} color="#b45309" style={{ marginRight: 6 }} />
+                  <Text style={styles.warnText}>
+                    This value is ≥20% higher than the previous reading. Remarks are required.
+                  </Text>
+                </View>
+              )}
+
               <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>Remarks (optional)</Text>
-                <TextInput style={[styles.input, { minHeight: 44 }]} value={editRemarks} onChangeText={setEditRemarks} placeholder="Notes for this reading" />
+                <Text style={styles.dropdownLabel}>Remarks {editWarn ? "(required)" : "(optional)"} </Text>
+                <TextInput
+                  style={[styles.input, { minHeight: 44, borderColor: editWarn && !editRemarks.trim() ? '#f59e0b' : '#d9e2ec' }]}
+                  value={editRemarks}
+                  onChangeText={setEditRemarks}
+                  placeholder={editWarn ? "Add remarks (required due to ≥20% increase)" : "Notes for this reading"}
+                />
               </View>
 
               <View style={{ marginTop: 8 }}>
@@ -906,29 +1088,13 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                   onChangeText={setEditImage}
                   placeholder="Paste base64 / data URL / hex to replace"
                 />
-                {/* Base64 → Image preview (edit) */}
                 {editImage.trim() ? (
                   <View style={{ marginTop: 8, alignItems: "flex-start" }}>
-                    <Image
+                    <RNImage
                       source={{ uri: toDataUrl(editImage) }}
                       style={{ width: 200, height: 200, borderRadius: 8, backgroundColor: "#f1f5f9" }}
                       resizeMode="contain"
                     />
-                    {Platform.OS === "web" && (
-                      <TouchableOpacity
-                        style={[styles.smallBtn, styles.ghostBtn, { marginTop: 8 }]}
-                        onPress={() => {
-                          const a = document.createElement("a");
-                          a.href = toDataUrl(editImage);
-                          a.download = "reading-image";
-                          document.body.appendChild(a);
-                          a.click();
-                          a.remove();
-                        }}
-                      >
-                        <Text style={[styles.smallBtnText, styles.ghostBtnText]}>Download image</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 ) : null}
                 <Text style={styles.helpTxtSmall}>Leave blank to keep the current image.</Text>
@@ -1151,7 +1317,7 @@ function ReadingsModal({
   onDelete,
   openEdit,
   busy,
-  readingBase, // NEW: detected base from parent
+  readingBase,
 }: any) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
@@ -1486,7 +1652,7 @@ function ImageBase64Tool({
 
               {dataUrl ? (
                 <View style={{ marginTop: 8, alignItems: "center" }}>
-                  <Image
+                  <RNImage
                     source={{ uri: dataUrl }}
                     style={{ width: 240, height: 240, resizeMode: "contain", backgroundColor: "#f8fafc", borderRadius: 10 }}
                   />
@@ -1500,6 +1666,7 @@ function ImageBase64Tool({
                       <Text style={styles.smallBtnText}>Use in Form</Text>
                     </TouchableOpacity>
                   </View>
+                  <Text style={styles.helpTxtSmall}>&nbsp;Size: {(base64Bytes(base64)/1024).toFixed(0)} KB (target ≤ {(MAX_IMAGE_BYTES/1024).toFixed(0)} KB)</Text>
                 </View>
               ) : (
                 <Text style={styles.helpTxtSmall}>No preview yet.</Text>
@@ -1523,7 +1690,7 @@ function ImageBase64Tool({
               <TouchableOpacity
                 style={[styles.smallBtn]}
                 onPress={() => {
-                  const url = buildDataUrl(base64, mime);
+                  const url = `data:${mime};base64,${base64}`;
                   setDataUrl(url);
                   setInput(url);
                 }}
@@ -1545,10 +1712,15 @@ function ImageBase64Tool({
 const styles = StyleSheet.create({
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", alignItems: "center", padding: 16 },
   modalCardWide: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 960, height: "95%" },
+
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
+
+  // page + list layout
   pageBar: { marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   pageInfo: { color: "#334e68", fontWeight: "600" },
   pageBtns: { flexDirection: "row", gap: 6, alignItems: "center" },
+
+  // list row
   listRow: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -1561,37 +1733,54 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   listRowMobile: { flexDirection: "column", alignItems: "flex-start", gap: 8 },
+
   rowTitle: { fontWeight: "700", color: "#0f172a" },
   rowSub: { fontSize: 14, color: "#64748b" },
   rowSubSmall: { fontSize: 12, color: "#94a3b8" },
+
   meterLink: { color: "#2563eb", textDecorationLine: "underline" },
+
   actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#2563eb" },
   actionBtnGhost: { backgroundColor: "#e0ecff" },
   actionBtnDanger: { backgroundColor: "#ef4444" },
   actionBtnText: { fontWeight: "700", color: "#fff" },
   actionBtnGhostText: { color: "#1d4ed8", fontWeight: "700" },
   actionBtnDisabled: { opacity: 0.5, backgroundColor: "#e2e8f0" },
+
+  // page button
   pageBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", backgroundColor: "#fff" },
   pageBtnText: { fontSize: 14, fontWeight: "700", color: "#102a43" },
   pageBtnDisabled: { opacity: 0.5 },
+
+  // input + search bar
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: "#e2e8f0" },
   search: { flex: 1, fontSize: 14, color: "#0b1f33" },
+
   empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
+
+  // loader
   loader: { paddingVertical: 24, alignItems: "center" },
+
+  // chips
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8, alignItems: "center" },
   chip: { borderWidth: 1, borderColor: "#cbd5e1", backgroundColor: "#f8fafc", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
+  chipIdle: {},
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
+
+  // page + card
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
+
   infoBar: { padding: 10, borderRadius: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   infoOnline: { backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#10b98155" },
   infoOffline: { backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#f59e0b55" },
   infoText: { fontWeight: "800", color: "#111827" },
   historyBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#082cac" },
   historyBtnText: { color: "#fff", fontWeight: "800" },
+
   card: {
     flex: 1,
     minHeight: 0,
@@ -1604,6 +1793,8 @@ const styles = StyleSheet.create({
   },
   cardHeader: { marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
+
+  // buttons
   btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
@@ -1618,8 +1809,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
+
+  // toolbar
   filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" },
+
+  // building chips block
   buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+
+  // list rows
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -1632,15 +1829,28 @@ const styles = StyleSheet.create({
   },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
+
+  // RIGHT warning icon container
+  rightIconWrap: {
+    width: 28,
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+
+  // modal shared
   overlay: { flex: 1, backgroundColor: "rgba(2,6,23,0.45)", justifyContent: "center", alignItems: "center", padding: 16 },
-  modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 480, ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" as any }, default: { elevation: 4 } }) as any) },
+  modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 480, ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" } as any, default: { elevation: 4 } }) as any) },
   modalHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   modalDivider: { height: 1, backgroundColor: "#edf2f7", marginVertical: 8 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
+
+  // small buttons
   smallBtn: { minHeight: 36, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   smallBtnText: { fontSize: 13, fontWeight: "800" },
   ghostBtn: { backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0" },
   ghostBtnText: { color: "#1f2937" },
+
+  // dropdowns / inputs
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
   pickerWrapper: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, overflow: "hidden", backgroundColor: "#fff" },
   picker: { height: 50 },
@@ -1650,10 +1860,14 @@ const styles = StyleSheet.create({
   datePickersRow: { flexDirection: "row", gap: 12 },
   datePickerCol: { flex: 1 },
   input: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#fff", color: "#102a43", marginTop: 6, minWidth: 160 },
+
+  // history / scanner
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
   headerActions: { flexDirection: "row", gap: 8 },
+
   centerText: { textAlign: "center", width: "100%", color: "#082cac", fontWeight: "900", fontSize: 15, marginLeft: 75 },
-  historyRow: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, backgroundColor: "#fff", ...(Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }) as any), padding: 12, marginTop: 10, flexDirection: "row", alignItems: "stretch", gap: 12 },
+
+  historyRow: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, backgroundColor: "#fff", ...(Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" } as any, default: { elevation: 1 } }) as any), padding: 12, marginTop: 10, flexDirection: "row", alignItems: "stretch", gap: 12 },
   rowLeft: { flex: 1, gap: 4 },
   rowRight: { justifyContent: "center", alignItems: "flex-end", gap: 6, minWidth: 110 },
   badgesRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
@@ -1662,8 +1876,12 @@ const styles = StyleSheet.create({
   statusFailed: { backgroundColor: "#fef2f2", color: "#7f1d1d", borderWidth: 1, borderColor: "#ef444455" },
   statusApproved: { backgroundColor: "#ecfdf5", color: "#065f46", borderWidth: 1, borderColor: "#10b98155" },
   statusWarn: { backgroundColor: "#fefce8", color: "#713f12", borderWidth: 1, borderColor: "#facc1555" },
+
+  // links + badges
   badge: { backgroundColor: "#bfbfbfff", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   badgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+
+  // scanner
   scannerScreen: { flex: 1, backgroundColor: "#000" },
   scannerFill: { flex: 1, justifyContent: "center", alignItems: "center" },
   scanTopBar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", justifyContent: "flex-end", padding: 16 },
@@ -1674,6 +1892,8 @@ const styles = StyleSheet.create({
   scanFooter: { position: "absolute", bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center" },
   scanHint: { color: "#fff", marginBottom: 8, textAlign: "center" },
   scanCloseBtn: { backgroundColor: "#dc2626" },
+
+  // select wrapper used in mobile building picker
   select: {
     borderRadius: 10,
     overflow: "hidden",
@@ -1684,7 +1904,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 6,
   },
+
   rowWrap: { flexDirection: "row", alignItems: "flex-end", gap: 10, flexWrap: "wrap" },
+
   scanBtn: {
     height: 40,
     paddingHorizontal: 12,
@@ -1697,6 +1919,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   scanBtnText: { fontWeight: "800", color: "#1d4ed8" },
+
   smallBtnGhost: {
     backgroundColor: "#f1f5f9",
     borderWidth: 1,
@@ -1716,7 +1939,30 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   smallBtnGhostText: { color: "#1f2937", fontWeight: "800", fontSize: 13 },
+
   helpTxtSmall: { color: "#6b7280", fontSize: 12, marginTop: 4 },
+
+  // 20% guard styles
+  warnBox: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#f59e0b66",
+    backgroundColor: "#fffbeb",
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  warnText: { color: "#92400e", fontSize: 13, flex: 1 },
+  warnInline: {
+    color: "#b45309",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    marginLeft: 6,
+  },
+
+  // prompt styles (for Filters modal)
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -1735,5 +1981,4 @@ const styles = StyleSheet.create({
       default: { elevation: 4 },
     }) as any),
   },
-  chipIdle: {},
 });
