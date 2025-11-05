@@ -1545,15 +1545,10 @@ function ImageBase64Tool({
 const styles = StyleSheet.create({
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", alignItems: "center", padding: 16 },
   modalCardWide: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 960, height: "95%" },
-
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-
-  // page + list layout
   pageBar: { marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   pageInfo: { color: "#334e68", fontWeight: "600" },
   pageBtns: { flexDirection: "row", gap: 6, alignItems: "center" },
-
-  // list row
   listRow: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -1566,35 +1561,23 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   listRowMobile: { flexDirection: "column", alignItems: "flex-start", gap: 8 },
-
   rowTitle: { fontWeight: "700", color: "#0f172a" },
   rowSub: { fontSize: 14, color: "#64748b" },
   rowSubSmall: { fontSize: 12, color: "#94a3b8" },
-
   meterLink: { color: "#2563eb", textDecorationLine: "underline" },
-
   actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#2563eb" },
   actionBtnGhost: { backgroundColor: "#e0ecff" },
   actionBtnDanger: { backgroundColor: "#ef4444" },
   actionBtnText: { fontWeight: "700", color: "#fff" },
   actionBtnGhostText: { color: "#1d4ed8", fontWeight: "700" },
   actionBtnDisabled: { opacity: 0.5, backgroundColor: "#e2e8f0" },
-
-  // page button
   pageBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", backgroundColor: "#fff" },
   pageBtnText: { fontSize: 14, fontWeight: "700", color: "#102a43" },
   pageBtnDisabled: { opacity: 0.5 },
-
-  // input + search bar
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: "#e2e8f0" },
   search: { flex: 1, fontSize: 14, color: "#0b1f33" },
-
   empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
-
-  // loader
   loader: { paddingVertical: 24, alignItems: "center" },
-
-  // chips
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8, alignItems: "center" },
   chip: { borderWidth: 1, borderColor: "#cbd5e1", backgroundColor: "#f8fafc", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
@@ -1602,17 +1585,13 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
-  // page + card
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
-
   infoBar: { padding: 10, borderRadius: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   infoOnline: { backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#10b98155" },
   infoOffline: { backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#f59e0b55" },
   infoText: { fontWeight: "800", color: "#111827" },
   historyBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#082cac" },
   historyBtnText: { color: "#fff", fontWeight: "800" },
-
   card: {
     flex: 1,
     minHeight: 0,
@@ -1625,8 +1604,6 @@ const styles = StyleSheet.create({
   },
   cardHeader: { marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
-
-  // buttons
   btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
@@ -1641,14 +1618,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
-  // toolbar
   filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" },
-
-  // building chips block
   buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-
-  // list rows
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -1661,21 +1632,15 @@ const styles = StyleSheet.create({
   },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
-  // modal shared
   overlay: { flex: 1, backgroundColor: "rgba(2,6,23,0.45)", justifyContent: "center", alignItems: "center", padding: 16 },
   modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 480, ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" as any }, default: { elevation: 4 } }) as any) },
   modalHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   modalDivider: { height: 1, backgroundColor: "#edf2f7", marginVertical: 8 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
-
-  // small buttons
   smallBtn: { minHeight: 36, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   smallBtnText: { fontSize: 13, fontWeight: "800" },
   ghostBtn: { backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0" },
   ghostBtnText: { color: "#1f2937" },
-
-  // dropdowns / inputs
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
   pickerWrapper: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, overflow: "hidden", backgroundColor: "#fff" },
   picker: { height: 50 },
@@ -1685,13 +1650,9 @@ const styles = StyleSheet.create({
   datePickersRow: { flexDirection: "row", gap: 12 },
   datePickerCol: { flex: 1 },
   input: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#fff", color: "#102a43", marginTop: 6, minWidth: 160 },
-
-  // history / scanner
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
   headerActions: { flexDirection: "row", gap: 8 },
-
   centerText: { textAlign: "center", width: "100%", color: "#082cac", fontWeight: "900", fontSize: 15, marginLeft: 75 },
-
   historyRow: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, backgroundColor: "#fff", ...(Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" as any }, default: { elevation: 1 } }) as any), padding: 12, marginTop: 10, flexDirection: "row", alignItems: "stretch", gap: 12 },
   rowLeft: { flex: 1, gap: 4 },
   rowRight: { justifyContent: "center", alignItems: "flex-end", gap: 6, minWidth: 110 },
@@ -1701,12 +1662,8 @@ const styles = StyleSheet.create({
   statusFailed: { backgroundColor: "#fef2f2", color: "#7f1d1d", borderWidth: 1, borderColor: "#ef444455" },
   statusApproved: { backgroundColor: "#ecfdf5", color: "#065f46", borderWidth: 1, borderColor: "#10b98155" },
   statusWarn: { backgroundColor: "#fefce8", color: "#713f12", borderWidth: 1, borderColor: "#facc1555" },
-
-  // links + badges
   badge: { backgroundColor: "#bfbfbfff", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   badgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-
-  // scanner
   scannerScreen: { flex: 1, backgroundColor: "#000" },
   scannerFill: { flex: 1, justifyContent: "center", alignItems: "center" },
   scanTopBar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", justifyContent: "flex-end", padding: 16 },
@@ -1717,8 +1674,6 @@ const styles = StyleSheet.create({
   scanFooter: { position: "absolute", bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center" },
   scanHint: { color: "#fff", marginBottom: 8, textAlign: "center" },
   scanCloseBtn: { backgroundColor: "#dc2626" },
-
-  // select wrapper used in mobile building picker
   select: {
     borderRadius: 10,
     overflow: "hidden",
@@ -1729,9 +1684,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 6,
   },
-
   rowWrap: { flexDirection: "row", alignItems: "flex-end", gap: 10, flexWrap: "wrap" },
-
   scanBtn: {
     height: 40,
     paddingHorizontal: 12,
@@ -1744,7 +1697,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   scanBtnText: { fontWeight: "800", color: "#1d4ed8" },
-
   smallBtnGhost: {
     backgroundColor: "#f1f5f9",
     borderWidth: 1,
@@ -1764,10 +1716,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   smallBtnGhostText: { color: "#1f2937", fontWeight: "800", fontSize: 13 },
-
   helpTxtSmall: { color: "#6b7280", fontSize: 12, marginTop: 4 },
-
-  // missing earlier
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",

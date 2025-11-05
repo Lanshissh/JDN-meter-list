@@ -1,4 +1,4 @@
-// components/admin/TenantsPanel.tsx
+// components/admin/TenantsPanel.tsx (updated to match new tenants.js backend)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -36,7 +36,9 @@ type Tenant = {
   last_updated?: string;
   updated_by?: string;
 };
+
 type Building = { building_id: string; building_name: string };
+
 type BuildingBaseRates = {
   building_id: string;
   erate_perKwH: number | null;
@@ -47,6 +49,7 @@ type BuildingBaseRates = {
   last_updated?: string;
   updated_by?: string;
 };
+
 type Stall = {
   stall_id: string;
   stall_sn: string;
@@ -56,8 +59,10 @@ type Stall = {
   last_updated?: string;
   updated_by?: string;
 };
+
 type VatRow = { tax_id: string | number; vat_code: string; vat_description?: string | null };
-type WtRow  = { wt_id: string; wt_code: string; wt_description?: string | null };
+
+type WtRow = { wt_id: string; wt_code: string; wt_description?: string | null };
 
 /** ------------ Utils ------------- */
 const cmp = (a: string | number, b: string | number) =>
@@ -66,7 +71,6 @@ const cmp = (a: string | number, b: string | number) =>
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
   try {
-    // strip "Bearer " if present
     const raw = token.trim().replace(/^Bearer\s+/i, "");
     const part = raw.split(".")[1] || "";
     const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
@@ -80,16 +84,23 @@ function decodeJwtPayload(token: string | null): any | null {
       const c3 = chars.indexOf(padded[i + 2]);
       const c4 = chars.indexOf(padded[i + 3]);
       const n = (c1 << 18) | (c2 << 12) | ((c3 & 63) << 6) | (c4 & 63);
-      const b1 = (n >> 16) & 255, b2 = (n >> 8) & 255, b3 = n & 255;
+      const b1 = (n >> 16) & 255,
+        b2 = (n >> 8) & 255,
+        b3 = n & 255;
       if (c3 === 64) str += String.fromCharCode(b1);
       else if (c4 === 64) str += String.fromCharCode(b1, b2);
       else str += String.fromCharCode(b1, b2, b3);
     }
     const json = decodeURIComponent(
-      str.split("").map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)).join("")
+      str
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
     );
     return JSON.parse(json);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 function notify(title: string, message?: string) {
@@ -103,22 +114,38 @@ function errorText(err: any, fallback = "Server error.") {
   if (d?.error) return String(d.error);
   if (d?.message) return String(d.message);
   if (err?.message) return String(err.message);
-  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+  try {
+    return JSON.stringify(d ?? err);
+  } catch {
+    return fallback;
+  }
 }
 const fmt = (n: number | null | undefined, unit?: string) => {
   if (n == null || !isFinite(Number(n))) return "—";
-  const out = Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    .format(Number(n));
+  const out = Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(n));
   return unit ? `${out} ${unit}` : out;
 };
 
 /** Heights for modal sheet inner scrollers */
 const H = Dimensions.get("window").height;
-const FOOTER_H = 68, HEADER_H = 56, V_MARGIN = 24;
+const FOOTER_H = 68,
+  HEADER_H = 56,
+  V_MARGIN = 24;
 const MOBILE_MODAL_MAX_HEIGHT = Math.round(H - (FOOTER_H + HEADER_H + V_MARGIN));
 
 /** Local Chip (matches StallsPanel look) */
-const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
+const Chip = ({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
@@ -126,10 +153,19 @@ const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPr
 
 /** Styled Picker for sheets */
 function PickerField({
-  label, value, onChange, children, placeholder, disabled,
+  label,
+  value,
+  onChange,
+  children,
+  placeholder,
+  disabled,
 }: {
-  label: string; value: string; onChange: (v: string) => void;
-  children: React.ReactNode; placeholder?: string; disabled?: boolean;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  children: React.ReactNode;
+  placeholder?: string;
+  disabled?: boolean;
 }) {
   return (
     <View style={{ marginBottom: 10 }}>
@@ -209,14 +245,26 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [cWt, setCWt] = useState<string>("");
 
   /** load data */
-  useEffect(() => { loadAll(); /* eslint-disable react-hooks/exhaustive-deps */ }, [mergedToken, statusFilter]);
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergedToken, statusFilter, isAdmin, buildingFilter]);
+
   const loadAll = async () => {
-    if (!mergedToken) { setBusy(false); notify("Not logged in", "Please log in to view tenants."); return; }
+    if (!mergedToken) {
+      setBusy(false);
+      notify("Not logged in", "Please log in to view tenants.");
+      return;
+    }
     try {
       setBusy(true);
 
       const params: any = {};
-      if (statusFilter) params.status = statusFilter;
+      if (statusFilter) params.status = statusFilter; // backend: exact match
+      // optionally let admin server-filter by building to reduce payload
+      if (isAdmin && buildingFilter) params.building_id = buildingFilter;
+      if (query.trim()) params.q = query.trim();
+
       const tRes = await api.get<Tenant[]>("/tenants", { params });
       const tRows = (tRes.data || []).map((t: any) => ({
         ...t,
@@ -226,14 +274,17 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       }));
       setTenants(tRows);
 
-      try { const bRes = await api.get<Building[]>("/buildings"); setBuildings(bRes.data || []); }
-      catch { setBuildings([]); }
+      try {
+        const bRes = await api.get<Building[]>("/buildings");
+        setBuildings(bRes.data || []);
+      } catch {
+        setBuildings([]);
+      }
 
       // Prefill filters and create form defaults
       setBuildingFilter((prev) => prev || userBuildingId || "");
       setCBuildingId((prev) => prev || userBuildingId || "");
 
-      // If JWT has no building_id, fallback to first tenant’s building
       if (!userBuildingId && tRows.length > 0) {
         const fb = String(tRows[0].building_id || "");
         if (fb) {
@@ -244,8 +295,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
       try {
         const [vRes, wRes] = await Promise.all([api.get<VatRow[]>("/vat"), api.get<WtRow[]>("/wt")]);
-        setVatCodes(vRes.data || []); setWtCodes(wRes.data || []);
-      } catch { setVatCodes([]); setWtCodes([]); }
+        setVatCodes(vRes.data || []);
+        setWtCodes(wRes.data || []);
+      } catch {
+        setVatCodes([]);
+        setWtCodes([]);
+      }
     } catch (err: any) {
       notify("Load failed", errorText(err, "Connection error."));
     } finally {
@@ -253,7 +308,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     }
   };
 
-  /** derived list */
+  /** derived list (client-side search + sort still apply) */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = tenants;
@@ -271,11 +326,16 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     const arr = [...filtered];
     const dateOf = (t: Tenant) => Date.parse(t.last_updated || "") || 0;
     switch (sortMode) {
-      case "newest": return arr.sort((a, b) => dateOf(b) - dateOf(a));
-      case "oldest": return arr.sort((a, b) => dateOf(a) - dateOf(b));
-      case "idAsc":  return arr.sort((a, b) => cmp(a.tenant_id, b.tenant_id));
-      case "idDesc": return arr.sort((a, b) => cmp(b.tenant_id, a.tenant_id));
-      default: return arr;
+      case "newest":
+        return arr.sort((a, b) => dateOf(b) - dateOf(a));
+      case "oldest":
+        return arr.sort((a, b) => dateOf(a) - dateOf(b));
+      case "idAsc":
+        return arr.sort((a, b) => cmp(a.tenant_id, b.tenant_id));
+      case "idDesc":
+        return arr.sort((a, b) => cmp(b.tenant_id, a.tenant_id));
+      default:
+        return arr;
     }
   }, [filtered, sortMode]);
 
@@ -296,13 +356,19 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     try {
       const bRes = await api.get<BuildingBaseRates>(`/buildings/${encodeURIComponent(row.building_id)}/base-rates`);
       setBRates(bRes.data);
-    } catch { setBRates(null); }
+    } catch {
+      setBRates(null);
+    }
 
     try {
       setStallsBusy(true);
       const sRes = await api.get<Stall[]>(`/stalls`);
       setTenantStalls((sRes.data || []).filter((s) => s.tenant_id === row.tenant_id));
-    } catch { setTenantStalls([]); } finally { setStallsBusy(false); }
+    } catch {
+      setTenantStalls([]);
+    } finally {
+      setStallsBusy(false);
+    }
   };
 
   const saveTenant = async () => {
@@ -313,7 +379,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         tenant_sn: tenantDraft.tenant_sn,
         tenant_name: tenantDraft.tenant_name,
         tenant_status: tenantDraft.tenant_status,
-        building_id: tenantDraft.building_id, // <-- allow changing building
+        building_id: tenantDraft.building_id, // backend allows change but will forbid for non-admin
         vat_code: tenantDraft.vat_code ?? null,
         wt_code: tenantDraft.wt_code ?? null,
         for_penalty: !!tenantDraft.for_penalty,
@@ -404,7 +470,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                   try {
                     const bRes = await api.get<Building[]>("/buildings");
                     setBuildings(bRes.data || []);
-                  } catch { /* fallback input will show */ }
+                  } catch {
+                    /* fallback input will show */
+                  }
                 }
               }}
             >
@@ -455,7 +523,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
           {/* LIST */}
           {busy ? (
-            <View style={styles.loader}><ActivityIndicator /></View>
+            <View style={styles.loader}>
+              <ActivityIndicator />
+            </View>
           ) : (
             <FlatList
               data={sorted}
@@ -469,11 +539,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     <Text style={styles.rowTitle}>
                       {item.tenant_name} <Text style={styles.rowSub}>({item.tenant_id})</Text>
                     </Text>
-                    <Text style={styles.rowMeta}>
-                      SN: {item.tenant_sn || "—"} · {buildingName(item.building_id)}
-                    </Text>
+                    <Text style={styles.rowMeta}>SN: {item.tenant_sn || "—"} · {buildingName(item.building_id)}</Text>
                     <Text style={styles.rowMetaSmall}>
-                      Status: {item.tenant_status.toUpperCase()} · VAT: {item.vat_code || "—"} · WT: {item.wt_code || "—"} · Penalty: {item.for_penalty ? "Yes" : "No"}
+                      Status: {item.tenant_status.toUpperCase()} · VAT: {item.vat_code || "—"} · WT: {item.wt_code || "—"} ·
+                      Penalty: {item.for_penalty ? "Yes" : "No"}
                     </Text>
                   </View>
 
@@ -501,7 +570,14 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         onClose={() => setFiltersVisible(false)}
         footer={
           <>
-            <Button variant="ghost" onPress={() => { setQuery(""); setStatusFilter(""); setSortMode("newest"); }}>
+            <Button
+              variant="ghost"
+              onPress={() => {
+                setQuery("");
+                setStatusFilter("");
+                setSortMode("newest");
+              }}
+            >
               Reset
             </Button>
             <Button onPress={() => setFiltersVisible(false)}>Apply</Button>
@@ -519,22 +595,29 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         <View style={styles.chipsRow}>
           <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
           <Chip label="Oldest" active={sortMode === "oldest"} onPress={() => setSortMode("oldest")} />
-          <Chip label="ID ↑"   active={sortMode === "idAsc"}  onPress={() => setSortMode("idAsc")} />
-          <Chip label="ID ↓"   active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
+          <Chip label="ID ↑" active={sortMode === "idAsc"} onPress={() => setSortMode("idAsc")} />
+          <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
         </View>
       </ModalSheet>
 
-      {/* QUICK EDIT SHEET (Building is EDITABLE now) */}
+      {/* QUICK EDIT SHEET (Building editable; backend enforces role rules) */}
       <ModalSheet
         visible={detailsVisible}
         title={detailsTenant ? `Quick Edit • ${detailsTenant.tenant_name}` : "Quick Edit"}
         onClose={() => setDetailsVisible(false)}
         footer={
           <>
-            <Button variant="danger" icon="trash-outline" onPress={() => detailsTenant && deleteTenant(detailsTenant)} disabled={submitting}>
+            <Button
+              variant="danger"
+              icon="trash-outline"
+              onPress={() => detailsTenant && deleteTenant(detailsTenant)}
+              disabled={submitting}
+            >
               {submitting ? "Deleting…" : "Delete"}
             </Button>
-            <Button variant="ghost" onPress={() => setDetailsVisible(false)}>Close</Button>
+            <Button variant="ghost" onPress={() => setDetailsVisible(false)}>
+              Close
+            </Button>
             <Button icon="save-outline" onPress={saveTenant} disabled={submitting}>
               {submitting ? "Saving…" : "Save changes"}
             </Button>
@@ -579,7 +662,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           <PickerField
                             label="Status"
                             value={tenantDraft?.tenant_status || "active"}
-                            onChange={(v) => setTenantDraft((t) => (t ? { ...t, tenant_status: v as "active" | "inactive" } : t))}
+                            onChange={(v) =>
+                              setTenantDraft((t) => (t ? { ...t, tenant_status: v as "active" | "inactive" } : t))
+                            }
                           >
                             <Picker.Item label="Active" value="active" />
                             <Picker.Item label="Inactive" value="inactive" />
@@ -590,7 +675,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           <Text style={styles.fieldLabel}>Penalty</Text>
                           <Button
                             variant="ghost"
-                            icon={tenantDraft?.for_penalty ? "checkbox" : "square-outline" as any}
+                            icon={(tenantDraft?.for_penalty ? "checkbox" : "square-outline") as any}
                             onPress={() => setTenantDraft((t) => (t ? { ...t, for_penalty: !t.for_penalty } : t))}
                           >
                             {tenantDraft?.for_penalty ? "For penalty" : "No penalty"}
@@ -607,7 +692,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           placeholder="Select building…"
                         >
                           {buildings.map((b) => (
-                            <Picker.Item key={b.building_id} label={`${b.building_name} (${b.building_id})`} value={b.building_id} />
+                            <Picker.Item
+                              key={b.building_id}
+                              label={`${b.building_name} (${b.building_id})`}
+                              value={b.building_id}
+                            />
                           ))}
                         </PickerField>
                       ) : (
@@ -662,12 +751,24 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 {/* RIGHT: Building info & Stalls */}
                 <View style={styles.quickCol}>
                   <Card title="Base Rates (Read-only)">
-                    <Text style={styles.kv}><Text style={styles.kvKey}>Building:</Text> {buildingName(tenantDraft?.building_id || "")}</Text>
-                    <Text style={styles.kv}><Text style={styles.kvKey}>Electric Rate:</Text> {fmt(bRates?.erate_perKwH, "per kWh")}</Text>
-                    <Text style={styles.kv}><Text style={styles.kvKey}>Electric Min:</Text> {fmt(bRates?.emin_con, "kWh")}</Text>
-                    <Text style={styles.kv}><Text style={styles.kvKey}>Water Rate:</Text> {fmt(bRates?.wrate_perCbM, "per cu.m")}</Text>
-                    <Text style={styles.kv}><Text style={styles.kvKey}>Water Min:</Text> {fmt(bRates?.wmin_con, "cu.m")}</Text>
-                    <Text style={styles.kv}><Text style={styles.kvKey}>LPG Rate:</Text> {fmt(bRates?.lrate_perKg, "per kg")}</Text>
+                    <Text style={styles.kv}>
+                      <Text style={styles.kvKey}>Building:</Text> {buildingName(tenantDraft?.building_id || "")}
+                    </Text>
+                    <Text style={styles.kv}>
+                      <Text style={styles.kvKey}>Electric Rate:</Text> {fmt(bRates?.erate_perKwH, "per kWh")}
+                    </Text>
+                    <Text style={styles.kv}>
+                      <Text style={styles.kvKey}>Electric Min:</Text> {fmt(bRates?.emin_con, "kWh")}
+                    </Text>
+                    <Text style={styles.kv}>
+                      <Text style={styles.kvKey}>Water Rate:</Text> {fmt(bRates?.wrate_perCbM, "per cu.m")}
+                    </Text>
+                    <Text style={styles.kv}>
+                      <Text style={styles.kvKey}>Water Min:</Text> {fmt(bRates?.wmin_con, "cu.m")}
+                    </Text>
+                    <Text style={styles.kv}>
+                      <Text style={styles.kvKey}>LPG Rate:</Text> {fmt(bRates?.lrate_perKg, "per kg")}
+                    </Text>
                   </Card>
 
                   <Card title="Stalls" right={stallsBusy ? <ActivityIndicator /> : undefined} style={{ marginTop: 12 }}>
@@ -683,7 +784,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                             <Text style={styles.rowMetaSmall}>Status: {String(s.stall_status).toUpperCase()}</Text>
                           </View>
 
-                          <Button variant="ghost" onPress={() => unassignStall(s)}>Unassign</Button>
+                          <Button variant="ghost" onPress={() => unassignStall(s)}>
+                            Unassign
+                          </Button>
                           <Button onPress={() => saveStall(s)}>Save</Button>
                         </View>
                       ))
@@ -696,20 +799,28 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         </SafeAreaView>
       </ModalSheet>
 
-      {/* CREATE TENANT SHEET (Building is EDITABLE now) */}
+      {/* CREATE TENANT SHEET (auto-generated tenant_id on backend) */}
       <ModalSheet
         visible={createVisible}
         title="Create Tenant"
         onClose={() => setCreateVisible(false)}
         footer={
           <>
-            <Button variant="ghost" onPress={() => setCreateVisible(false)}>Cancel</Button>
+            <Button variant="ghost" onPress={() => setCreateVisible(false)}>
+              Cancel
+            </Button>
             <Button
               icon="save-outline"
               onPress={async () => {
                 const building_id = cBuildingId.trim();
-                if (!building_id) { notify("Building required", "Please choose or enter a building."); return; }
-                if (!cTenantName.trim()) { notify("Missing name", "Please enter tenant name."); return; }
+                if (!building_id) {
+                  notify("Building required", "Please choose or enter a building.");
+                  return;
+                }
+                if (!cTenantName.trim()) {
+                  notify("Missing name", "Please enter tenant name.");
+                  return;
+                }
 
                 try {
                   setSubmitting(true);
@@ -723,12 +834,19 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     for_penalty: !!cPenalty,
                   });
                   setCreateVisible(false);
-                  setCTenantSn(""); setCTenantName(""); setCStatus("active"); setCPenalty(false); setCVat(""); setCWt("");
+                  setCTenantSn("");
+                  setCTenantName("");
+                  setCStatus("active");
+                  setCPenalty(false);
+                  setCVat("");
+                  setCWt("");
                   await loadAll();
                   notify("Created", "Tenant created successfully.");
                 } catch (err) {
                   notify("Create failed", errorText(err, "Unable to create tenant."));
-                } finally { setSubmitting(false); }
+                } finally {
+                  setSubmitting(false);
+                }
               }}
               disabled={submitting}
             >
@@ -741,12 +859,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           <View style={styles.rowInline}>
             {buildings.length > 0 ? (
               <View style={[styles.flex1, { marginRight: 8 }]}>
-                <PickerField
-                  label="Building"
-                  value={cBuildingId}
-                  onChange={setCBuildingId}
-                  placeholder="Select building…"
-                >
+                <PickerField label="Building" value={cBuildingId} onChange={setCBuildingId} placeholder="Select building…">
                   {buildings.map((b) => (
                     <Picker.Item key={b.building_id} label={`${b.building_name} (${b.building_id})`} value={b.building_id} />
                   ))}
@@ -783,14 +896,22 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             <View style={[styles.flex1, { marginRight: 8 }]}>
               <PickerField label="VAT Code" value={cVat} onChange={setCVat} placeholder="— None —">
                 {vatCodes.map((v) => (
-                  <Picker.Item key={String(v.tax_id)} label={`${v.vat_code}${v.vat_description ? ` — ${v.vat_description}` : ""}`} value={v.vat_code} />
+                  <Picker.Item
+                    key={String(v.tax_id)}
+                    label={`${v.vat_code}${v.vat_description ? ` — ${v.vat_description}` : ""}`}
+                    value={v.vat_code}
+                  />
                 ))}
               </PickerField>
             </View>
             <View style={[styles.flex1, { marginLeft: 8 }]}>
               <PickerField label="Withholding Code" value={cWt} onChange={setCWt} placeholder="— None —">
                 {wtCodes.map((w) => (
-                  <Picker.Item key={w.wt_id} label={`${w.wt_code}${w.wt_description ? ` — ${w.wt_description}` : ""}`} value={w.wt_code} />
+                  <Picker.Item
+                    key={w.wt_id}
+                    label={`${w.wt_code}${w.wt_description ? ` — ${w.wt_description}` : ""}`}
+                    value={w.wt_code}
+                  />
                 ))}
               </PickerField>
             </View>
@@ -798,16 +919,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
           <View style={{ marginTop: 6 }}>
             <Text style={styles.fieldLabel}>Penalty</Text>
-            <Button
-              variant="ghost"
-              icon={cPenalty ? "checkbox" : "square-outline" as any}
-              onPress={() => setCPenalty((v) => !v)}
-            >
+            <Button variant="ghost" icon={(cPenalty ? "checkbox" : "square-outline") as any} onPress={() => setCPenalty((v) => !v)}>
               {cPenalty ? "For penalty" : "No penalty"}
             </Button>
           </View>
 
-          <Text style={styles.helpText}>You can assign stalls from the Stalls/Assign panel after creating the tenant.</Text>
+          <Text style={styles.helpText}>Tenant IDs are auto-generated on create (e.g., TNT-#). Assign stalls from the Stalls/Assign panel after creating the tenant.</Text>
         </View>
       </ModalSheet>
     </KeyboardAvoidingView>
@@ -895,12 +1012,24 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
 
   readonlyBox: {
-    height: 42, borderRadius: 10, borderWidth: 1, borderColor: tokens.color.line,
-    backgroundColor: "#fff", justifyContent: "center", paddingHorizontal: 12,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.color.line,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    paddingHorizontal: 12,
   },
   readonlyText: { color: tokens.color.ink, fontWeight: "700" },
 
-  pickerShell: { position: "relative", borderWidth: 1, borderColor: tokens.color.line, backgroundColor: "#fff", borderRadius: 12, overflow: "hidden" },
+  pickerShell: {
+    position: "relative",
+    borderWidth: 1,
+    borderColor: tokens.color.line,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    overflow: "hidden",
+  },
   pickerNative: { width: "100%", height: 44, paddingLeft: 8, color: tokens.color.ink, fontSize: 14 },
   pickerItemIOS: { fontSize: 16, color: tokens.color.ink },
   pickerIcon: { position: "absolute", right: 10, top: 14, opacity: 0.8 },

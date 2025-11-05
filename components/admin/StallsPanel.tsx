@@ -1,4 +1,4 @@
-// components/admin/StallsPanel.tsx
+// components/admin/StallsPanel.tsx (updated to match backend stalls.js and full CRUD)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -45,8 +45,8 @@ type Tenant = {
 
 /** Helpers (match BuildingPanel style + behavior) */
 function notify(title: string, message?: string) {
-  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
-    window.alert(message ? `${title}\n\n${message}` : title);
+  if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).alert) {
+    (window as any).alert(message ? `${title}\n\n${message}` : title);
   } else {
     Alert.alert(title, message);
   }
@@ -89,14 +89,11 @@ export default function StallsPanel({ token }: { token: string | null }) {
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
 
-  // Mobile “Select Building” picker modal
-  const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
-
   // create modal
   const [createVisible, setCreateVisible] = useState(false);
   const [c_stallSn, setC_stallSn] = useState("");
   const [c_buildingId, setC_buildingId] = useState("");
-  const [c_status] = useState<Stall["stall_status"]>("available");
+  const [c_status, setC_status] = useState<Stall["stall_status"]>("available");
   const [c_tenantId, setC_tenantId] = useState("");
 
   // edit modal
@@ -153,21 +150,22 @@ export default function StallsPanel({ token }: { token: string | null }) {
     return arr;
   }, [filtered, sortMode]);
 
-  /** CRUD (unchanged) */
+  /** CRUD */
   const onCreate = async () => {
     const stall_sn = c_stallSn.trim();
-    if (!stall_sn || !c_buildingId) { notify("Missing info", "Please enter Stall SN and select a Building."); return; }
+    if (!stall_sn || !c_buildingId || !c_status) { notify("Missing info", "Please enter Stall SN, select a Building, and choose a Status."); return; }
     try {
       setSubmitting(true);
       await api.post("/stalls", {
         stall_sn,
         building_id: c_buildingId,
         stall_status: c_status,
-        tenant_id: null,
+        tenant_id: c_status === "available" ? null : (c_tenantId || null),
       });
       setCreateVisible(false);
       setC_stallSn("");
       setC_tenantId("");
+      setC_status("available");
       await loadAll();
       notify("Success", "Stall created.");
     } catch (err: any) {
@@ -199,18 +197,28 @@ export default function StallsPanel({ token }: { token: string | null }) {
   };
 
   const onDelete = async (s: Stall) => {
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      const ok = window.confirm(`Delete ${s.stall_sn} (${s.stall_id})?`);
+    if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).confirm) {
+      const ok = (window as any).confirm(`Delete ${s.stall_sn} (${s.stall_id})?`);
       if (!ok) return;
+    } else {
+      const buttons: any[] = [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: async () => { await doDelete(); } },
+      ];
+      return Alert.alert("Delete stall?", `${s.stall_sn} (${s.stall_id})`, buttons);
     }
-    try {
-      setSubmitting(true);
-      await api.delete(`/stalls/${encodeURIComponent(s.stall_id)}`);
-      await loadAll();
-      notify("Deleted", "Stall deleted.");
-    } catch (err: any) {
-      notify("Delete failed", errorText(err));
-    } finally { setSubmitting(false); }
+    await doDelete();
+
+    async function doDelete() {
+      try {
+        setSubmitting(true);
+        await api.delete(`/stalls/${encodeURIComponent(s.stall_id)}`);
+        await loadAll();
+        notify("Deleted", "Stall deleted.");
+      } catch (err: any) {
+        notify("Delete failed", errorText(err));
+      } finally { setSubmitting(false); }
+    }
   };
 
   /** UI — FlatList is the ONLY vertical scroller (no nested ScrollView around it) */
@@ -244,7 +252,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
             </TouchableOpacity>
           </View>
 
-          {/* Building filter — mobile friendly (horizontal ScrollView is OK; different orientation) */}
+          {/* Building filter chips */}
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
@@ -281,7 +289,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
             )}
           </View>
 
-          {/* List (fills remaining height; the page scrolls via this FlatList) */}
+          {/* List */}
           {busy ? (
             <View style={styles.loader}><ActivityIndicator /></View>
           ) : (
@@ -315,7 +323,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     ) : null}
                   </View>
 
-                  {/* Actions: right on desktop/tablet, below on mobile */}
+                  {/* Actions */}
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -386,41 +394,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
           </View>
         </Modal>
 
-        {/* Mobile Building Picker (for long lists) */}
-        <Modal
-          visible={buildingPickerVisible}
-          animationType="fade"
-          transparent
-          onRequestClose={() => setBuildingPickerVisible(false)}
-        >
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Select Building</Text>
-              <View style={styles.modalDivider} />
-              <View style={styles.pickerWrapper}>
-                <Picker
-                  selectedValue={buildingFilter}
-                  onValueChange={(v) => setBuildingFilter(String(v))}
-                  style={styles.picker}
-                >
-                  <Picker.Item label="All" value="" />
-                  {buildings.map((b) => (
-                    <Picker.Item key={b.building_id} label={b.building_name || b.building_id} value={b.building_id} />
-                  ))}
-                </Picker>
-              </View>
-              <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setBuildingPickerVisible(false)}>
-                  <Text style={styles.btnGhostTextAlt}>Close</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.btn} onPress={() => setBuildingPickerVisible(false)}>
-                  <Text style={styles.btnText}>Apply</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-
         {/* Create Modal */}
         <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
@@ -450,12 +423,32 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   />
                 </View>
 
-                <Text style={styles.sectionTitle}>Status</Text>
-                <View style={styles.chipsRow}>
-                  <View style={[styles.chip, styles.chipActive]}>
-                    <Text style={[styles.chipText, styles.chipTextActive]}>AVAILABLE</Text>
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Status</Text>
+                  <View style={styles.pickerWrapper}>
+                    <Picker selectedValue={c_status} onValueChange={(v) => setC_status(String(v) as any)} style={styles.picker}>
+                      <Picker.Item label="Available" value="available" />
+                      <Picker.Item label="Occupied" value="occupied" />
+                      <Picker.Item label="Under Maintenance" value="under maintenance" />
+                    </Picker>
                   </View>
                 </View>
+
+                {c_status !== "available" && (
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Tenant</Text>
+                    <View style={styles.pickerWrapper}>
+                      <Picker selectedValue={c_tenantId} onValueChange={(v) => setC_tenantId(String(v))} style={styles.picker}>
+                        <Picker.Item label="-- select tenant --" value="" />
+                        {tenants
+                          .filter((t) => t.building_id === c_buildingId)
+                          .map((t) => (
+                            <Picker.Item key={t.tenant_id} label={`${t.tenant_name} (${t.tenant_id})`} value={t.tenant_id} />
+                          ))}
+                      </Picker>
+                    </View>
+                  </View>
+                )}
               </ScrollView>
 
               <View style={styles.modalActions}>
@@ -562,7 +555,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
 /** Styles — unified with BuildingPanel and optimized for mobile filter UX */
 const W = Dimensions.get("window").width;
 const styles = StyleSheet.create({
-  // NEW: make the page + grid + card flex containers so FlatList can occupy and scroll
+  // Page + grid + card flex containers so FlatList can occupy and scroll
   page: {
     flex: 1,
     minHeight: 0,
@@ -701,32 +694,20 @@ const styles = StyleSheet.create({
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
 
-  // Building filter header row (label + mobile "Select" button)
+  // Building filter header row
   buildingHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 6,
   },
-  quickSelectBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#e0ecff",
-    borderColor: "#93c5fd",
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  quickSelectText: { color: "#1d4ed8", fontWeight: "800", letterSpacing: 0.3, fontSize: 12 },
 
-  // Chips (desktop/tablet wrap)
+  // Chips
   chipsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
-  // Chips (mobile horizontal scroll)
   chipsRowHorizontal: {
     paddingRight: 4,
     gap: 8,

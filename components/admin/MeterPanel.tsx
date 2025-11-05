@@ -1,4 +1,4 @@
-// components/admin/MeterPanel.tsx
+// components/admin/MeterPanel.tsx (updated, full file)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
@@ -13,7 +13,6 @@ import {
   Platform,
   KeyboardAvoidingView,
   ScrollView,
-  Dimensions,
   useWindowDimensions,
 } from "react-native";
 import axios from "axios";
@@ -24,8 +23,8 @@ import { BASE_API } from "../../constants/api";
 
 /* ========== Alert Helpers ========== */
 function notify(title: string, message?: string) {
-  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
-    window.alert(message ? `${title}\n\n${message}` : title);
+  if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).alert) {
+    (window as any).alert(message ? `${title}\n\n${message}` : title);
   } else {
     Alert.alert(title, message);
   }
@@ -40,7 +39,7 @@ function errorText(err: any, fallback = "Server error.") {
 }
 function confirm(title: string, message: string): Promise<boolean> {
   if (Platform.OS === "web" && typeof window !== "undefined") {
-    return Promise.resolve(!!window.confirm(`${title}\n\n${message}`));
+    return Promise.resolve(!!(window as any).confirm(`${title}\n\n${message}`));
   }
   return new Promise((resolve) => {
     Alert.alert(title, message, [
@@ -58,13 +57,13 @@ export type Meter = {
   meter_mult: number;
   stall_id: string;
   meter_status: "active" | "inactive";
-  last_updated: string;
-  updated_by: string;
+  last_updated?: string;
+  updated_by?: string;
 };
 export type Stall = { stall_id: string; stall_sn: string; building_id?: string };
 type Building = { building_id: string; building_name: string };
 
-/* ========== JWT decode ========== */
+/* ========== JWT decode (lightweight) ========== */
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
   try {
@@ -121,13 +120,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const [editVisible, setEditVisible] = useState(false);
   const [qrVisible, setQrVisible] = useState(false);
 
-  // mobile-friendly building select
-  const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
-
   // create form
   const [type, setType] = useState<Meter["meter_type"]>("electric");
   const [sn, setSn] = useState("");
-  const [mult, setMult] = useState("1.00");
+  const [mult, setMult] = useState("");
   const [stallId, setStallId] = useState("");
   const [status, setStatus] = useState<Meter["meter_status"]>("inactive");
 
@@ -135,7 +131,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const [editRow, setEditRow] = useState<Meter | null>(null);
   const [editType, setEditType] = useState<Meter["meter_type"]>("electric");
   const [editSn, setEditSn] = useState("");
-  const [editMult, setEditMult] = useState("1.00");
+  const [editMult, setEditMult] = useState("");
   const [editStallId, setEditStallId] = useState("");
   const [editStatus, setEditStatus] = useState<Meter["meter_status"]>("inactive");
 
@@ -147,19 +143,22 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
 
-  useEffect(() => { loadAll(); }, [token]); // keep CRUD unchanged
+  useEffect(() => { loadAll(); }, [token]);
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage meters."); return; }
     try {
       setBusy(true);
-      const [metersRes, stallsRes] = await Promise.all([api.get<Meter[]>("/meters"), api.get<Stall[]>("/stalls")]);
+      const [metersRes, stallsRes] = await Promise.all([
+        api.get<Meter[]>("/meters"),
+        api.get<Stall[]>("/stalls"),
+      ]);
       setMeters(metersRes.data || []);
       setStalls(stallsRes.data || []);
+
       if (isAdmin) {
-        try { const bRes = await api.get<Building[]>("/buildings"); setBuildings(bRes.data || []); }
-        catch { setBuildings([]); }
+        try { const bRes = await api.get<Building[]>("/buildings"); setBuildings(bRes.data || []); } catch { setBuildings([]); }
       } else { setBuildings([]); }
-      // default building for non-admin
+
       if (!isAdmin && userBuildingId) setBuildingFilter((prev) => prev || userBuildingId);
     } catch (err: any) {
       notify("Load failed", errorText(err, "Could not load meters/stalls."));
@@ -197,10 +196,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
     if (filterType !== "all") list = list.filter((m) => m.meter_type === filterType);
     if (buildingFilter) list = list.filter((m) => stallToBuilding.get(m.stall_id) === buildingFilter);
     if (!q) return list;
-    return list.filter((m) =>
-      [m.meter_id, m.meter_sn, m.meter_type, m.stall_id, m.meter_status]
-        .some((v) => String(v).toLowerCase().includes(q))
-    );
+    return list.filter((m) => [m.meter_id, m.meter_sn, m.meter_type, m.stall_id, m.meter_status].some((v) => String(v).toLowerCase().includes(q)));
   }, [meters, query, filterType, buildingFilter, stallToBuilding]);
 
   const sorted = useMemo(() => {
@@ -211,37 +207,93 @@ export default function MeterPanel({ token }: { token: string | null }) {
       case "stall":   return arr.sort((a, b) => (a.stall_id || "").localeCompare(b.stall_id || "") || mtrNum(a.meter_id) - mtrNum(b.meter_id));
       case "status":  return arr.sort((a, b) => (a.meter_status === "active" ? 0 : 1) - (b.meter_status === "active" ? 0 : 1) || mtrNum(a.meter_id) - mtrNum(b.meter_id));
       case "id_asc":
-      default:        return arr.sort((a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id));
+      default:         return arr.sort((a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id));
     }
   }, [filtered, sortBy]);
 
-  // CRUD (unchanged behaviors)
+  // ---------- CRUD ----------
   const onCreate = async () => {
     if (!sn.trim() || !stallId.trim()) { notify("Missing info", "Serial number and Stall are required."); return; }
-    const multValue = mult.trim() === "" ? undefined : Number(mult);
-    const payload: any = { meter_type: type, meter_sn: sn.trim(), stall_id: stallId.trim(), meter_status: status, ...(multValue !== undefined ? { meter_mult: multValue } : {}) };
-    try { setSubmitting(true); await api.post("/meters", payload); notify("Success", "Meter added."); setSn(""); setMult("1.00"); setStallId(""); setStatus("inactive"); setCreateVisible(false); await loadAll(); }
-    catch (err: any) { notify("Create failed", errorText(err, "Unable to add meter.")); }
-    finally { setSubmitting(false); }
+
+    const payload: any = {
+      meter_type: type,
+      meter_sn: sn.trim(),
+      stall_id: stallId.trim(),
+      meter_status: status,
+    };
+    if (mult.trim() !== "") {
+      const asNum = Number(mult);
+      if (!Number.isFinite(asNum)) { notify("Invalid multiplier", "Enter a numeric multiplier (e.g., 1 or 93). "); return; }
+      payload.meter_mult = asNum;
+    }
+
+    try {
+      setSubmitting(true);
+      await api.post("/meters", payload);
+      notify("Success", "Meter created.");
+      setSn(""); setMult(""); setStallId(""); setStatus("inactive"); setType("electric");
+      setCreateVisible(false);
+      await loadAll();
+    } catch (err: any) {
+      const msg = errorText(err);
+      if (/meter_sn already exists/i.test(msg)) notify("Duplicate serial", "That meter SN is already used.");
+      else notify("Create failed", msg);
+    } finally { setSubmitting(false); }
   };
-  const openEdit = (m: Meter) => { setEditRow(m); setEditType(m.meter_type); setEditSn(m.meter_sn); setEditMult(String(m.meter_mult ?? "1")); setEditStallId(m.stall_id); setEditStatus(m.meter_status); setEditVisible(true); };
+
+  const openEdit = (m: Meter) => {
+    setEditRow(m);
+    setEditType(m.meter_type);
+    setEditSn(m.meter_sn);
+    setEditMult("");
+    setEditStallId(m.stall_id);
+    setEditStatus(m.meter_status);
+    setEditVisible(true);
+  };
+
   const onUpdate = async () => {
     if (!editRow) return;
-    const multValue = editMult.trim() === "" ? undefined : Number(editMult);
-    const body: any = { meter_type: editType, meter_sn: editSn.trim(), stall_id: editStallId.trim(), meter_status: editStatus, ...(multValue !== undefined ? { meter_mult: multValue } : {}) };
-    try { setSubmitting(true); await api.put(`/meters/${encodeURIComponent(editRow.meter_id)}`, body); setEditVisible(false); await loadAll(); notify("Updated", "Meter updated successfully."); }
-    catch (err: any) { notify("Update failed", errorText(err)); }
-    finally { setSubmitting(false); }
+    const body: any = {
+      meter_type: editType,
+      meter_sn: editSn.trim(),
+      stall_id: editStallId.trim(),
+      meter_status: editStatus,
+    };
+    if (editMult.trim() !== "") {
+      const asNum = Number(editMult);
+      if (!Number.isFinite(asNum)) { notify("Invalid multiplier", "Enter a numeric multiplier (e.g., 1 or 93). "); return; }
+      body.meter_mult = asNum;
+    }
+
+    try {
+      setSubmitting(true);
+      await api.put(`/meters/${encodeURIComponent(editRow.meter_id)}`, body);
+      setEditVisible(false);
+      await loadAll();
+      notify("Updated", "Meter updated successfully.");
+    } catch (err: any) {
+      const msg = errorText(err);
+      if (/meter_sn already exists/i.test(msg)) notify("Duplicate serial", "That meter SN is already used.");
+      else notify("Update failed", msg);
+    } finally { setSubmitting(false); }
   };
+
   const onDelete = async (m: Meter) => {
     const ok = await confirm("Delete meter", `Are you sure you want to delete ${m.meter_id}?`);
     if (!ok) return;
-    try { setSubmitting(true); await api.delete(`/meters/${encodeURIComponent(m.meter_id)}`); await loadAll(); notify("Deleted", "Meter removed."); }
-    catch (err: any) { notify("Delete failed", errorText(err)); }
-    finally { setSubmitting(false); }
+    try {
+      setSubmitting(true);
+      await api.delete(`/meters/${encodeURIComponent(m.meter_id)}`);
+      await loadAll();
+      notify("Deleted", "Meter removed.");
+    } catch (err: any) {
+      const msg = errorText(err);
+      if (/referenced by: Reading/i.test(msg)) notify("Cannot delete", msg);
+      else notify("Delete failed", msg);
+    } finally { setSubmitting(false); }
   };
 
-  // QR
+  // QR helpers
   const openQr = (meter_id: string) => { setQrMeterId(meter_id); setQrVisible(true); };
   const downloadQr = () => {
     if (!qrCodeRef.current) return;
@@ -286,7 +338,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
 
         {/* Toolbar: Search + Filters button */}
         <View style={styles.filtersBar}>
-          <View style={[styles.searchWrap, { flex: 1 }]}>
+          <View style={[styles.searchWrap, { flex: 1 }]}> 
             <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
             <TextInput
               placeholder="Search by ID, SN, type, stall…"
@@ -304,42 +356,28 @@ export default function MeterPanel({ token }: { token: string | null }) {
           </TouchableOpacity>
         </View>
 
-        {/* Building chips under search + mobile Select */}
+        {/* Building chips */}
         <View style={{ marginTop: 6, marginBottom: 12 }}>
           <View style={styles.buildingHeaderRow}>
             <Text style={styles.dropdownLabel}>Building</Text>
           </View>
 
           {isMobile ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.chipsRowHorizontal}
-            >
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRowHorizontal}>
               {buildingChipOptions.map((opt) => (
-                <Chip
-                  key={opt.value || "all"}
-                  label={opt.label}
-                  active={buildingFilter === opt.value}
-                  onPress={() => setBuildingFilter(opt.value)}
-                />
+                <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />
               ))}
             </ScrollView>
           ) : (
             <View style={styles.chipsRow}>
               {buildingChipOptions.map((opt) => (
-                <Chip
-                  key={opt.value || "all"}
-                  label={opt.label}
-                  active={buildingFilter === opt.value}
-                  onPress={() => setBuildingFilter(opt.value)}
-                />
+                <Chip key={opt.value || "all"} label={opt.label} active={buildingFilter === opt.value} onPress={() => setBuildingFilter(opt.value)} />
               ))}
             </View>
           )}
         </View>
 
-        {/* LIST — FlatList is the ONLY vertical scroller */}
+        {/* LIST */}
         {sorted.length === 0 ? (
           <View style={styles.emptyWrap}>
             <Ionicons name="archive-outline" size={22} color="#94a3b8" />
@@ -353,7 +391,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
             contentContainerStyle={{ paddingBottom: 16 }}
             renderItem={({ item }) => (
               <View style={[styles.row, isMobile && styles.rowMobile]}>
-                {/* Details */}
                 <View style={styles.rowMain}>
                   <Text style={styles.rowTitle}>
                     {item.meter_id} <Text style={styles.rowSub}>• {item.meter_type.toUpperCase()}</Text>
@@ -361,12 +398,9 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   <Text style={styles.rowMeta}>
                     SN: {item.meter_sn} · Mult: {item.meter_mult} · Stall: {item.stall_id}
                   </Text>
-                  <Text style={styles.rowMetaSmall}>
-                    Status: {item.meter_status.toUpperCase()}
-                  </Text>
+                  <Text style={styles.rowMetaSmall}>Status: {item.meter_status.toUpperCase()}</Text>
                 </View>
 
-                {/* Actions (right on desktop; below on mobile) */}
                 {isMobile ? (
                   <View style={styles.rowActionsMobile}>
                     <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -449,47 +483,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </View>
       </Modal>
 
-      {/* MOBILE Building picker */}
-      <Modal visible={buildingPickerVisible} transparent animationType="fade" onRequestClose={() => setBuildingPickerVisible(false)}>
-        <View style={styles.overlay}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ width: "100%" }}>
-            <View
-              style={[
-                styles.modalCard,
-                Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.9) },
-              ]}
-            >
-              <View style={styles.modalHeaderRow}>
-                <Text style={styles.modalTitle}>Select Building</Text>
-                <TouchableOpacity onPress={() => setBuildingPickerVisible(false)}>
-                  <Ionicons name="close" size={20} color="#64748b" />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.modalDivider} />
-
-              <View style={styles.select}>
-                <Picker
-                  selectedValue={buildingFilter}
-                  onValueChange={(v) => setBuildingFilter(String(v))}
-                  mode={Platform.OS === "android" ? "dropdown" : undefined}
-                >
-                  {buildingChipOptions.map((opt) => (
-                    <Picker.Item key={opt.value || "all"} label={opt.label} value={opt.value} />
-                  ))}
-                </Picker>
-              </View>
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.smallBtn, styles.ghostBtn]} onPress={() => setBuildingPickerVisible(false)}>
-                  <Text style={[styles.smallBtnText, styles.ghostBtnText]}>Done</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
-
-      {/* CREATE MODAL (CRUD unchanged) */}
+      {/* CREATE MODAL */}
       <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -507,8 +501,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
               <Text style={styles.dropdownLabel}>Serial Number</Text>
               <TextInput value={sn} onChangeText={setSn} placeholder="e.g. UGF-E-000111" style={styles.input} />
 
-              <Text style={styles.dropdownLabel}>Multiplier</Text>
-              <TextInput value={mult} onChangeText={setMult} keyboardType="numeric" placeholder="1.00" style={styles.input} />
+              <Text style={styles.dropdownLabel}>Multiplier <Text style={{ color: "#64748b", fontWeight: "400" }}>(leave blank to auto)</Text></Text>
+              <TextInput value={mult} onChangeText={setMult} keyboardType="numeric" placeholder="e.g. 1 or 93" style={styles.input} />
+
+              <Text style={styles.help}>Water defaults to 93.00; Electric/LPG default to 1.00 when left blank.</Text>
 
               <Text style={styles.dropdownLabel}>Stall</Text>
               <View style={styles.pickerWrapper}>
@@ -541,7 +537,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* EDIT MODAL (CRUD unchanged) */}
+      {/* EDIT MODAL */}
       <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -559,7 +555,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
               <Text style={styles.dropdownLabel}>Serial Number</Text>
               <TextInput value={editSn} onChangeText={setEditSn} style={styles.input} />
 
-              <Text style={styles.dropdownLabel}>Multiplier</Text>
+              <Text style={styles.dropdownLabel}>Multiplier <Text style={{ color: "#64748b", fontWeight: "400" }}>(leave blank to keep or auto if type changed)</Text></Text>
               <TextInput value={editMult} onChangeText={setEditMult} keyboardType="numeric" style={styles.input} />
 
               <Text style={styles.dropdownLabel}>Stall</Text>
@@ -592,7 +588,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* QR MODAL (unchanged) */}
+      {/* QR MODAL */}
       <Modal visible={qrVisible} animationType="fade" transparent onRequestClose={() => setQrVisible(false)}>
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -615,7 +611,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   );
 }
 
-/* Small Chip (same look used across panels) */
+/* Small Chip */
 function Chip({ label, active, onPress }: { label: string; active?: boolean; onPress?: () => void }) {
   return (
     <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
@@ -624,9 +620,8 @@ function Chip({ label, active, onPress }: { label: string; active?: boolean; onP
   );
 }
 
-/* ========== Styles (copied feel from TenantsPanel) ========== */
+/* ========== Styles ========== */
 const styles = StyleSheet.create({
-  // page + card
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
   card: {
     flex: 1,
@@ -636,74 +631,31 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: "#eef2f7",
-    ...(Platform.select({
-      web: { boxShadow: "0 10px 30px rgba(2,6,23,0.06)" as any },
-      default: { elevation: 3 },
-    }) as any),
+    ...(Platform.select({ web: { boxShadow: "0 10px 30px rgba(2,6,23,0.06)" as any }, default: { elevation: 3 } }) as any),
   },
-
-  // header + toolbar
   cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   cardTitle: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
-
   btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
 
   filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
-  searchWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f1f5f9",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    height: 40,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
+  searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 10, paddingHorizontal: 10, height: 40, borderWidth: 1, borderColor: "#e2e8f0" },
   search: { flex: 1, height: 40, color: "#0f172a" },
-  btnGhost: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#e2e8f0",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-  },
+  btnGhost: { flexDirection: "row", alignItems: "center", backgroundColor: "#e2e8f0", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: "#cbd5e1" },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
 
-  // Building filter header row
   buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-  quickSelectBtn: {
-    flexDirection: "row", alignItems: "center", backgroundColor: "#e0ecff", borderColor: "#93c5fd", borderWidth: 1,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
-  },
-  quickSelectText: { color: "#1d4ed8", fontWeight: "800", letterSpacing: 0.3, fontSize: 12 },
-
-  // Chips
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8, alignItems: "center" },
-  chip: {
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    backgroundColor: "#f8fafc",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
+  chip: { borderWidth: 1, borderColor: "#cbd5e1", backgroundColor: "#f8fafc", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
   chipIdle: {},
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
 
-  // list rows
-  row: {
-    borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 12, padding: 12, marginBottom: 10,
-    backgroundColor: "#fff", flexDirection: "row", alignItems: "center",
-  },
+  row: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 12, padding: 12, marginBottom: 10, backgroundColor: "#fff", flexDirection: "row", alignItems: "center" },
   rowMobile: { flexDirection: "column", alignItems: "stretch" },
   rowMain: { flex: 1, paddingRight: 10 },
   rowTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
@@ -713,117 +665,30 @@ const styles = StyleSheet.create({
 
   rowActions: { width: 260, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 },
   rowActionsMobile: { flexDirection: "row", gap: 8, marginTop: 10, justifyContent: "flex-start", alignItems: "center" },
-
-  actionBtn: {
-    height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6,
-  },
+  actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 },
   actionEdit: { backgroundColor: "#e2e8f0" },
   actionDelete: { backgroundColor: "#ef4444" },
   actionGhost: { backgroundColor: "#e0ecff" },
-
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
   actionGhostText: { color: "#1d4ed8" },
 
-  // empty + loader
   emptyWrap: { alignItems: "center", paddingVertical: 24, gap: 6 },
   empty: { color: "#64748b" },
 
-  // modal shared
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
   pickerWrapper: { borderWidth: 1, borderColor: "#dbe2ea", borderRadius: 8, overflow: "hidden" },
   picker: { height: 40 },
-  input: {
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e7ecf3",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    color: "#0f172a",
-  },
+  input: { backgroundColor: "#f8fafc", borderWidth: 1, borderColor: "#e7ecf3", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, color: "#0f172a" },
+  help: { color: "#64748b", fontSize: 12, marginTop: 4, marginBottom: 8 },
 
-  modalWrap: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 12,
-  },  
-
-    modalCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
-    ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" as any }, default: { elevation: 4 } }) as any),
-    width: "100%",
-    maxWidth: 560,
-  },
-  modalHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", alignItems: "center", justifyContent: "center", padding: 12 },
+  modalCard: { backgroundColor: "#fff", borderRadius: 16, padding: 14, borderWidth: 1, borderColor: "#eef2f7", ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" as any }, default: { elevation: 4 } }) as any), width: "100%", maxWidth: 560 },
   modalTitle: { fontSize: 16, fontWeight: "900", color: "#0b2447" },
   modalDivider: { height: 1, backgroundColor: "#e5e7eb", marginVertical: 10 },
-
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 12 },
 
-  // Filters prompt
-  // Light-tinted prompt overlay (e.g., Filters & Sort dialog)
-  promptOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(16,42,67,0.25)", // softer tint
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 16,
-  },
-  promptCard: {
-    backgroundColor: "#fff",
-    width: "100%",
-    maxWidth: 520,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#eef2f7",
-    ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 3 } }) as any),
-  },
-
-  // Small buttons for the building picker
-  smallBtn: {
-    minHeight: 36,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  },
-  smallBtnText: { fontSize: 13, fontWeight: "800" },
-  ghostBtn: {
-    backgroundColor: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  ghostBtnText: { color: "#1f2937" },
-
-  // Select wrapper (building picker)
-  select: {
-    borderRadius: 10,
-    overflow: "hidden",
-    backgroundColor: "#ffffff",
-    borderColor: "#e2e8f0",
-    borderWidth: StyleSheet.hairlineWidth,
-    minHeight: 40,
-    justifyContent: "center",
-    paddingHorizontal: 6,
-  },
-  // Generic dark overlay (centered content) — great for simple pickers or small modals
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(2,6,23,0.45)", // deep slate w/ ~45% opacity
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 16,
-  },  
+  promptOverlay: { flex: 1, backgroundColor: "rgba(16,42,67,0.25)", justifyContent: "center", alignItems: "center", padding: 16 },
+  promptCard: { backgroundColor: "#fff", width: "100%", maxWidth: 520, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: "#eef2f7", ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 3 } }) as any) },
 });
