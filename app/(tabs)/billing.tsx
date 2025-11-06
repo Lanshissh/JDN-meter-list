@@ -30,6 +30,23 @@ type TenantBillingLegacy = {
   generated_at: string;
 };
 
+/** ── NEW: Comparison payloads (from rateofchange.js) ───────────────────── */
+type RocPeriod = { start: string; end: string };
+type BuildingMonthlyTotals = {
+  building_id: string;
+  building_name?: string | null;
+  period: { current: RocPeriod };
+  totals: { electric: number; water: number; lpg: number };
+};
+type BuildingFourMonths = {
+  building_id: string;
+  building_name?: string | null;
+  four_months: {
+    periods: Array<{ month: string; start: string; end: string; totals: { electric: number; water: number; lpg: number } }>;
+  };
+};
+/** ─────────────────────────────────────────────────────────────────────── */
+
 /* ==================== Utils ==================== */
 const isYMD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -129,8 +146,10 @@ type Row = {
   memo?: string | null;
   for_penalty?: boolean | null;
   utility_rate?: number | null;
-  tax_code?: string | null;
   vat_rate?: number | null;
+  system_rate?: number | null;
+  wt_rate?: number | null;
+  tax_code?: string | null;
   whtax_code?: string | null;
 };
 
@@ -158,6 +177,36 @@ export default function BillingScreen() {
   const [buildingElectricRate, setBuildingElectricRate] = useState<number | null>(null);
   const [vatMap, setVatMap] = useState<Record<string, number>>({});
   const [reportOpen, setReportOpen] = useState(false);
+
+  /** ── NEW: comparison states ─────────────────────────────────────────── */
+  const [cmpMonthly, setCmpMonthly] = useState<BuildingMonthlyTotals | null>(null);
+  const [cmpFour, setCmpFour] = useState<BuildingFourMonths | null>(null);
+
+  // ROC endpoints may live under /rateofchange or /roc (we’ll try both).
+  const ROC_BASES = ["/rateofchange", "/roc"]; // same approach used in your ROC panel. :contentReference[oaicite:0]{index=0}
+  const getJSON = async <T,>(paths: string[]): Promise<T | null> => {
+    for (const base of ROC_BASES) {
+      for (const p of paths) {
+        try {
+          const { data } = await api.get<T>(`${base}${p}`);
+          return data;
+        } catch (e: any) {
+          if ([401, 403].includes(e?.response?.status)) throw e;
+        }
+      }
+    }
+    return null;
+  };
+  const loadComparisonFor = async (building: string, end: string) => {
+    setCmpMonthly(null); setCmpFour(null);
+    const [m, f] = await Promise.all([
+      getJSON<BuildingMonthlyTotals>([`/buildings/${encodeURIComponent(building)}/period-end/${encodeURIComponent(end)}/monthly-comparison`]),
+      getJSON<BuildingFourMonths>([`/buildings/${encodeURIComponent(building)}/period-end/${encodeURIComponent(end)}/four-month-comparison`]),
+    ]);
+    setCmpMonthly(m || null);
+    setCmpFour(f || null);
+  };
+  /** ──────────────────────────────────────────────────────────────────── */
 
   /* ---------- Load lists ---------- */
   const loadBuildings = async () => {
@@ -495,6 +544,7 @@ export default function BillingScreen() {
   /* ---------- Generate ---------- */
   const onGenerate = async () => {
     setBusy(true); setError(""); setNote(""); setRows([]); setSummary(null); setGeneratedAt("");
+    setCmpMonthly(null); setCmpFour(null); // reset comparison each run
     try {
       if (!endDate || !isYMD(endDate)) throw new Error("Please enter a valid End Date (YYYY-MM-DD).");
       const qs = penaltyQS(penaltyRate);
@@ -505,6 +555,7 @@ export default function BillingScreen() {
         const candidates = buildEndDateCandidates(endDate);
         const notesAll: string[] = [];
         let ok = false;
+        let usedEnd = endDate;                       // ← track which date succeeded to mirror comparison calls
         for (const cand of candidates) {
           const paths = [
             `/billings/buildings/${encodeURIComponent(buildingId)}/period-end/${encodeURIComponent(cand)}${qs}`,
@@ -515,8 +566,10 @@ export default function BillingScreen() {
             if (notes && notes.length) notesAll.push(...notes.map(n=>`[${cand}] ${n}`));
             setNote(notesAll.join("\n"));
             parsePayload(data);
+            usedEnd = cand;
             if (cand !== endDate) setEndDate(cand);
-            ok = true; break;
+            ok = true;
+            break;
           } catch (e:any) {
             notesAll.push(`[${cand}] ${String(e?.message || e)}`);
             setNote(notesAll.join("\n"));
@@ -525,7 +578,10 @@ export default function BillingScreen() {
         if (!ok) {
           setNote((prev)=> (prev?prev+"\n":"") + "Building endpoint returned no readings. Trying tenant aggregation…");
           await aggregateBuildingViaTenants(buildingId, endDate, qs);
+          usedEnd = endDate;
         }
+        // ── NEW: load comparison for the exact period that was used
+        await loadComparisonFor(buildingId, usedEnd);
         return;
       }
       if (mode === "tenant") {
@@ -582,44 +638,167 @@ export default function BillingScreen() {
     return { php10, vatAmt, vatPct };
   };
 
-  const exportCsv = () => {
-    if (!rows.length) { notify("Nothing to export", "Generate a report first."); return; }
-    const records = rows.map((r) => {
-      const { php10, vatAmt } = computePhp10AndVat(r);
-      return {
-        "STALL NO.": r.stall_id ?? "",
-        "TENANTS / VENDORS": tenantReportLabel(r),
-        "METER NO.": r.meter_sn ?? r.meter_id,
-        MULT: r.mult ?? "",
-        "READING PREVIOUS": r.prev_index ?? "",
-        "READING PRESENT": r.curr_index ?? "",
-        "CONSUMED kWhr": r.curr_cons ?? "",
-        VAT: vatAmt != null ? fmt(vatAmt, 2) : "",
-        "Php 10/kwhr": php10 != null ? fmt(php10, 2) : "",
-        TOTAL: r.total ?? "",
-        "CONSUMED kWhr (Jan.)": r.prev_cons ?? "",
-        "Rate of Change": r.rate_of_change != null ? `${fmt(r.rate_of_change, 0)}%` : "",
-        "TAX CODE": r.tax_code ?? "",
-        "WHTAX CODE": r.whtax_code ?? "",
-        MEMO: r.memo ?? "",
-        PENALTY: r.for_penalty ? "TRUE" : "",
-      };
-    });
-    const fn = mode === "building" ? `billing_${buildingId}_${endDate}.csv` : mode === "tenant" ? `billing_${tenantId}_${endDate}.csv` : `billing_${meterId}_${endDate}.csv`;
-    const csv = toCsv(records as any[]);
-    downloadBlob(fn, csv, "text/csv;charset=utf-8;");
+// helper: safe number
+const num = (v: any) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
+
+const exportCsv = () => {
+  if (!rows.length) {
+    notify("Nothing to export", "Generate a report first.");
+    return;
+  }
+
+  type RowMaybeRates = Row & {
+    system_rate?: number | null;
+    base?: number | null;
+    vat?: number | null;
+    wt?: number | null;
+    vat_rate?: number | null;
+    wt_rate?: number | null;
+    tax_code?: string | null;
+    whtax_code?: string | null;
   };
 
-  const exportHtmlReport = () => {
-    if (!rows.length) { notify("Nothing to export", "Generate a report first."); return; }
-    const header = `<tr>
+  const computeBase = (r: RowMaybeRates): number | null => {
+    return num(r.base) ??
+      (num(r.system_rate) != null && num(r.curr_cons) != null
+        ? num(r.system_rate)! * num(r.curr_cons)!
+        : null);
+  };
+
+  const computeVatAmtLocal = (r: RowMaybeRates): number | null => {
+    if (num(r.vat) != null) return num(r.vat)!;
+    const base = computeBase(r);
+    return base != null && num(r.vat_rate) != null ? base * num(r.vat_rate)! : null;
+  };
+
+  const computeWtAmtLocal = (r: RowMaybeRates): number | null => {
+    if (num(r.wt) != null) return num(r.wt)!;
+    const base = computeBase(r);
+    return base != null && num(r.wt_rate) != null ? base * num(r.wt_rate)! : null;
+  };
+
+  const records = rows.map((row) => {
+    const r = row as RowMaybeRates;
+    const { php10 } = computePhp10AndVat(r);
+    const vatAmt = computeVatAmtLocal(r);
+    const wtAmt  = computeWtAmtLocal(r);
+
+    return {
+      "STALL NO.": r.stall_id ?? "",
+      "TENANTS / VENDORS": tenantReportLabel(r),
+      "METER NO.": r.meter_sn ?? r.meter_id,
+      MULT: r.mult ?? "",
+      "READING PREVIOUS": r.prev_index ?? "",
+      "READING PRESENT": r.curr_index ?? "",
+      "CONSUMED kWhr": r.curr_cons ?? "",
+      VAT: vatAmt != null ? fmt(vatAmt, 2) : "",
+      WT: wtAmt  != null ? fmt(wtAmt, 2) : "",
+      "Php 10/kwhr": php10 != null ? fmt(php10, 2) : "",
+      TOTAL: r.total ?? "",
+      "CONSUMED kWhr (Jan.)": r.prev_cons ?? "",
+      "Rate of Change": r.rate_of_change != null ? `${fmt(r.rate_of_change, 0)}%` : "",
+      "TAX CODE": r.tax_code ?? "",
+      "WHTAX CODE": r.whtax_code ?? "",
+      MEMO: r.memo ?? "",
+      PENALTY: r.for_penalty ? "TRUE" : "",
+    };
+  });
+
+  const fn =
+    mode === "building"
+      ? `billing_${buildingId}_${endDate}.csv`
+      : mode === "tenant"
+      ? `billing_${tenantId}_${endDate}.csv`
+      : `billing_${meterId}_${endDate}.csv`;
+
+  const csv = toCsv(records as any[]);
+  downloadBlob(fn, csv, "text/csv;charset=utf-8;");
+};
+
+// local helpers so we can safely derive WT if needed
+type RowMaybeRates = Row & {
+  system_rate?: number | null;
+  wt_rate?: number | null;
+  base?: number | null;
+  wt?: number | null;
+  vat?: number | null;
+  tax_code?: string | null;
+  whtax_code?: string | null;
+};
+
+const deriveBase = (r: RowMaybeRates) => {
+  if (num(r.base) != null) return num(r.base)!;
+  if (num(r.system_rate) != null && num(r.curr_cons) != null) {
+    return num(r.system_rate)! * num(r.curr_cons)!;
+  }
+  const total = num(r.total);
+  const vat = num(r.vat) ?? 0;
+  const wt = num(r.wt) ?? 0;
+  const pen = num((r as any).penalty) ?? 0;
+  if (total != null) return Math.max(0, total - vat - wt - pen);
+  return null;
+};
+
+const deriveWt = (r: RowMaybeRates, base: number | null) => {
+  if (num(r.wt) != null) return num(r.wt)!;
+  if (base != null && num(r.wt_rate) != null) return base * num(r.wt_rate)!;
+  return null;
+};
+
+const exportHtmlReport = () => {
+  if (!rows.length) { notify("Nothing to export", "Generate a report first."); return; }
+
+  // unique local helpers (no name collisions)
+  const toNum = (v: any): number | null =>
+    v == null || v === "" || isNaN(Number(v)) ? null : Number(v);
+
+  type RowMaybeRates = Row & {
+    system_rate?: number | null;
+    base?: number | null;
+    vat?: number | null;
+    wt?: number | null;
+    vat_rate?: number | null;
+    wt_rate?: number | null;
+    tax_code?: string | null;
+    whtax_code?: string | null;
+  };
+
+  const deriveBaseForHtml = (r: RowMaybeRates) => {
+    if (toNum(r.base) != null) return toNum(r.base)!;
+    if (toNum(r.system_rate) != null && toNum(r.curr_cons) != null) {
+      return toNum(r.system_rate)! * toNum(r.curr_cons)!;
+    }
+    const total = toNum(r.total);
+    const vat = toNum(r.vat) ?? 0;
+    const wt  = toNum(r.wt)  ?? 0;
+    const pen = toNum((r as any).penalty) ?? 0;
+    if (total != null) return Math.max(0, total - vat - wt - pen);
+    return null;
+  };
+
+  // ✅ VAT: prefer r.vat; else base × vat_rate (distinct from WT)
+  const deriveVatForHtml = (r: RowMaybeRates, base: number | null) => {
+    if (toNum(r.vat) != null) return toNum(r.vat)!;
+    if (base != null && toNum(r.vat_rate) != null) return base * toNum(r.vat_rate)!;
+    return null;
+  };
+
+  // ✅ WT: prefer r.wt; else base × wt_rate
+  const deriveWtForHtml = (r: RowMaybeRates, base: number | null) => {
+    if (toNum(r.wt) != null) return toNum(r.wt)!;
+    if (base != null && toNum(r.wt_rate) != null) return base * toNum(r.wt_rate)!;
+    return null;
+  };
+
+  // Charges has VAT + WT + Php10 + TOTAL
+  const header = `<tr>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">STALL<br/>NO.</th>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">TENANTS / VENDORS</th>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">METER<br/>NO.</th>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">MULT</th>
   <th colspan="2" style="border:1px solid #bbb;padding:6px;">READING</th>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">CONSUMED<br/>kWhr</th>
-  <th colspan="3" style="border:1px solid #bbb;padding:6px;">Charges</th>
+  <th colspan="4" style="border:1px solid #bbb;padding:6px;">Charges</th>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">CONSUMED<br/>kWhr (Last Mo.)</th>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">Rate of change</th>
   <th rowspan="2" style="border:1px solid #bbb;padding:6px;">TAX CODE</th>
@@ -631,14 +810,32 @@ export default function BillingScreen() {
   <th style="border:1px solid #bbb;padding:6px;">PREVIOUS</th>
   <th style="border:1px solid #bbb;padding:6px;">PRESENT</th>
   <th style="border:1px solid #bbb;padding:6px;">VAT</th>
+  <th style="border:1px solid #bbb;padding:6px;">WT</th>
   <th style="border:1px solid #bbb;padding:6px;">Php 10/kwhr</th>
   <th style="border:1px solid #bbb;padding:6px;">TOTAL</th>
 </tr>`;
-    const rowsHtml = rows.map((r) => {
-      const roc = r.rate_of_change;
-      const rocHtml = roc == null ? "" : `<span style="color:#c1121f;font-weight:700;">${fmt(roc, 0)}%</span>`;
-      const { php10, vatAmt } = computePhp10AndVat(r);
-      return `<tr>
+
+  let totalVat = 0, totalWt = 0, totalPhp10 = 0;
+
+  const rowsHtml = rows.map((row) => {
+    const r = row as RowMaybeRates;
+    const roc = r.rate_of_change;
+    const rocHtml = roc == null ? "" : `<span style="color:#c1121f;font-weight:700;">${fmt(roc, 0)}%</span>`;
+
+    const base  = deriveBaseForHtml(r);
+    const vatAmt = deriveVatForHtml(r, base);           // 👈 distinct VAT
+    const wtAmt  = deriveWtForHtml(r, base);
+
+    // Php10: try your existing helper; fallback to kWh*10
+    let php10: number | null = null;
+    try { const m:any = (computePhp10AndVat as any)(r); if (m && m.php10 != null) php10 = Number(m.php10); } catch {}
+    if (php10 == null && toNum(r.curr_cons) != null) php10 = toNum(r.curr_cons)! * 10;
+
+    if (vatAmt != null) totalVat += vatAmt;
+    if (wtAmt  != null) totalWt  += wtAmt;
+    if (php10  != null) totalPhp10 += php10;
+
+    return `<tr>
       <td style="border:1px solid #ddd;padding:6px;">${r.stall_id ?? ""}</td>
       <td style="border:1px solid #ddd;padding:6px;">${tenantReportLabel(r)}</td>
       <td style="border:1px solid #ddd;padding:6px;">${r.meter_sn ?? r.meter_id}</td>
@@ -647,7 +844,8 @@ export default function BillingScreen() {
       <td style="border:1px solid #ddd;padding:6px;text-align:right;">${fmt(r.curr_index, 2)}</td>
       <td style="border:1px solid #ddd;padding:6px;text-align:right;">${fmt(r.curr_cons, 2)}</td>
       <td style="border:1px solid #ddd;padding:6px;text-align:right;">${vatAmt != null ? peso(vatAmt) : ""}</td>
-      <td style="border:1px solid #ddd;padding:6px;text-align:right;">${php10 != null ? peso(php10) : ""}</td>
+      <td style="border:1px solid #ddd;padding:6px;text-align:right;">${wtAmt  != null ? peso(wtAmt)  : ""}</td>
+      <td style="border:1px solid #ddd;padding:6px;text-align:right;">${php10  != null ? peso(php10)  : ""}</td>
       <td style="border:1px solid #ddd;padding:6px;text-align:right;font-weight:700;">${peso(r.total ?? 0)}</td>
       <td style="border:1px solid #ddd;padding:6px;text-align:right;">${fmt(r.prev_cons, 2)}</td>
       <td style="border:1px solid #ddd;padding:6px;text-align:center;">${rocHtml}</td>
@@ -656,25 +854,29 @@ export default function BillingScreen() {
       <td style="border:1px solid #ddd;padding:6px;">${r.memo ?? ""}</td>
       <td style="border:1px solid #ddd;padding:6px;">${r.for_penalty ? "TRUE" : ""}</td>
     </tr>`;
-    }).join("\n");
-    const totalPrevCons = rows.reduce((s, r) => s + Number(r.prev_cons ?? 0), 0);
-    const totalCurrCons = summary?.consumption ?? rows.reduce((s, r) => s + Number(r.curr_cons ?? 0), 0);
-    const totalAmt = summary?.total ?? rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
-    const sumHtml = `
+  }).join("\n");
+
+  const totalPrevCons = rows.reduce((s, r) => s + Number(r.prev_cons ?? 0), 0);
+  const totalCurrCons = summary?.consumption ?? rows.reduce((s, r) => s + Number(r.curr_cons ?? 0), 0);
+  const totalAmt      = summary?.total ?? rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
+
+  const sumHtml = `
   <tr>
     <td colspan="6" style="border:1px solid #bbb;padding:6px;font-weight:700;text-align:center;">TOTAL OF ALL CONSUMED kWhr</td>
     <td style="border:1px solid #bbb;padding:6px;text-align:right;font-weight:700;">${fmt(totalCurrCons, 2)}</td>
-    <td style="border:1px solid #bbb;padding:6px;"></td>
-    <td style="border:1px solid #bbb;padding:6px;"></td>
+    <td style="border:1px solid #bbb;padding:6px;text-align:right;font-weight:700;">${peso(totalVat)}</td>
+    <td style="border:1px solid #bbb;padding:6px;text-align:right;font-weight:700;">${peso(totalWt)}</td>
+    <td style="border:1px solid #bbb;padding:6px;text-align:right;font-weight:700;">${peso(totalPhp10)}</td>
     <td style="border:1px solid #bbb;padding:6px;text-align:right;font-weight:700;">${peso(totalAmt)}</td>
     <td colspan="6" style="border:1px solid #bbb;padding:6px;"></td>
   </tr>
   <tr>
-    <td colspan="10" style="border:1px solid #bbb;padding:6px;"></td>
+    <td colspan="11" style="border:1px solid #bbb;padding:6px;"></td>
     <td style="border:1px solid #bbb;padding:6px;text-align:right;font-weight:700;">${fmt(totalPrevCons, 2)}</td>
     <td colspan="5" style="border:1px solid #bbb;padding:6px;text-align:center;font-weight:700;">TOTAL OF ALL CONSUMED kWhr LAST MONTH</td>
   </tr>`;
-    const html = `<!doctype html>
+
+  const html = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
@@ -692,9 +894,15 @@ export default function BillingScreen() {
 </table>
 <p style="font-family:Arial;color:#555;">Generated at: ${generatedAt || new Date().toISOString()}</p>
 </body></html>`;
-    const fn = mode === "building" ? `billing_${buildingId}_${endDate}.html` : mode === "tenant" ? `billing_${tenantId}_${endDate}.html` : `billing_${meterId}_${endDate}.html`;
-    downloadBlob(fn, html, "text/html;charset=utf-8;");
-  };
+
+  const fn =
+    mode === "building" ? `billing_${buildingId}_${endDate}.html`
+    : mode === "tenant" ? `billing_${tenantId}_${endDate}.html`
+    : `billing_${meterId}_${endDate}.html`;
+
+  downloadBlob(fn, html, "text/html;charset=utf-8;");
+};
+
 
   /* ==================== UI ==================== */
   const Header = () => (
@@ -969,6 +1177,64 @@ export default function BillingScreen() {
     </View>
   ) : null;
 
+  /** ── NEW: Comparison section (building mode) ───────────────────────── */
+  const Comparison = () => {
+    if (mode !== "building") return null;
+    if (!cmpMonthly && !cmpFour) return null;
+
+    return (
+      <View style={styles.cmpCard}>
+        <Text style={styles.cmpTitle}>Comparison</Text>
+
+        {cmpMonthly && (
+          <View style={styles.cmpBlock}>
+            <Text style={styles.cmpBlockTitle}>Monthly totals (current window)</Text>
+            <View style={styles.cmpKpis}>
+              <View style={styles.cmpKpi}>
+                <Ionicons name="flash" size={18} color="#f59e0b" />
+                <Text style={styles.cmpKpiLabel}>Electric</Text>
+                <Text style={styles.cmpKpiValue}>{fmt(cmpMonthly.totals.electric)}</Text>
+              </View>
+              <View style={styles.cmpKpi}>
+                <Ionicons name="water" size={18} color="#06b6d4" />
+                <Text style={styles.cmpKpiLabel}>Water</Text>
+                <Text style={styles.cmpKpiValue}>{fmt(cmpMonthly.totals.water)}</Text>
+              </View>
+              <View style={styles.cmpKpi}>
+                <Ionicons name="flame" size={18} color="#ef4444" />
+                <Text style={styles.cmpKpiLabel}>LPG</Text>
+                <Text style={styles.cmpKpiValue}>{fmt(cmpMonthly.totals.lpg)}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {cmpFour && cmpFour.four_months?.periods?.length ? (
+          <View style={styles.cmpBlock}>
+            <Text style={styles.cmpBlockTitle}>Four-month comparison</Text>
+
+            <View style={styles.cmpTableHeader}>
+              <Text style={[styles.cmpTh, { flex: 1.2 }]}>Month</Text>
+              <Text style={[styles.cmpTh, { flex: 1 }]}>Electric</Text>
+              <Text style={[styles.cmpTh, { flex: 1 }]}>Water</Text>
+              <Text style={[styles.cmpTh, { flex: 1 }]}>LPG</Text>
+            </View>
+
+            {cmpFour.four_months.periods.map((p) => (
+              <View key={p.month} style={styles.cmpRow}>
+                <Text style={[styles.cmpTd, { flex: 1.2 }]}>{p.month}</Text>
+                <Text style={[styles.cmpTd, { flex: 1, textAlign: "right" }]}>{fmt(p.totals.electric)}</Text>
+                <Text style={[styles.cmpTd, { flex: 1, textAlign: "right" }]}>{fmt(p.totals.water)}</Text>
+                <Text style={[styles.cmpTd, { flex: 1, textAlign: "right" }]}>{fmt(p.totals.lpg)}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+  /** ─────────────────────────────────────────────────────────────────── */
+
   /* ---------- Report Panel ---------- */
   const ReportPanel = () => (
     <Modal visible={reportOpen} animationType="slide" transparent onRequestClose={() => setReportOpen(false)}>
@@ -1052,6 +1318,9 @@ export default function BillingScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Controls />
         <SummaryBar />
+        {/* NEW: comparison visuals */}
+        <Comparison />
+
         {busy ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6366f1" />
@@ -1415,6 +1684,55 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#0f172a",
   },
+
+  // NEW: Comparison styles
+  cmpCard: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    marginTop: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  cmpTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 8,
+  },
+  cmpBlock: { marginTop: 10 },
+  cmpBlockTitle: { fontSize: 13, fontWeight: "700", color: "#334155", marginBottom: 8 },
+  cmpKpis: { flexDirection: "row", gap: 12 },
+  cmpKpi: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    alignItems: "center",
+    gap: 4,
+  },
+  cmpKpiLabel: { fontSize: 12, fontWeight: "600", color: "#64748b" },
+  cmpKpiValue: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
+  cmpTableHeader: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+    paddingVertical: 8,
+    marginTop: 6,
+  },
+  cmpTh: { fontSize: 12, color: "#64748b", fontWeight: "700" },
+  cmpRow: {
+    flexDirection: "row",
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e2e8f0",
+  },
+  cmpTd: { fontSize: 14, color: "#0f172a" },
 
   // Results Section
   resultsSection: {

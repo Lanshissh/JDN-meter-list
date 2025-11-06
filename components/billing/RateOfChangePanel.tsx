@@ -79,8 +79,7 @@ const fmt = (n: number | string | null | undefined, digits = 2): string => {
   if (n == null || n === "") return "—";
   const v = Number(n);
   if (!Number.isFinite(v)) return String(n);
-  return Intl.NumberFormat(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
-    .format(v);
+  return Intl.NumberFormat(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v);
 };
 const pctBadge = (p: number | null | undefined) => (p == null ? null : Math.round(Number(p)));
 
@@ -114,8 +113,8 @@ export default function RateOfChangePanel({ token }: { token: string | null }) {
     [token]
   );
 
-  // Your server can mount at /rateofchange; some stacks also alias to /roc. Try both.
-  const ROC_BASES = ["/rateofchange", "/roc"]; // existing panel already supported this :contentReference[oaicite:0]{index=0}
+  // Your server can mount at /rateofchange; some stacks also alias to /roc. Try both. :contentReference[oaicite:4]{index=4}
+  const ROC_BASES = ["/rateofchange", "/roc"];
 
   /* ==================== API calls ==================== */
   async function getJSON<T>(paths: string[]): Promise<T | null> {
@@ -134,24 +133,24 @@ export default function RateOfChangePanel({ token }: { token: string | null }) {
   }
 
   const fetchRocMeter = (id: string, date: string) =>
-    getJSON<RocMeter>([`/meters/${encodeURIComponent(id)}/period-end/${date}`]); // backend: per-meter endpoint :contentReference[oaicite:1]{index=1}
+    getJSON<RocMeter>([`/meters/${encodeURIComponent(id)}/period-end/${date}`]); // per-meter
 
   const fetchRocTenant = (id: string, date: string) =>
-    getJSON<RocTenant>([`/tenants/${encodeURIComponent(id)}/period-end/${date}`]); // backend: per-tenant endpoint :contentReference[oaicite:2]{index=2}
+    getJSON<RocTenant>([`/tenants/${encodeURIComponent(id)}/period-end/${date}`]); // per-tenant
 
-  // Building (grouped by tenant)
+  // Building (grouped by tenant) — compares current vs previous across tenants. :contentReference[oaicite:5]{index=5}
   const fetchRocBuildingGrouped = (id: string, date: string) =>
-    getJSON<RocBuildingGrouped>([`/buildings/${encodeURIComponent(id)}/period-end/${date}`]); // grouped tenants :contentReference[oaicite:3]{index=3}
+    getJSON<RocBuildingGrouped>([`/buildings/${encodeURIComponent(id)}/period-end/${date}`]);
 
-  // Building monthly totals (current period only)
+  // Building monthly totals (current period only). Backend route: monthly-comparison. :contentReference[oaicite:6]{index=6}
   const fetchRocBuildingMonthly = (id: string, date: string) =>
-    getJSON<BuildingMonthlyTotals>([`/buildings/${encodeURIComponent(id)}/period-end/${date}/monthly-comparison`]); // monthly totals :contentReference[oaicite:4]{index=4}
+    getJSON<BuildingMonthlyTotals>([`/buildings/${encodeURIComponent(id)}/period-end/${date}/monthly-comparison`]);
 
-  // Building four-month comparison (four consecutive 21→20 windows)
+  // Building four-month comparison (four consecutive 21→20 windows). :contentReference[oaicite:7]{index=7}
   const fetchRocBuildingFour = (id: string, date: string) =>
     getJSON<BuildingFourMonths>([
       `/buildings/${encodeURIComponent(id)}/period-end/${date}/four-month-comparison`,
-    ]); // 4× rolling windows :contentReference[oaicite:5]{index=5}
+    ]);
 
   /* ==================== Run ==================== */
   const onRun = async () => {
@@ -178,7 +177,7 @@ export default function RateOfChangePanel({ token }: { token: string | null }) {
         if (!row) { notify("Not found", "Meter not found or no data for the period."); return; }
         setMeterRows([row]);
       } else {
-        if (!buildingId.trim()) { notify("Missing building", "Enter a building id (e.g. BLD-1)."); return; }
+        if (!buildingId.trim()) { notify("Missing building", "Enter a building id (e.g. BLDG-1)."); return; }
         const [grouped, monthly, four] = await Promise.all([
           fetchRocBuildingGrouped(buildingId.trim(), endDate),
           fetchRocBuildingMonthly(buildingId.trim(), endDate),
@@ -229,7 +228,7 @@ export default function RateOfChangePanel({ token }: { token: string | null }) {
         Compare current vs previous (21→20) periods by tenant, meter, or building.
       </Text>
     </View>
-  ); // existing base layout retained :contentReference[oaicite:6]{index=6}
+  );
 
   const Toolbar = () => (
     <View style={styles.toolbar}>
@@ -293,7 +292,7 @@ export default function RateOfChangePanel({ token }: { token: string | null }) {
         )}
         {mode === "meter" && (
           <View style={styles.inputWrap}>
-            <Ionicons name="podium-outline" size={16} color="#0f172a" style={{ marginRight: 6 }} />
+            <Ionicons name="bonfire-outline" size={16} color="#0f172a" style={{ marginRight: 6 }} />
             <TextInput
               value={meterId}
               onChangeText={setMeterId}
@@ -309,44 +308,37 @@ export default function RateOfChangePanel({ token }: { token: string | null }) {
             <TextInput
               value={buildingId}
               onChangeText={setBuildingId}
-              placeholder="BLD-1"
+              placeholder="BLDG-1"
               style={styles.input}
               autoCapitalize="none"
             />
           </View>
         )}
 
-        <TouchableOpacity style={styles.runBtn} onPress={onRun}>
+        <TouchableOpacity onPress={onRun} style={styles.runBtn}>
           <Text style={styles.runText}>Run</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 
-  /* ==================== MAIN ==================== */
   return (
     <View style={styles.screen}>
       <Header />
       <Toolbar />
 
       {busy ? (
-        <View style={{ padding: 16 }}>
-          <ActivityIndicator />
-        </View>
+        <ActivityIndicator size="small" color="#1f2a59" />
       ) : (
         <>
-          {/* Meter / Tenant views */}
-          {(mode === "meter" || mode === "tenant") && (
+          {/* Tenant / Meter modes */}
+          {mode !== "building" && (
             <>
-              <View style={styles.headerRow2}>
-                <Text style={styles.sectionTitle}>Per-meter consumption</Text>
-                <Text style={styles.caption}>Prev / Present indices and delta (with warning ≥ 20%)</Text>
-              </View>
-
-              {!meterRows || meterRows.length === 0 ? (
-                <Text style={styles.empty}>No rows.</Text>
+              {!meterRows ? (
+                <Text style={styles.empty}>Enter details and tap Run.</Text>
               ) : (
                 <>
+                  {/* Table header */}
                   <View style={[styles.row, { borderBottomColor: "transparent" }]}>
                     <View style={[styles.cellWide]}><Text style={styles.caption}>Meter</Text></View>
                     <View style={styles.cell}><Text style={styles.caption}>Prev Index</Text></View>
