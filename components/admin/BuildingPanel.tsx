@@ -1,4 +1,4 @@
-// components/admin/BuildingPanel.tsx (FULL CRUD: list, create, update, delete)
+// components/admin/BuildingPanel.tsx (updated to visually match WithholdingPanel.tsx 1:1)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -19,7 +19,9 @@ import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 
-/** Types (aligned with backend /buildings) */
+/* Types */
+type Props = { token: string | null };
+
 type Building = {
   building_id: string;
   building_name: string;
@@ -28,17 +30,28 @@ type Building = {
   wrate_perCbM?: number | null;
   wmin_con?: number | null;
   lrate_perKg?: number | null;
-  markup_rate?: number | null; // NEW
+  markup_rate?: number | null;
   last_updated?: string | null;
   updated_by?: string | null;
 };
 
-type Props = { token: string | null };
+type SortMode = "newest" | "oldest" | "nameAsc" | "nameDesc" | "idAsc" | "idDesc";
 
-/* Helpers */
+/* helpers (mirrors WithholdingPanel) */
+const fmtDate = (iso?: string | null) => {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toLocaleString() : String(iso);
+};
+const toNumOrNull = (s: string): number | null => {
+  const t = s.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+};
 function notify(title: string, message?: string) {
-  if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).alert) {
-    (window as any).alert(message ? `${title}
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
+    window.alert(message ? `${title}
 
 ${message}` : title);
   } else {
@@ -53,39 +66,13 @@ function errorText(err: any, fallback = "Server error.") {
   if (err?.message) return String(err.message);
   try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
-const toNum = (s: string): number | null => {
-  const t = s.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-};
-const fmt = (n?: number | null, unit?: string) => {
-  if (n == null || !Number.isFinite(Number(n))) return "—";
-  const out = Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n));
-  return unit ? `${out} ${unit}` : out;
-};
 
+/* tiny UI atom for modal chips (same look as WithholdingPanel) */
 const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
-
-// cross-platform confirm dialog that returns a Promise<boolean>
-const askConfirm = (title: string, message: string): Promise<boolean> => {
-  if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).confirm) {
-    const ok = (window as any).confirm(`${title}
-
-${message}`);
-    return Promise.resolve(ok);
-  }
-  return new Promise((resolve) => {
-    Alert.alert(title, message, [
-      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-      { text: "Delete", style: "destructive", onPress: () => resolve(true) },
-    ]);
-  });
-};
 
 export default function BuildingPanel({ token }: Props) {
   const { width } = useWindowDimensions();
@@ -93,18 +80,17 @@ export default function BuildingPanel({ token }: Props) {
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [buildings, setBuildings] = useState<Building[]>([]);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // search + sort
+  const [rows, setRows] = useState<Building[]>([]);
   const [query, setQuery] = useState("");
-  type SortMode = "newest" | "oldest" | "name" | "id";
+
+  // filters to mirror WithholdingPanel UX
   const [sortMode, setSortMode] = useState<SortMode>("newest");
-
-  // filters modal (placeholder for future)
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [hasAnyRate, setHasAnyRate] = useState(false);
+  const [onlyNonZero, setOnlyNonZero] = useState(false);
 
-  // create modal
+  // create modal fields
   const [createVisible, setCreateVisible] = useState(false);
   const [c_name, setC_name] = useState("");
   const [c_eRate, setC_eRate] = useState("");
@@ -112,9 +98,9 @@ export default function BuildingPanel({ token }: Props) {
   const [c_wRate, setC_wRate] = useState("");
   const [c_wMin, setC_wMin] = useState("");
   const [c_lRate, setC_lRate] = useState("");
-  const [c_markup, setC_markup] = useState(""); // NEW
+  const [c_markup, setC_markup] = useState("");
 
-  // edit modal
+  // edit modal fields
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<Building | null>(null);
   const [e_name, setE_name] = useState("");
@@ -123,40 +109,52 @@ export default function BuildingPanel({ token }: Props) {
   const [e_wRate, setE_wRate] = useState("");
   const [e_wMin, setE_wMin] = useState("");
   const [e_lRate, setE_lRate] = useState("");
-  const [e_markup, setE_markup] = useState(""); // NEW
+  const [e_markup, setE_markup] = useState("");
 
   // axios
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
+  const basePath = "/buildings";
 
   /* Load */
   useEffect(() => { loadAll(); }, [token]);
   const loadAll = async () => {
-    if (!token) { setBusy(false); notify("Not logged in", "Please log in as admin to manage buildings."); return; }
+    if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage buildings."); return; }
     try {
       setBusy(true);
-      const res = await api.get<Building[]>("/buildings");
-      setBuildings(res.data || []);
-    } catch (err: any) {
-      notify("Load failed", errorText(err, "Connection error."));
+      const res = await api.get<Building[]>(basePath);
+      setRows(res.data || []);
+    } catch (err) {
+      notify("Load failed", errorText(err, "Could not load buildings."));
     } finally { setBusy(false); }
   };
 
-  /* Derived list */
+  /* Search + Filter + Sort */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let list = buildings;
-    if (q) list = list.filter((b) => [b.building_id, b.building_name].filter(Boolean).some((v) => String(v).toLowerCase().includes(q)));
-    const arr = [...list];
+    const nz = (v: number | null | undefined) => (v == null ? false : (onlyNonZero ? Number(v) > 0 : true));
+    return rows.filter((r) => {
+      const textOk = !q ? true : [r.building_id, r.building_name, r.updated_by]
+        .some((v) => String(v ?? "").toLowerCase().includes(q));
+      const rateOk = hasAnyRate
+        ? (nz(r.erate_perKwH) || nz(r.wrate_perCbM) || nz(r.lrate_perKg) || nz(r.markup_rate))
+        : true;
+      return textOk && rateOk;
+    });
+  }, [rows, query, hasAnyRate, onlyNonZero]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
     switch (sortMode) {
-      case "name": arr.sort((a, b) => a.building_name.localeCompare(b.building_name)); break;
-      case "id": arr.sort((a, b) => a.building_id.localeCompare(b.building_id)); break;
-      case "oldest": arr.sort((a, b) => (Date.parse(a.last_updated || "") || 0) - (Date.parse(b.last_updated || "") || 0)); break;
+      case "nameAsc":  return arr.sort((a, b) => (a.building_name || "").localeCompare(b.building_name || ""));
+      case "nameDesc": return arr.sort((a, b) => (b.building_name || "").localeCompare(a.building_name || ""));
+      case "idAsc":    return arr.sort((a, b) => (a.building_id || "").localeCompare(b.building_id || "", undefined, { numeric: true }));
+      case "idDesc":   return arr.sort((a, b) => (b.building_id || "").localeCompare(a.building_id || "", undefined, { numeric: true }));
+      case "oldest":   return arr.sort((a, b) => (Date.parse(a.last_updated || "") || 0) - (Date.parse(b.last_updated || "") || 0));
       case "newest":
-      default: arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0)); break;
+      default:          return arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
     }
-    return arr;
-  }, [buildings, query, sortMode]);
+  }, [filtered, sortMode]);
 
   /* CRUD */
   const onCreate = async () => {
@@ -164,34 +162,33 @@ export default function BuildingPanel({ token }: Props) {
     if (!building_name) { notify("Missing info", "Please enter a building name."); return; }
     try {
       setSubmitting(true);
-      const body: any = {
+      await api.post(basePath, {
         building_name,
-        erate_perKwH: toNum(c_eRate),
-        emin_con: toNum(c_eMin),
-        wrate_perCbM: toNum(c_wRate),
-        wmin_con: toNum(c_wMin),
-        lrate_perKg: toNum(c_lRate),
-        markup_rate: toNum(c_markup), // NEW
-      };
-      await api.post("/buildings", body);
+        erate_perKwH: toNumOrNull(c_eRate),
+        emin_con:     toNumOrNull(c_eMin),
+        wrate_perCbM: toNumOrNull(c_wRate),
+        wmin_con:     toNumOrNull(c_wMin),
+        lrate_perKg:  toNumOrNull(c_lRate),
+        markup_rate:  toNumOrNull(c_markup),
+      });
       setCreateVisible(false);
       setC_name(""); setC_eRate(""); setC_eMin(""); setC_wRate(""); setC_wMin(""); setC_lRate(""); setC_markup("");
       await loadAll();
       notify("Success", "Building created.");
-    } catch (err: any) {
+    } catch (err) {
       notify("Create failed", errorText(err));
     } finally { setSubmitting(false); }
   };
 
-  const openEdit = (b: Building) => {
-    setEditRow(b);
-    setE_name(b.building_name || "");
-    setE_eRate(b.erate_perKwH != null ? String(b.erate_perKwH) : "");
-    setE_eMin(b.emin_con != null ? String(b.emin_con) : "");
-    setE_wRate(b.wrate_perCbM != null ? String(b.wrate_perCbM) : "");
-    setE_wMin(b.wmin_con != null ? String(b.wmin_con) : "");
-    setE_lRate(b.lrate_perKg != null ? String(b.lrate_perKg) : "");
-    setE_markup(b.markup_rate != null ? String(b.markup_rate) : "");
+  const openEdit = (row: Building) => {
+    setEditRow(row);
+    setE_name(row.building_name || "");
+    setE_eRate(row.erate_perKwH != null ? String(row.erate_perKwH) : "");
+    setE_eMin(row.emin_con != null ? String(row.emin_con) : "");
+    setE_wRate(row.wrate_perCbM != null ? String(row.wrate_perCbM) : "");
+    setE_wMin(row.wmin_con != null ? String(row.wmin_con) : "");
+    setE_lRate(row.lrate_perKg != null ? String(row.lrate_perKg) : "");
+    setE_markup(row.markup_rate != null ? String(row.markup_rate) : "");
     setEditVisible(true);
   };
 
@@ -201,263 +198,507 @@ export default function BuildingPanel({ token }: Props) {
     if (!building_name) { notify("Missing info", "Please enter a building name."); return; }
     try {
       setSubmitting(true);
-      const body: any = {
+      await api.put(`${basePath}/${encodeURIComponent(editRow.building_id)}`, {
         building_name,
-        erate_perKwH: toNum(e_eRate),
-        emin_con: toNum(e_eMin),
-        wrate_perCbM: toNum(e_wRate),
-        wmin_con: toNum(e_wMin),
-        lrate_perKg: toNum(e_lRate),
-        markup_rate: toNum(e_markup), // NEW
-      };
-      await api.put(`/buildings/${encodeURIComponent(editRow.building_id)}`, body);
+        erate_perKwH: toNumOrNull(e_eRate),
+        emin_con:     toNumOrNull(e_eMin),
+        wrate_perCbM: toNumOrNull(e_wRate),
+        wmin_con:     toNumOrNull(e_wMin),
+        lrate_perKg:  toNumOrNull(e_lRate),
+        markup_rate:  toNumOrNull(e_markup),
+      });
       setEditVisible(false);
       await loadAll();
       notify("Updated", "Building updated.");
-    } catch (err: any) {
+    } catch (err) {
       notify("Update failed", errorText(err));
     } finally { setSubmitting(false); }
   };
 
-  const onDelete = async (row: Building) => {
-    const ok = await askConfirm("Delete building?", `This will permanently remove “${row.building_name}”. This action cannot be undone.`);
-    if (!ok) return;
-    try {
-      setDeletingId(row.building_id);
-      await api.delete(`/buildings/${encodeURIComponent(row.building_id)}`);
-      // close edit modal if we deleted the currently open row
-      if (editVisible && editRow?.building_id === row.building_id) setEditVisible(false);
-      await loadAll();
-      notify("Deleted", "Building removed.");
-    } catch (err: any) {
-      notify("Delete failed", errorText(err));
-    } finally {
-      setDeletingId(null);
+  const onDelete = (row: Building) => {
+    const go = async () => {
+      try {
+        setSubmitting(true);
+        await api.delete(`${basePath}/${encodeURIComponent(row.building_id)}`);
+        await loadAll();
+        notify("Deleted", "Building removed.");
+      } catch (err) {
+        notify("Delete failed", errorText(err));
+      } finally { setSubmitting(false); }
+    };
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.confirm) {
+      if (window.confirm(`Delete ${row.building_name || row.building_id}?`)) go();
+    } else {
+      Alert.alert("Confirm delete", `Delete ${row.building_name || row.building_id}?`, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: go },
+      ]);
     }
   };
 
-  /* UI */
-  const Header = () => (
-    <View style={styles.headerRow}>
-      <Text style={styles.title}>Buildings</Text>
-      <Text style={styles.subtitle}>Manage base utility rates, markup, and metadata. Total: {buildings.length}</Text>
-    </View>
-  );
-
-  const Toolbar = () => (
-    <View style={styles.toolbar}>
-      <View style={[styles.searchWrap, { flex: 1 }]}>
-        <Ionicons name="search" size={16} color="#667085" style={{ marginRight: 6 }} />
-        <TextInput
-          placeholder="Search by name or ID"
-          placeholderTextColor="#98A2B3"
-          value={query}
-          onChangeText={setQuery}
-          style={styles.searchInput}
-        />
-      </View>
-
-      <TouchableOpacity onPress={() => setFiltersVisible(true)} style={styles.btnGhost}>
-        <Ionicons name="filter" size={16} color="#344054" />
-        <Text style={styles.btnGhostText}>Filters</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity onPress={() => setCreateVisible(true)} style={styles.btnPrimary}>
-        <Ionicons name="add" size={18} color="#fff" />
-        <Text style={styles.btnPrimaryText}>Add</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const SortChips = () => (
-    <View style={styles.chipsRow}>
-      <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
-      <Chip label="Oldest" active={sortMode === "oldest"} onPress={() => setSortMode("oldest")} />
-      <Chip label="Name" active={sortMode === "name"} onPress={() => setSortMode("name")} />
-      <Chip label="ID" active={sortMode === "id"} onPress={() => setSortMode("id")} />
-    </View>
-  );
-
-  const Row = ({ item }: { item: Building }) => (
-    <View style={styles.row}>
-      <View style={[styles.cell, { flex: 1.2 }]}><Text style={styles.cellTitle}>{item.building_name}</Text><Text style={styles.cellSub}>{item.building_id}</Text></View>
-      <View style={styles.cell}><Text style={styles.mono}>{fmt(item.erate_perKwH, "₱/kWh")}</Text></View>
-      <View style={styles.cell}><Text style={styles.mono}>{fmt(item.emin_con, "kWh")}</Text></View>
-      <View style={styles.cell}><Text style={styles.mono}>{fmt(item.wrate_perCbM, "₱/m³")}</Text></View>
-      <View style={styles.cell}><Text style={styles.mono}>{fmt(item.wmin_con, "m³")}</Text></View>
-      <View style={styles.cell}><Text style={styles.mono}>{fmt(item.lrate_perKg, "₱/kg")}</Text></View>
-      <View style={styles.cell}><Text style={[styles.mono, styles.badge]}>{fmt(item.markup_rate, "%")}</Text></View>
-      <View style={[styles.cell, { minWidth: 120 }]}>
-        <Text style={styles.cellSub} numberOfLines={1}>
-          {item.last_updated ? new Date(item.last_updated).toLocaleString() : ""}
-        </Text>
-        <Text style={styles.cellSub} numberOfLines={1}>{item.updated_by || ""}</Text>
-      </View>
-      <View style={[styles.cell, styles.actions]}>
-        <TouchableOpacity onPress={() => openEdit(item)} style={styles.iconBtn} accessibilityLabel="Edit">
-          <Ionicons name="create-outline" size={18} color="#344054" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => onDelete(item)}
-          style={[styles.iconBtn, { backgroundColor: "#FEE4E2" }]}
-          accessibilityLabel="Delete"
-          disabled={deletingId === item.building_id}
-        >
-          {deletingId === item.building_id ? (
-            <ActivityIndicator />
-          ) : (
-            <Ionicons name="trash-outline" size={18} color="#B42318" />
-          )}
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
+  /* UI — identical structure to WithholdingPanel */
   return (
     <View style={styles.page}>
-      <Header />
-      <Toolbar />
-      <SortChips />
-
-      {busy ? (
-        <View style={styles.center}><ActivityIndicator /></View>
-      ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(it) => it.building_id}
-          renderItem={Row}
-          contentContainerStyle={{ paddingBottom: 24 }}
-          ListEmptyComponent={<Text style={styles.empty}>No buildings found.</Text>}
-        />
-      )}
-
-      {/* Filters Modal (placeholder UI) */}
-      <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Filters</Text>
-            <Text style={styles.modalHint}>No advanced filters yet.</Text>
-            <View style={{ height: 12 }} />
-            <TouchableOpacity onPress={() => setFiltersVisible(false)} style={styles.btnPrimary}>
-              <Text style={styles.btnPrimaryText}>Close</Text>
+      <View style={styles.grid}>
+        <View style={styles.card}>
+          {/* Header */}
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Buildings</Text>
+            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+              <Text style={styles.btnText}>+ New</Text>
             </TouchableOpacity>
+          </View>
+
+          {/* Toolbar */}
+          <View style={styles.filtersBar}>
+            <View style={[styles.searchWrap, { flex: 1 }]}>
+              <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search by ID or name…"
+                placeholderTextColor="#9aa5b1"
+                style={styles.search}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
+              <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+              <Text style={styles.btnGhostText}>Filters</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* List */}
+          {busy ? (
+            <View style={styles.loader}><ActivityIndicator /></View>
+          ) : (
+            <FlatList
+              data={sorted}
+              keyExtractor={(r) => r.building_id}
+              style={{ flex: 1 }}
+              contentContainerStyle={sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }}
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <Ionicons name="business-outline" size={42} color="#cbd5e1" />
+                  <Text style={styles.emptyTitle}>No buildings</Text>
+                  <Text style={styles.emptyText}>Try adjusting your search or create a new record.</Text>
+                </View>
+              }
+              renderItem={({ item }) => (
+                <View style={[styles.row, isMobile && styles.rowMobile]}>
+                  {/* Main details */}
+                  <View style={styles.rowMain}>
+                    <Text style={styles.rowTitle}>
+                      {item.building_name || "(No name)"} <Text style={styles.rowSub}>({item.building_id})</Text>
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      ELECTRIC: {item.erate_perKwH ?? "—"} ₱/kWh (min {item.emin_con ?? "—"} kWh)
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      WATER: {item.wrate_perCbM ?? "—"} ₱/m³ (min {item.wmin_con ?? "—"} m³)
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      LPG: {item.lrate_perKg ?? "—"} ₱/kg • Markup: {item.markup_rate ?? "—"}
+                    </Text>
+                    {item.last_updated ? (
+                      <Text style={styles.rowMetaSmall}>
+                        Updated {fmtDate(item.last_updated)} {item.updated_by ? `• by ${item.updated_by}` : ""}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  {/* Actions */}
+                  {isMobile ? (
+                    <View style={styles.rowActionsMobile}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.rowActions}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                        <Ionicons name="create-outline" size={16} color="#1f2937" />
+                        <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
+                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+            />
+          )}
+        </View>
+      </View>
+
+      {/* Filters Modal */}
+      <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
+        <View style={styles.promptOverlay}>
+          <View style={styles.promptCard}>
+            <Text style={styles.modalTitle}>Filters & Sort</Text>
+            <View style={styles.modalDivider} />
+
+            <Text style={styles.dropdownLabel}>Sort by</Text>
+            <View style={styles.chipsRow}>
+              <Chip label="Newest"  active={sortMode === "newest"}  onPress={() => setSortMode("newest")} />
+              <Chip label="Oldest"  active={sortMode === "oldest"}  onPress={() => setSortMode("oldest")} />
+              <Chip label="Name ↑"  active={sortMode === "nameAsc"} onPress={() => setSortMode("nameAsc")} />
+              <Chip label="Name ↓"  active={sortMode === "nameDesc"} onPress={() => setSortMode("nameDesc")} />
+              <Chip label="ID ↑"    active={sortMode === "idAsc"}   onPress={() => setSortMode("idAsc")} />
+              <Chip label="ID ↓"    active={sortMode === "idDesc"}   onPress={() => setSortMode("idDesc")} />
+            </View>
+
+            <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
+            <View style={styles.chipsRow}>
+              <Chip label="Only non-zero" active={onlyNonZero} onPress={() => setOnlyNonZero((v) => !v)} />
+              <Chip label="Has any rate" active={hasAnyRate} onPress={() => setHasAnyRate((v) => !v)} />
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.btnGhostAlt]}
+                onPress={() => { setSortMode("newest"); setOnlyNonZero(false); setHasAnyRate(false); }}
+              >
+                <Text style={styles.btnGhostTextAlt}>Reset</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn]} onPress={() => setFiltersVisible(false)}>
+                <Text style={styles.btnText}>Done</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
 
       {/* Create Modal */}
-      <Modal visible={createVisible} transparent animationType="slide" onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={[styles.modalCard, { alignItems: "stretch" }]}>            
+      <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+          <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>New Building</Text>
-            <TextInput placeholder="Building name" value={c_name} onChangeText={setC_name} style={styles.input} />
-            <View style={styles.grid2}>
-              <TextInput placeholder="Electric rate ₱/kWh" keyboardType="numeric" value={c_eRate} onChangeText={setC_eRate} style={styles.input} />
-              <TextInput placeholder="Electric min kWh" keyboardType="numeric" value={c_eMin} onChangeText={setC_eMin} style={styles.input} />
-              <TextInput placeholder="Water rate ₱/m³" keyboardType="numeric" value={c_wRate} onChangeText={setC_wRate} style={styles.input} />
-              <TextInput placeholder="Water min m³" keyboardType="numeric" value={c_wMin} onChangeText={setC_wMin} style={styles.input} />
-              <TextInput placeholder="LPG rate ₱/kg" keyboardType="numeric" value={c_lRate} onChangeText={setC_lRate} style={styles.input} />
-              <TextInput placeholder="Markup %" keyboardType="numeric" value={c_markup} onChangeText={setC_markup} style={styles.input} />
-            </View>
-            <View style={styles.rowEnd}>
-              <TouchableOpacity onPress={() => setCreateVisible(false)} style={styles.btnGhost}>                
-                <Text style={styles.btnGhostText}>Cancel</Text>
+            <View style={styles.modalDivider} />
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+              <View style={styles.inputRow}><Text style={styles.inputLabel}>Name</Text>
+                <TextInput placeholder="e.g., BLDG-1" value={c_name} onChangeText={setC_name} style={styles.input} placeholderTextColor="#9aa5b1" />
+              </View>
+
+              <Text style={styles.sectionTitle}>Electric</Text>
+              <View style={styles.grid3}>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/kWh</Text>
+                  <TextInput keyboardType="numeric" value={c_eRate} onChangeText={setC_eRate} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Min kWh</Text>
+                  <TextInput keyboardType="numeric" value={c_eMin} onChangeText={setC_eMin} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+              </View>
+
+              <Text style={styles.sectionTitle}>Water</Text>
+              <View style={styles.grid3}>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/m³</Text>
+                  <TextInput keyboardType="numeric" value={c_wRate} onChangeText={setC_wRate} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Min m³</Text>
+                  <TextInput keyboardType="numeric" value={c_wMin} onChangeText={setC_wMin} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+              </View>
+
+              <Text style={styles.sectionTitle}>LPG & Markup</Text>
+              <View style={styles.grid3}>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>LPG ₱/kg</Text>
+                  <TextInput keyboardType="numeric" value={c_lRate} onChangeText={setC_lRate} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Markup</Text>
+                  <TextInput keyboardType="numeric" value={c_markup} onChangeText={setC_markup} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+              </View>
+              <Text style={styles.helpText}>Leave blank to save as <Text style={{ fontWeight: "700" }}>null</Text>.</Text>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
+                <Text style={styles.btnGhostTextAlt}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={onCreate} disabled={submitting} style={[styles.btnPrimary, submitting && { opacity: 0.7 }]}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Create</Text>}
+              <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
+                <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
               </TouchableOpacity>
             </View>
-          </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 
       {/* Edit Modal */}
-      <Modal visible={editVisible} transparent animationType="slide" onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={[styles.modalCard, { alignItems: "stretch" }]}>            
-            <Text style={styles.modalTitle}>Edit Building</Text>
-            <Text style={styles.modalHint}>{editRow?.building_id}</Text>
-            <TextInput placeholder="Building name" value={e_name} onChangeText={setE_name} style={styles.input} />
-            <View style={styles.grid2}>
-              <TextInput placeholder="Electric rate ₱/kWh" keyboardType="numeric" value={e_eRate} onChangeText={setE_eRate} style={styles.input} />
-              <TextInput placeholder="Electric min kWh" keyboardType="numeric" value={e_eMin} onChangeText={setE_eMin} style={styles.input} />
-              <TextInput placeholder="Water rate ₱/m³" keyboardType="numeric" value={e_wRate} onChangeText={setE_wRate} style={styles.input} />
-              <TextInput placeholder="Water min m³" keyboardType="numeric" value={e_wMin} onChangeText={setE_wMin} style={styles.input} />
-              <TextInput placeholder="LPG rate ₱/kg" keyboardType="numeric" value={e_lRate} onChangeText={setE_lRate} style={styles.input} />
-              <TextInput placeholder="Markup %" keyboardType="numeric" value={e_markup} onChangeText={setE_markup} style={styles.input} />
-            </View>
-            <View style={[styles.rowEnd, { justifyContent: "space-between" }]}>
-              <TouchableOpacity
-                onPress={() => onDelete(editRow as Building)}
-                style={[styles.btnGhost, { borderColor: "#FEE4E2", backgroundColor: "#FEF3F2" }]}
-                disabled={!editRow || deletingId === editRow?.building_id}
-              >
-                {deletingId === editRow?.building_id ? (
-                  <ActivityIndicator />
-                ) : (
-                  <>
-                    <Ionicons name="trash-outline" size={16} color="#B42318" />
-                    <Text style={[styles.btnGhostText, { color: "#B42318" }]}>Delete</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <TouchableOpacity onPress={() => setEditVisible(false)} style={styles.btnGhost}>                
-                  <Text style={styles.btnGhostText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={onUpdate} disabled={submitting} style={[styles.btnPrimary, submitting && { opacity: 0.7 }]}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Save</Text>}
-                </TouchableOpacity>
+      <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{editRow ? `Edit • ${editRow.building_name}` : "Edit Building"}</Text>
+            <View style={styles.modalDivider} />
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+              <View style={styles.inputRow}><Text style={styles.inputLabel}>Name</Text>
+                <TextInput placeholder="e.g., BLDG-1" value={e_name} onChangeText={setE_name} style={styles.input} placeholderTextColor="#9aa5b1" />
               </View>
+
+              <Text style={styles.sectionTitle}>Electric</Text>
+              <View style={styles.grid3}>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/kWh</Text>
+                  <TextInput keyboardType="numeric" value={e_eRate} onChangeText={setE_eRate} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Min kWh</Text>
+                  <TextInput keyboardType="numeric" value={e_eMin} onChangeText={setE_eMin} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+              </View>
+
+              <Text style={styles.sectionTitle}>Water</Text>
+              <View style={styles.grid3}>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/m³</Text>
+                  <TextInput keyboardType="numeric" value={e_wRate} onChangeText={setE_wRate} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Min m³</Text>
+                  <TextInput keyboardType="numeric" value={e_wMin} onChangeText={setE_wMin} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+              </View>
+
+              <Text style={styles.sectionTitle}>LPG & Markup</Text>
+              <View style={styles.grid3}>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>LPG ₱/kg</Text>
+                  <TextInput keyboardType="numeric" value={e_lRate} onChangeText={setE_lRate} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+                <View style={styles.inputRow}><Text style={styles.inputLabel}>Markup</Text>
+                  <TextInput keyboardType="numeric" value={e_markup} onChangeText={setE_markup} style={styles.input} placeholderTextColor="#9aa5b1" />
+                </View>
+              </View>
+
+              {editRow?.last_updated ? (
+                <Text style={styles.helpText}>
+                  Last updated: {fmtDate(editRow.last_updated)} {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
+                </Text>
+              ) : null}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
+                <Text style={styles.btnGhostTextAlt}>Close</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
+                <Text style={styles.btnText}>{submitting ? "Saving…" : "Save"}</Text>
+              </TouchableOpacity>
             </View>
-          </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
-/* Styles */
+/* styles — copied from WithholdingPanel for 1:1 visual parity */
 const styles = StyleSheet.create({
-  page: { flex: 1, padding: 16 },
-  headerRow: { marginBottom: 8 },
-  title: { fontSize: 20, fontWeight: "700", color: "#101828" },
-  subtitle: { color: "#475467", marginTop: 2 },
+  page: {
+    flex: 1,
+    minHeight: 0,
+  },
+  grid: {
+    flex: 1,
+    padding: 14,
+    gap: 14,
+    minHeight: 0,
+  },
+  card: {
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    ...(Platform.select({
+      web: { boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)" } as any,
+      default: { elevation: 2 },
+    }) as any),
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
 
-  toolbar: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 10 },
-  searchWrap: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#D0D5DD", paddingHorizontal: 10, borderRadius: 10, height: 40, backgroundColor: "#fff" },
-  searchInput: { flex: 1, paddingVertical: 6, fontSize: 14, color: "#101828" },
+  // Buttons
+  btn: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnDisabled: { opacity: 0.6 },
 
-  btnPrimary: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#082cac", paddingHorizontal: 14, height: 40, borderRadius: 10 },
-  btnPrimaryText: { color: "#fff", fontWeight: "600" },
-  btnGhost: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, height: 40, borderRadius: 10, borderWidth: 1, borderColor: "#D0D5DD", backgroundColor: "#fff" },
-  btnGhostText: { color: "#344054", fontWeight: "600" },
+  // Toolbar
+  filtersBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: "wrap",
+  },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 40,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  search: {
+    flex: 1,
+    height: 40,
+    color: "#0f172a",
+  },
+  btnGhost: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#e2e8f0",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  btnGhostText: { color: "#394e6a", fontWeight: "700" },
 
-  chipsRow: { flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" },
-  chip: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1 },
-  chipActive: { backgroundColor: "#082cac", borderColor: "#082cac" },
-  chipIdle: { backgroundColor: "#fff", borderColor: "#D0D5DD" },
-  chipText: { fontSize: 12 },
-  chipTextActive: { color: "#fff", fontWeight: "700" },
-  chipTextIdle: { color: "#344054" },
+  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
 
-  row: { flexDirection: "row", alignItems: "center", paddingVertical: 10, paddingHorizontal: 10, borderBottomWidth: 1, borderColor: "#EAECF0", gap: 8 },
-  cell: { minWidth: 90 },
-  cellTitle: { fontSize: 14, fontWeight: "700", color: "#101828" },
-  cellSub: { fontSize: 12, color: "#667085" },
-  mono: { fontVariant: ["tabular-nums"], color: "#101828" },
-  badge: { paddingVertical: 2 },
-  actions: { flexDirection: "row", gap: 8 },
-  iconBtn: { padding: 8, borderRadius: 8, backgroundColor: "#F2F4F7" },
+  // Row
+  row: {
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: "#fff",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  rowMobile: { flexDirection: "column", alignItems: "stretch" },
+  rowMain: { flex: 1, paddingRight: 10 },
+  rowTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  rowSub: { color: "#64748b", fontWeight: "600" },
+  rowMeta: { color: "#334155", marginTop: 6 },
+  rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
 
-  center: { padding: 24, alignItems: "center" },
-  empty: { textAlign: "center", color: "#667085", padding: 24 },
+  // Actions
+  rowActions: {
+    width: 200,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  rowActionsMobile: { flexDirection: "row", gap: 8, marginTop: 10, justifyContent: "flex-start", alignItems: "center" },
+  actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 },
+  actionEdit: { backgroundColor: "#e2e8f0" },
+  actionDelete: { backgroundColor: "#ef4444" },
+  actionText: { fontWeight: "700" },
+  actionEditText: { color: "#1f2937" },
+  actionDeleteText: { color: "#fff" },
 
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", padding: 16 },
-  modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, maxHeight: 560, width: "100%" },
-  modalTitle: { fontSize: 18, fontWeight: "700", color: "#101828", marginBottom: 6 },
-  modalHint: { fontSize: 12, color: "#667085", marginBottom: 8 },
-  input: { borderWidth: 1, borderColor: "#D0D5DD", borderRadius: 10, paddingHorizontal: 12, height: 40, marginBottom: 8, backgroundColor: "#fff" },
-  grid2: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  rowEnd: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 8 },
+  // Empty
+  emptyPad: { paddingVertical: 30 },
+  empty: { alignItems: "center", gap: 6 },
+  emptyTitle: { fontWeight: "800", color: "#0f172a" },
+  emptyText: { color: "#94a3b8" },
+
+  // Modal shell
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.36)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 14,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    width: "100%",
+    maxWidth: 720,
+    padding: 14,
+    ...(Platform.select({
+      web: { boxShadow: "0 14px 44px rgba(15, 23, 42, 0.16)" } as any,
+      default: { elevation: 3 },
+    }) as any),
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
+  modalDivider: { height: 1, backgroundColor: "#e2e8f0", marginVertical: 10 },
+  modalActions: { marginTop: 10, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
+  btnGhostAlt: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
+
+  // Form
+  inputRow: { marginBottom: 10 },
+  inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    height: 40,
+    paddingHorizontal: 10,
+    color: "#0f172a",
+  },
+  sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
+  helpText: { color: "#94a3b8", fontSize: 12, lineHeight: 16, marginTop: 2 },
+
+  // Grid inputs
+  grid3: {
+    gap: 10,
+    ...(Platform.OS === "web"
+      ? ({ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", columnGap: 10, rowGap: 10 } as any)
+      : {}),
+  },
+
+  // Filter modal
+  promptOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.36)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 14,
+  },
+  promptCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    width: "100%",
+    maxWidth: 560,
+    padding: 14,
+    ...(Platform.select({
+      web: { boxShadow: "0 14px 44px rgba(15, 23, 42, 0.16)" } as any,
+      default: { elevation: 3 },
+    }) as any),
+  },
+  dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8 },
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f8fafc",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
+  chipIdle: {},
+  chipText: { fontWeight: "700" },
+  chipTextActive: { color: "#1d4ed8" },
+  chipTextIdle: { color: "#334155" },
 });

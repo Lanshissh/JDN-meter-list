@@ -45,6 +45,20 @@ type BuildingFourMonths = {
     periods: Array<{ month: string; start: string; end: string; totals: { electric: number; water: number; lpg: number } }>;
   };
 };
+// NEW: Yearly totals
+type BuildingYearlyTotals = {
+  building_id: string;
+  building_name?: string | null;
+  yearly: {
+    year: string; // YYYY
+    months: Array<{
+      month: string; // YYYY-MM
+      start: string; // 21 →
+      end: string;   // → 20
+      totals: { electric: number; water: number; lpg: number };
+    }>;
+  };
+};
 /** ─────────────────────────────────────────────────────────────────────── */
 
 /* ==================== Utils ==================== */
@@ -178,12 +192,17 @@ export default function BillingScreen() {
   const [vatMap, setVatMap] = useState<Record<string, number>>({});
   const [reportOpen, setReportOpen] = useState(false);
 
-  /** ── NEW: comparison states ─────────────────────────────────────────── */
+  /** ── Comparison states ─────────────────────────────────────────── */
   const [cmpMonthly, setCmpMonthly] = useState<BuildingMonthlyTotals | null>(null);
   const [cmpFour, setCmpFour] = useState<BuildingFourMonths | null>(null);
+  const [cmpUtil, setCmpUtil] = useState<"electric" | "water" | "lpg">("electric");
+
+  // NEW
+  const [cmpMode, setCmpMode] = useState<"monthly" | "quarterly" | "yearly">("monthly");
+  const [cmpYearly, setCmpYearly] = useState<BuildingYearlyTotals | null>(null);
 
   // ROC endpoints may live under /rateofchange or /roc (we’ll try both).
-  const ROC_BASES = ["/rateofchange", "/roc"]; // same approach used in your ROC panel. :contentReference[oaicite:0]{index=0}
+  const ROC_BASES = ["/rateofchange", "/roc"];
   const getJSON = async <T,>(paths: string[]): Promise<T | null> => {
     for (const base of ROC_BASES) {
       for (const p of paths) {
@@ -206,7 +225,15 @@ export default function BillingScreen() {
     setCmpMonthly(m || null);
     setCmpFour(f || null);
   };
-  /** ──────────────────────────────────────────────────────────────────── */
+  // NEW: yearly loader
+  const loadYearlyFor = async (building: string, end: string) => {
+    setCmpYearly(null);
+    const year = (end || today()).slice(0, 4);
+    const y = await getJSON<BuildingYearlyTotals>([
+      `/buildings/${encodeURIComponent(building)}/year/${encodeURIComponent(year)}/yearly-comparison`,
+    ]);
+    setCmpYearly(y || null);
+  };
 
   /* ---------- Load lists ---------- */
   const loadBuildings = async () => {
@@ -527,6 +554,7 @@ export default function BillingScreen() {
           curr_cons: m.current_consumption ?? null,
           total: m.charge ?? null,
         })));
+
       } else if (data && Array.isArray(data.tenants)) {
         for (const t of data.tenants) {
           const tId = t?.tenant_id ?? null; const name = t?.tenant_name ?? null;
@@ -544,7 +572,7 @@ export default function BillingScreen() {
   /* ---------- Generate ---------- */
   const onGenerate = async () => {
     setBusy(true); setError(""); setNote(""); setRows([]); setSummary(null); setGeneratedAt("");
-    setCmpMonthly(null); setCmpFour(null); // reset comparison each run
+    setCmpMonthly(null); setCmpFour(null); setCmpYearly(null); // reset comparison each run
     try {
       if (!endDate || !isYMD(endDate)) throw new Error("Please enter a valid End Date (YYYY-MM-DD).");
       const qs = penaltyQS(penaltyRate);
@@ -555,7 +583,7 @@ export default function BillingScreen() {
         const candidates = buildEndDateCandidates(endDate);
         const notesAll: string[] = [];
         let ok = false;
-        let usedEnd = endDate;                       // ← track which date succeeded to mirror comparison calls
+        let usedEnd = endDate;                       // track which date succeeded to mirror comparison calls
         for (const cand of candidates) {
           const paths = [
             `/billings/buildings/${encodeURIComponent(buildingId)}/period-end/${encodeURIComponent(cand)}${qs}`,
@@ -580,8 +608,9 @@ export default function BillingScreen() {
           await aggregateBuildingViaTenants(buildingId, endDate, qs);
           usedEnd = endDate;
         }
-        // ── NEW: load comparison for the exact period that was used
+        // Load comparison datasets for the exact period that was used
         await loadComparisonFor(buildingId, usedEnd);
+        await loadYearlyFor(buildingId, usedEnd);
         return;
       }
       if (mode === "tenant") {
@@ -823,13 +852,13 @@ const exportHtmlReport = () => {
     const rocHtml = roc == null ? "" : `<span style="color:#c1121f;font-weight:700;">${fmt(roc, 0)}%</span>`;
 
     const base  = deriveBaseForHtml(r);
-    const vatAmt = deriveVatForHtml(r, base);           // 👈 distinct VAT
+    const vatAmt = deriveVatForHtml(r, base);           // distinct VAT
     const wtAmt  = deriveWtForHtml(r, base);
 
     // Php10: try your existing helper; fallback to kWh*10
     let php10: number | null = null;
     try { const m:any = (computePhp10AndVat as any)(r); if (m && m.php10 != null) php10 = Number(m.php10); } catch {}
-    if (php10 == null && toNum(r.curr_cons) != null) php10 = toNum(r.curr_cons)! * 10;
+    if (php10 == null && (r.curr_cons != null && !isNaN(Number(r.curr_cons)))) php10 = Number(r.curr_cons) * 10;
 
     if (vatAmt != null) totalVat += vatAmt;
     if (wtAmt  != null) totalWt  += wtAmt;
@@ -901,6 +930,68 @@ const exportHtmlReport = () => {
     : `billing_${meterId}_${endDate}.html`;
 
   downloadBlob(fn, html, "text/html;charset=utf-8;");
+};
+
+// NEW: Export Comparison CSV (Monthly / Quarterly / Yearly)
+const exportComparisonCsv = () => {
+  if (mode !== "building") {
+    notify("Export comparison is only available in the per-building report.");
+    return;
+  }
+
+  const rowsOut: Array<Record<string, any>> = [];
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  let filename = `comparison-${buildingId || "building"}-${cmpMode}-${stamp}.csv`;
+
+  if (cmpMode === "monthly") {
+    if (!cmpMonthly) { notify("Nothing to export", "No monthly totals were loaded."); return; }
+    const p = cmpMonthly.period?.current;
+    rowsOut.push({
+      scope: "Monthly (current window)",
+      window_start: p?.start ?? "",
+      window_end: p?.end ?? "",
+      electric_units: cmpMonthly.totals.electric,
+      water_units: cmpMonthly.totals.water,
+      lpg_units: cmpMonthly.totals.lpg,
+    });
+  }
+
+  if (cmpMode === "quarterly") {
+    if (!cmpFour) { notify("Nothing to export", "No four-month comparison was loaded."); return; }
+    for (const m of (cmpFour.four_months?.periods || [])) {
+      rowsOut.push({
+        scope: "Quarterly (rolling 21→20)",
+        month: m.month,
+        window_start: m.start,
+        window_end: m.end,
+        electric_units: m.totals.electric,
+        water_units: m.totals.water,
+        lpg_units: m.totals.lpg,
+      });
+    }
+  }
+
+  if (cmpMode === "yearly") {
+    if (!cmpYearly || !cmpYearly.yearly?.months?.length) {
+      notify("Nothing to export", "No yearly comparison was loaded.");
+      return;
+    }
+    filename = `comparison-${buildingId || "building"}-${cmpYearly.yearly.year}-${stamp}.csv`;
+    for (const m of cmpYearly.yearly.months) {
+      rowsOut.push({
+        scope: `Yearly ${cmpYearly.yearly.year}`,
+        month: m.month,
+        window_start: m.start,
+        window_end: m.end,
+        electric_units: m.totals.electric,
+        water_units: m.totals.water,
+        lpg_units: m.totals.lpg,
+      });
+    }
+  }
+
+  if (!rowsOut.length) { notify("Nothing to export"); return; }
+  downloadBlob(filename, toCsv(rowsOut), "text/csv;charset=utf-8;");
 };
 
 
@@ -1015,6 +1106,29 @@ const exportHtmlReport = () => {
           <Ionicons name="open" size={20} color="#6366f1" />
           <Text style={[styles.btnText, styles.btnTextSecondary]}>HTML Report</Text>
         </TouchableOpacity>
+
+        {/* NEW: Comparison export controls (only for building mode) */}
+        {mode === "building" && (
+          <View style={{ flexBasis: "100%", height: 0 }} />
+        )}
+        {mode === "building" && (
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center", flexWrap: "wrap", width: "100%" }}>
+            <TouchableOpacity onPress={() => setCmpMode("monthly")} style={[styles.chip, cmpMode === "monthly" && styles.chipActive]}>
+              <Text style={[styles.chipText, cmpMode === "monthly" && styles.chipTextActive]}>Monthly</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setCmpMode("quarterly")} style={[styles.chip, cmpMode === "quarterly" && styles.chipActive]}>
+              <Text style={[styles.chipText, cmpMode === "quarterly" && styles.chipTextActive]}>Quarterly</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setCmpMode("yearly")} style={[styles.chip, cmpMode === "yearly" && styles.chipActive]}>
+              <Text style={[styles.chipText, cmpMode === "yearly" && styles.chipTextActive]}>Yearly</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.btn, styles.btnSecondary, { flexGrow: 1 }]} onPress={exportComparisonCsv}>
+              <Ionicons name="download-outline" size={20} color="#6366f1" />
+              <Text style={[styles.btnText, styles.btnTextSecondary]}>Export Comparison CSV</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {!!error && (
@@ -1177,7 +1291,7 @@ const exportHtmlReport = () => {
     </View>
   ) : null;
 
-  /** ── NEW: Comparison section (building mode) ───────────────────────── */
+  /** ── Comparison section (building mode) ───────────────────────── */
   const Comparison = () => {
     if (mode !== "building") return null;
     if (!cmpMonthly && !cmpFour) return null;
@@ -1185,6 +1299,23 @@ const exportHtmlReport = () => {
     return (
       <View style={styles.cmpCard}>
         <Text style={styles.cmpTitle}>Comparison</Text>
+
+        {/* Mode chips + Export */}
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <TouchableOpacity onPress={() => setCmpMode("monthly")} style={[styles.chip, cmpMode === "monthly" && styles.chipActive]}>
+            <Text style={[styles.chipText, cmpMode === "monthly" && styles.chipTextActive]}>Monthly</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setCmpMode("quarterly")} style={[styles.chip, cmpMode === "quarterly" && styles.chipActive]}>
+            <Text style={[styles.chipText, cmpMode === "quarterly" && styles.chipTextActive]}>Quarterly</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setCmpMode("yearly")} style={[styles.chip, cmpMode === "yearly" && styles.chipActive]}>
+            <Text style={[styles.chipText, cmpMode === "yearly" && styles.chipTextActive]}>Yearly</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.btn, styles.btnSecondary, { flexGrow: 1 }]} onPress={exportComparisonCsv}>
+            <Ionicons name="download-outline" size={18} color="#6366f1" />
+            <Text style={[styles.btnText, styles.btnTextSecondary]}>Export Comparison CSV</Text>
+          </TouchableOpacity>
+        </View>
 
         {cmpMonthly && (
           <View style={styles.cmpBlock}>
@@ -1526,7 +1657,7 @@ const styles = StyleSheet.create({
     color: "#6366f1",
   },
   btnMini: { 
-    backgroundColor: "#f1f5f9", 
+    backgroundColor: "#f1f59", 
     paddingHorizontal: 16, 
     paddingVertical: 10, 
     borderRadius: 10, 
