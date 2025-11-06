@@ -1079,7 +1079,7 @@ const exportHtmlReport = () => {
           <Text style={styles.gridValue}>{fmt(item.prev_cons, 2)} kWh</Text>
         </View>
         <View style={styles.gridItem}>
-          <Text style={styles.gridLabel}>Curr Consumption</Text>
+          <Text style={[styles.gridLabel]}>Curr Consumption</Text>
           <Text style={[styles.gridValue, styles.highlight]}>{fmt(item.curr_cons, 2)} kWh</Text>
         </View>
       </View>

@@ -252,7 +252,7 @@ export default function VatPanel({ token }: { token: string | null }) {
         <View style={styles.rowActionsMobile}>
           <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
             <Ionicons name="create-outline" size={16} color="#1f2937" />
-            <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+            <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
             <Ionicons name="trash-outline" size={16} color="#fff" />
@@ -263,7 +263,7 @@ export default function VatPanel({ token }: { token: string | null }) {
         <View style={styles.rowActions}>
           <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
             <Ionicons name="create-outline" size={16} color="#1f2937" />
-            <Text style={[styles.actionText, styles.actionEditText]}>Edit</Text>
+            <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
             <Ionicons name="trash-outline" size={16} color="#fff" />
