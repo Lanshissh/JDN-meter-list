@@ -111,7 +111,7 @@ const tryPaths = async (api: ReturnType<typeof axios.create>, paths: string[], s
   throw new Error(notes.length ? notes.join("\n") : "No data returned by the backend.");
 };
 
-/* ---------- Date helpers ---------- */
+/* Date helpers */
 function ymd(d: Date){return d.toISOString().slice(0,10);}
 function lastDayOfMonth(y:number,m0:number){return new Date(y,m0+1,0).getDate();}
 function parseYMD(s:string){ if(!isYMD(s)) return null; const [Y,M,D]=s.split("-").map(Number); const dt=new Date(Date.UTC(Y,M-1,D)); return isNaN(+dt)?null:dt; }
@@ -129,7 +129,7 @@ function buildEndDateCandidates(endDate: string): string[] {
   return Array.from(new Set(list));
 }
 
-/* ---------- Numbers & ROC ---------- */
+/* Numbers & ROC */
 const normNum = (v: unknown): number | null => { if (v === null || v === undefined || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
 function computeRoc(prev: number | null | undefined, curr: number | null | undefined): number | null {
   const p = prev == null ? null : Number(prev); const c = curr == null ? null : Number(curr);
@@ -195,8 +195,7 @@ export default function BillingScreen() {
   /** ── Comparison states ─────────────────────────────────────────── */
   const [cmpMonthly, setCmpMonthly] = useState<BuildingMonthlyTotals | null>(null);
   const [cmpFour, setCmpFour] = useState<BuildingFourMonths | null>(null);
-  const [cmpUtil, setCmpUtil] = useState<"electric" | "water" | "lpg">("electric");
-
+  
   // NEW
   const [cmpMode, setCmpMode] = useState<"monthly" | "quarterly" | "yearly">("monthly");
   const [cmpYearly, setCmpYearly] = useState<BuildingYearlyTotals | null>(null);
@@ -235,7 +234,7 @@ export default function BillingScreen() {
     setCmpYearly(y || null);
   };
 
-  /* ---------- Load lists ---------- */
+  /* Load lists */
   const loadBuildings = async () => {
     setNote("");
     const list = await getSafe<any[]>(api, `/buildings`, (m)=>setNote(m));
@@ -247,7 +246,7 @@ export default function BillingScreen() {
     } else setNote("Could not load buildings for this account.");
   };
 
-  /* ---------- Config helpers ---------- */
+  /* Config helpers */
   const pickElectricRate = (b: any): number | null => {
     const cand = b?.electric_rate ?? b?.electric_kwh_rate ?? b?.kwh_rate ?? b?.rate_per_kwh ?? b?.utility_rate ?? b?.power_rate ?? null;
     return typeof cand === "number" && isFinite(cand) ? cand : null;
@@ -280,7 +279,7 @@ export default function BillingScreen() {
     }
   };
 
-  /* ---------- Derivers ---------- */
+  /* Derivers */
   const getEffectiveRate = (r: Row, md: Mode, buildingRate: number | null) =>
     (md === "building" ? buildingRate : null) ?? r.utility_rate ?? null;
 
@@ -300,7 +299,7 @@ export default function BillingScreen() {
     return { ...r, base, vat, wt, penalty };
   };
 
-  /* ---------- Setters with derivation ---------- */
+  /* Setters with derivation */
   const setRowsAndSummary = (incoming: Row[], totals?: { consumption?: number; base?: number; vat?: number; wt?: number; penalty?: number; total?: number } | null) => {
     const filled = incoming.map((r)=>deriveAmounts(r, mode, buildingElectricRate, vatMap));
     setRows(filled);
@@ -322,7 +321,7 @@ export default function BillingScreen() {
     return "";
   };
 
-  /* ---------- Parsers ---------- */
+  /* Parsers */
   const mapArrayishItem = (x: any): Row => {
     const m = (x.meter || x) as any;
     const b = (x.billing || {}) as any;
@@ -496,7 +495,7 @@ export default function BillingScreen() {
     throw new Error("Unrecognized billing payload format");
   };
 
-  /* ---------- Tenant & Meter helpers ---------- */
+  /* Tenant & Meter helpers */
   const getTenantBillingFor = async (tenant: string, end: string, qs: string) => {
     const paths = [
       `/billings/tenants/${encodeURIComponent(tenant)}/period-end/${encodeURIComponent(end)}${qs}`,
@@ -569,7 +568,7 @@ export default function BillingScreen() {
     setGeneratedAt(extractGeneratedAt(collected));
   };
 
-  /* ---------- Generate ---------- */
+  /* Generate */
   const onGenerate = async () => {
     setBusy(true); setError(""); setNote(""); setRows([]); setSummary(null); setGeneratedAt("");
     setCmpMonthly(null); setCmpFour(null); setCmpYearly(null); // reset comparison each run
@@ -635,7 +634,7 @@ export default function BillingScreen() {
     }
   };
 
-  /* ---------- Export helpers ---------- */
+  /* Export helpers */
   const toCsv = (rows: Array<Record<string, string | number | boolean | null | undefined>>): string => {
     if (!rows.length) return "";
     const headers = Object.keys(rows[0]);
@@ -1366,7 +1365,7 @@ const exportComparisonCsv = () => {
   };
   /** ─────────────────────────────────────────────────────────────────── */
 
-  /* ---------- Report Panel ---------- */
+  /* Report Panel */
   const ReportPanel = () => (
     <Modal visible={reportOpen} animationType="slide" transparent onRequestClose={() => setReportOpen(false)}>
       <View style={styles.modalBackdrop}>

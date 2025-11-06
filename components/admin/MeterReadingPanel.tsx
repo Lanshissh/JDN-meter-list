@@ -255,7 +255,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const rolesRaw = String(jwt?.user_level ?? jwt?.user_roles ?? "").toLowerCase();
   const isAdmin = rolesRaw.includes("admin");
   const isOperator = rolesRaw.includes("operator");
-  const canWrite = isAdmin || isOperator;
+  const canWrite = isAdmin || isOperator; // <-- typo corrected below
   const userBuildingId = String(jwt?.building_id || "");
 
   const headerToken =
@@ -1000,6 +1000,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         openEdit={openEdit}
         busy={busy}
         readingBase={readingBase}
+        api={api} // <-- pass axios instance for authenticated image fetch
       />
 
       {/* EDIT modal */}
@@ -1318,6 +1319,7 @@ function ReadingsModal({
   openEdit,
   busy,
   readingBase,
+  api,
 }: any) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
@@ -1328,13 +1330,67 @@ function ReadingsModal({
   const start = (safePage - 1) * 30;
   const pageData = readingsForSelected.slice(start, start + 30);
 
-  const openImage = (id: string) => {
-    const url = `${BASE_API}${readingBase}/${encodeURIComponent(id)}/image`;
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      window.open(url, "_blank");
-    } else {
-      Linking.openURL(url).catch(() => notify("Open failed", "Could not open image on this device."));
+  // ---- Image viewer state (new) ----
+  const [imgVisible, setImgVisible] = useState(false);
+  const [imgUri, setImgUri] = useState<string | null>(null);
+  const [imgLoading, setImgLoading] = useState(false);
+  const [imgErr, setImgErr] = useState<string | null>(null);
+
+  function bytesToBase64(bytes: Uint8Array) {
+    let binary = "";
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
+    // @ts-ignore
+    if (typeof globalThis.btoa === "function") return globalThis.btoa(binary);
+    // @ts-ignore
+    if (typeof Buffer !== "undefined") return Buffer.from(binary, "binary").toString("base64");
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let output = "";
+    for (let i = 0; i < binary.length; i += 3) {
+      const c1 = binary.charCodeAt(i);
+      const c2 = binary.charCodeAt(i + 1);
+      const c3 = binary.charCodeAt(i + 2);
+      const n = (c1 << 16) | ((c2 || 0) << 8) | (c3 || 0);
+      output += chars[(n >> 18) & 63] + chars[(n >> 12) & 63] +
+        (isNaN(c2) ? "=" : chars[(n >> 6) & 63]) +
+        (isNaN(c3) ? "=" : chars[n & 63]);
     }
+    return output;
+  }
+
+  const openImage = async (id: string) => {
+    setImgVisible(true);
+    setImgLoading(true);
+    setImgErr(null);
+    setImgUri(null);
+    try {
+      const res = await api.get(`${readingBase}/${encodeURIComponent(id)}/image`, {
+        responseType: Platform.OS === "web" ? "blob" : "arraybuffer",
+      });
+
+      if (Platform.OS === "web") {
+        const blob: Blob = res.data as Blob;
+        const url = URL.createObjectURL(blob);
+        setImgUri(url);
+      } else {
+        const bytes = new Uint8Array(res.data as ArrayBuffer);
+        const b64 = bytesToBase64(bytes);
+        setImgUri(`data:image/jpeg;base64,${b64}`);
+      }
+    } catch (err: any) {
+      setImgErr(errorText(err, "Failed to load image."));
+    } finally {
+      setImgLoading(false);
+    }
+  };
+
+  const closeImage = () => {
+    if (Platform.OS === "web" && imgUri && imgUri.startsWith("blob:")) {
+      try { URL.revokeObjectURL(imgUri); } catch {}
+    }
+    setImgVisible(false);
+    setImgUri(null);
+    setImgErr(null);
   };
 
   return (
@@ -1444,6 +1500,41 @@ function ReadingsModal({
               </>
             }
           />
+
+          {/* ---- Image Viewer Modal (inside ReadingsModal) ---- */}
+          <Modal visible={imgVisible} transparent animationType="fade" onRequestClose={closeImage}>
+            <View style={styles.modalWrap}>
+              <View style={[styles.modalCard, { maxWidth: 960 }]}>
+                <Text style={styles.modalTitle}>Reading image</Text>
+                {imgLoading ? (
+                  <View style={{ paddingVertical: 24, alignItems: "center" }}>
+                    <ActivityIndicator />
+                    <Text style={{ marginTop: 8, color: "#64748b" }}>Loading…</Text>
+                  </View>
+                ) : imgErr ? (
+                  <Text style={{ color: "#b91c1c" }}>{imgErr}</Text>
+                ) : imgUri ? (
+                  <View style={{ alignItems: "center", marginTop: 8 }}>
+                    <RNImage
+                      source={{ uri: imgUri }}
+                      style={{ width: Math.min(800, Dimensions.get("window").width - 80), height: undefined, aspectRatio: 4/3, borderRadius: 12, backgroundColor: "#f8fafc" }}
+                      resizeMode="contain"
+                      accessibilityLabel="Meter reading photo"
+                    />
+                  </View>
+                ) : (
+                  <Text style={{ color: "#64748b" }}>No image.</Text>
+                )}
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={closeImage}>
+                    <Text style={styles.btnGhostText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+          {/* ---- end Image Viewer ---- */}
         </View>
       </KeyboardAvoidingView>
     </Modal>
