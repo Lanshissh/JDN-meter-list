@@ -1,520 +1,880 @@
-// components/billing/RateOfChangePanel.tsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, memo } from "react";
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ActivityIndicator, Alert, FlatList, Platform, ScrollView,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import axios from "axios";
+// If you don't use Expo icons, remove this import safely.
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from "../../contexts/AuthContext";
+// If you don’t have a constants file, just set: const BASE_API = process.env.EXPO_PUBLIC_API ?? "";
 import { BASE_API } from "../../constants/api";
 
-/* ==================== Types (match backend) ==================== */
-type RocPeriod = { start: string; end: string };
+/** ======================= Types (loose to match backend variations) ======================= */
 type RocMeter = {
   meter_id: string;
-  meter_type: string;
-  building_id?: string;
-  period: { current: RocPeriod; previous: RocPeriod };
-  indices: { prev_index: number; curr_index: number };
-  current_consumption: number;
-  previous_consumption: number | null;
-  rate_of_change: number | null;
+  current_consumption?: number | null;
+  previous_consumption?: number | null;
+  rate_of_change?: number | null;
   error?: string;
+  [k: string]: any;
 };
 
 type RocTenant = {
-  tenant_id: string;
-  period?: { current: RocPeriod; previous: RocPeriod };
-  end_date?: string; // legacy shape
-  meters: RocMeter[];
-  totals?: { current_consumption: number; previous_consumption: number; rate_of_change: number | null };
-};
-
-type RocBuildingTenantGroup = {
-  tenant_id: string | null;
-  meters: RocMeter[];
-  totals: {
-    current_consumption: number;
-    previous_consumption: number;
-    rate_of_change: number | null;
+  tenant_id?: string | null;
+  period?: {
+    current?: { start?: string; end?: string };
+    previous?: { start?: string; end?: string; month?: string };
+    anchor?: { start?: string; end?: string; month?: string };
   };
+  groups?: Record<
+    string,
+    {
+      meters?: RocMeter[];
+      totals?: {
+        current_consumption?: number | null;
+        previous_consumption?: number | null;
+        rate_of_change?: number | null;
+      };
+    }
+  >;
 };
 
-type RocBuildingGrouped = {
-  building_id: string;
+type RocBuilding = {
+  building_id?: string;
   building_name?: string | null;
-  period: { current: RocPeriod; previous: RocPeriod };
-  tenants: RocBuildingTenantGroup[];
-};
-
-type BuildingMonthlyTotals = {
-  building_id: string;
-  building_name?: string | null;
-  period: { current: RocPeriod }; // backend returns display window for current
-  totals: { electric: number; water: number; lpg: number };
-};
-
-type BuildingFourMonths = {
-  building_id: string;
-  building_name?: string | null;
-  four_months: {
-    periods: Array<{
-      month: string; start: string; end: string;
-      totals: { electric: number; water: number; lpg: number };
-    }>;
+  period?: {
+    current?: { start?: string; end?: string };
+    previous?: { start?: string; end?: string };
   };
+  tenants?: Array<{
+    tenant_id?: string | null;
+    meters?: RocMeter[];
+    totals?: {
+      current_consumption?: number | null;
+      previous_consumption?: number | null;
+      rate_of_change?: number | null;
+    };
+  }>;
 };
 
-/* ==================== Utils ==================== */
-function notify(title: string, msg?: string) {
-  if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
-    window.alert(msg ? `${title}\n\n${msg}` : title);
+type MonthlyComparison = {
+  building_id?: string;
+  building_name?: string | null;
+  period?: { start?: string; end?: string };
+  totals?: { electric?: number; water?: number; lpg?: number };
+};
+
+type QuarterlyComparison = {
+  building_id?: string;
+  building_name?: string | null;
+  window?: { start?: string; end?: string };
+  months?: Array<{
+    label?: string; // YYYY-MM
+    start?: string;
+    end?: string;
+    previous?: { month?: string; start?: string; end?: string };
+    totals?: { electric?: number; water?: number; lpg?: number };
+  }>;
+  totals_all?: { electric?: number; water?: number; lpg?: number; all_utilities?: number };
+};
+
+type YearlyComparison = {
+  building_id?: string;
+  building_name?: string | null;
+  year?: number;
+  months?: Array<{
+    label?: string; // YYYY-MM
+    start?: string;
+    end?: string;
+    previous?: { month?: string; start?: string; end?: string };
+    totals?: { electric?: number; water?: number; lpg?: number };
+  }>;
+  totals_all?: { electric?: number; water?: number; lpg?: number; all_utilities?: number };
+};
+
+/** ======================= Utils ======================= */
+const isWeb = Platform.OS === "web";
+
+const notify = (title: string, message?: string) => {
+  // Avoid calling window.alert in SSR or exotic runtimes
+  if (isWeb && typeof window !== "undefined" && typeof window.alert === "function") {
+    window.alert(message ? `${title}\n\n${message}` : title);
   } else {
-    Alert.alert(title, msg);
+    try {
+      Alert.alert(title, message);
+    } catch {
+      // last-resort fallback
+      console.warn(`${title}${message ? `: ${message}` : ""}`);
+    }
   }
-}
-const today = () => new Date().toISOString().slice(0, 10);
-const isYMD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
-const fmt = (n: number | string | null | undefined, digits = 2): string => {
-  if (n == null || n === "") return "—";
-  const v = Number(n);
-  if (!Number.isFinite(v)) return String(n);
-  return Intl.NumberFormat(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v);
 };
-const pctBadge = (p: number | null | undefined) => (p == null ? null : Math.round(Number(p)));
 
-/* ==================== Component ==================== */
-export default function RateOfChangePanel({ token }: { token: string | null }) {
-  type Mode = "tenant" | "meter" | "building";
-  const [mode, setMode] = useState<Mode>("tenant");
-  const [endDate, setEndDate] = useState(today());
-  const [tenantId, setTenantId] = useState("");
-  const [meterId, setMeterId] = useState("");
-  const [buildingId, setBuildingId] = useState("");
+const isYMD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 
-  const [busy, setBusy] = useState(false);
+const fmt = (v: any, d = 2) => {
+  const n = Number(v);
+  if (!isFinite(n)) return "—";
+  return Intl.NumberFormat(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+};
 
-  // results
-  const [meterRows, setMeterRows] = useState<RocMeter[] | null>(null);
-  const [tenantTotals, setTenantTotals] = useState<RocTenant["totals"] | null>(null);
+function dl(filename: string, content: string, mime = "text/csv;charset=utf-8") {
+  if (!(isWeb && typeof window !== "undefined")) {
+    notify("CSV created", "Use your device’s share or downloads feature.");
+    return;
+  }
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 0);
+}
 
-  // building extras
-  const [buildingGrouped, setBuildingGrouped] = useState<RocBuildingGrouped | null>(null);
-  const [buildingMonthly, setBuildingMonthly] = useState<BuildingMonthlyTotals | null>(null);
-  const [buildingFour, setBuildingFour] = useState<BuildingFourMonths | null>(null);
+/** ======================= Component ======================= */
+type Props = {
+  /** Optional: sync from parent Billing form */
+  initialBuildingId?: string;
+  initialStart?: string;
+  initialEnd?: string;
+  initialYear?: string | number;
+};
 
-  // axios
+function RateOfChangePanelImpl({
+  initialBuildingId = "",
+  initialStart = "2025-01-21",
+  initialEnd = "2025-02-20",
+  initialYear,
+}: Props) {
+  const { token } = useAuth();
+
+  const headerToken =
+    token && /^Bearer\s/i.test(token.trim())
+      ? token.trim()
+      : token
+      ? `Bearer ${token.trim()}`
+      : "";
+
   const api = useMemo(
-    () => axios.create({
-      baseURL: BASE_API,
-      timeout: 20000,
-      headers: { Authorization: `Bearer ${token ?? ""}` },
-    }),
-    [token]
+    () =>
+      axios.create({
+        baseURL: BASE_API ?? "", // safe default
+        timeout: 20000,
+        headers: headerToken ? { Authorization: headerToken } : {},
+      }),
+    [headerToken]
   );
 
-  // Your server can mount at /rateofchange; some stacks also alias to /roc. Try both. :contentReference[oaicite:4]{index=4}
-  const ROC_BASES = ["/rateofchange", "/roc"];
+  // Inputs
+  const [buildingId, setBuildingId] = useState(String(initialBuildingId || ""));
+  const [tenantId, setTenantId] = useState("");
+  const [meterId, setMeterId] = useState("");
+  const [startDate, setStartDate] = useState(String(initialStart || "2025-01-21"));
+  const [endDate, setEndDate] = useState(String(initialEnd || "2025-02-20"));
+  const [year, setYear] = useState(
+    String(
+      initialYear != null && String(initialYear).trim()
+        ? initialYear
+        : new Date().getFullYear()
+    )
+  );
 
-  /* ==================== API calls ==================== */
-  async function getJSON<T>(paths: string[]): Promise<T | null> {
-    for (const base of ROC_BASES) {
-      for (const path of paths) {
-        try {
-          const { data } = await api.get<T>(`${base}${path}`);
-          return data;
-        } catch (e: any) {
-          if ([401, 403].includes(e?.response?.status)) throw e; // auth/scope error — stop trying
-          // otherwise, try next route/base
-        }
-      }
+  // Busy + error banner (render-safe)
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errText, setErrText] = useState<string>("");
+
+  // Results
+  const [meterROC, setMeterROC] = useState<RocMeter | null>(null);
+  const [tenantROC, setTenantROC] = useState<RocTenant | null>(null);
+  const [buildingROC, setBuildingROC] = useState<RocBuilding | null>(null);
+  const [monthlyCmp, setMonthlyCmp] = useState<MonthlyComparison | null>(null);
+  const [quarterlyCmp, setQuarterlyCmp] = useState<QuarterlyComparison | null>(null);
+  const [yearlyCmp, setYearlyCmp] = useState<YearlyComparison | null>(null);
+
+  const guardDates = () => {
+    if (!isYMD(startDate) || !isYMD(endDate)) {
+      setErrText("Invalid dates. Use YYYY-MM-DD.");
+      notify("Invalid dates", "Use YYYY-MM-DD.");
+      return false;
     }
-    return null;
-  }
+    return true;
+  };
 
-  const fetchRocMeter = (id: string, date: string) =>
-    getJSON<RocMeter>([`/meters/${encodeURIComponent(id)}/period-end/${date}`]); // per-meter
+  const handleError = (fallbackMsg: string, e: any) => {
+    const msg =
+      e?.response?.data?.error ||
+      e?.response?.data?.message ||
+      e?.message ||
+      fallbackMsg;
+    setErrText(String(msg));
+    // Avoid throwing inside render — show banner + toast
+    notify("Request failed", String(msg));
+  };
 
-  const fetchRocTenant = (id: string, date: string) =>
-    getJSON<RocTenant>([`/tenants/${encodeURIComponent(id)}/period-end/${date}`]); // per-tenant
-
-  // Building (grouped by tenant) — compares current vs previous across tenants. :contentReference[oaicite:5]{index=5}
-  const fetchRocBuildingGrouped = (id: string, date: string) =>
-    getJSON<RocBuildingGrouped>([`/buildings/${encodeURIComponent(id)}/period-end/${date}`]);
-
-  // Building monthly totals (current period only). Backend route: monthly-comparison. :contentReference[oaicite:6]{index=6}
-  const fetchRocBuildingMonthly = (id: string, date: string) =>
-    getJSON<BuildingMonthlyTotals>([`/buildings/${encodeURIComponent(id)}/period-end/${date}/monthly-comparison`]);
-
-  // Building four-month comparison (four consecutive 21→20 windows). :contentReference[oaicite:7]{index=7}
-  const fetchRocBuildingFour = (id: string, date: string) =>
-    getJSON<BuildingFourMonths>([
-      `/buildings/${encodeURIComponent(id)}/period-end/${date}/four-month-comparison`,
-    ]);
-
-  /* ==================== Run ==================== */
-  const onRun = async () => {
-    if (!token) { notify("Not logged in", "Please sign in first."); return; }
-    if (!isYMD(endDate)) { notify("Invalid end date", "Use YYYY-MM-DD."); return; }
-
+  /** ================= Calls (align to rateofchange.js) ================= */
+  const runMeter = async () => {
+    if (!meterId.trim()) return notify("Missing meter", "Enter a meter ID.");
+    if (!guardDates()) return;
+    setBusy("meter");
+    setErrText("");
+    setMeterROC(null);
     try {
-      setBusy(true);
-      setMeterRows(null);
-      setTenantTotals(null);
-      setBuildingGrouped(null);
-      setBuildingMonthly(null);
-      setBuildingFour(null);
-
-      if (mode === "tenant") {
-        if (!tenantId.trim()) { notify("Missing tenant", "Enter a tenant id (e.g. TNT-1)."); return; }
-        const res = await fetchRocTenant(tenantId.trim(), endDate);
-        if (!res) { notify("Not found", "No data for the period."); return; }
-        setMeterRows(res.meters || []);
-        setTenantTotals(res.totals || null);
-      } else if (mode === "meter") {
-        if (!meterId.trim()) { notify("Missing meter", "Enter a meter id (e.g. MTR-1)."); return; }
-        const row = await fetchRocMeter(meterId.trim(), endDate);
-        if (!row) { notify("Not found", "Meter not found or no data for the period."); return; }
-        setMeterRows([row]);
-      } else {
-        if (!buildingId.trim()) { notify("Missing building", "Enter a building id (e.g. BLDG-1)."); return; }
-        const [grouped, monthly, four] = await Promise.all([
-          fetchRocBuildingGrouped(buildingId.trim(), endDate),
-          fetchRocBuildingMonthly(buildingId.trim(), endDate),
-          fetchRocBuildingFour(buildingId.trim(), endDate),
-        ]);
-        if (!grouped) { notify("Not found", "Building not found or no data for the period."); return; }
-        setBuildingGrouped(grouped);
-        setBuildingMonthly(monthly || null);
-        setBuildingFour(four || null);
-      }
+      const url = `/rateofchange/meters/${encodeURIComponent(
+        meterId.trim()
+      )}/period-start/${startDate}/period-end/${endDate}`;
+      const res = await api.get<RocMeter>(url);
+      setMeterROC(res.data || null);
     } catch (e: any) {
-      const msg = e?.response?.data?.error || e?.message || "Server error.";
-      notify("Rate of Change failed", msg);
+      handleError("Meter ROC error", e);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
-  /* ==================== Render helpers ==================== */
-  const ROCRow = ({ item }: { item: RocMeter }) => {
-    const warn = (item.rate_of_change ?? 0) >= 20; // warning badge ≥20%
-    const badge = pctBadge(item.rate_of_change);
+  const runTenant = async () => {
+    if (!tenantId.trim()) return notify("Missing tenant", "Enter a tenant ID.");
+    if (!guardDates()) return;
+    setBusy("tenant");
+    setErrText("");
+    setTenantROC(null);
+    try {
+      const url = `/rateofchange/tenants/${encodeURIComponent(
+        tenantId.trim()
+      )}/period-start/${startDate}/period-end/${endDate}`;
+      const res = await api.get<RocTenant>(url);
+      setTenantROC(res.data || null);
+    } catch (e: any) {
+      handleError("Tenant ROC error", e);
+    } finally {
+      setBusy(null);
+    }
+  };
 
-    return (
-      <View style={styles.row}>
-        <View style={[styles.cellWide, { flexDirection: "row", alignItems: "center", gap: 6 }]}>
-          <Text style={styles.mono}>{item.meter_id}</Text>
-          {!!badge && (
-            <View style={[styles.badge, warn && styles.badgeWarn]}>
-              {warn ? <Ionicons name="alert-circle" size={12} color="#fff" /> : null}
-              <Text style={[styles.badgeText]}>{badge}%</Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.cell}><Text style={styles.num}>{fmt(item.indices.prev_index, 0)}</Text></View>
-        <View style={styles.cell}><Text style={styles.num}>{fmt(item.indices.curr_index, 0)}</Text></View>
-        <View style={styles.cell}><Text style={styles.num}>{fmt(item.previous_consumption)}</Text></View>
-        <View style={styles.cell}><Text style={styles.num}>{fmt(item.current_consumption)}</Text></View>
-      </View>
+  const runBuilding = async () => {
+    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
+    if (!guardDates()) return;
+    setBusy("building");
+    setErrText("");
+    setBuildingROC(null);
+    try {
+      const url = `/rateofchange/buildings/${encodeURIComponent(
+        buildingId.trim()
+      )}/period-start/${startDate}/period-end/${endDate}`;
+      const res = await api.get<RocBuilding>(url);
+      setBuildingROC(res.data || null);
+    } catch (e: any) {
+      handleError("Building ROC error", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runMonthly = async () => {
+    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
+    if (!guardDates()) return;
+    setBusy("monthly");
+    setErrText("");
+    setMonthlyCmp(null);
+    try {
+      const url = `/rateofchange/buildings/${encodeURIComponent(
+        buildingId.trim()
+      )}/period-start/${startDate}/period-end/${endDate}/monthly-comparison`;
+      const res = await api.get<MonthlyComparison>(url);
+      setMonthlyCmp(res.data || null);
+    } catch (e: any) {
+      handleError("Monthly comparison error", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runQuarterly = async () => {
+    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
+    if (!guardDates()) return;
+    setBusy("quarterly");
+    setErrText("");
+    setQuarterlyCmp(null);
+    try {
+      const url = `/rateofchange/buildings/${encodeURIComponent(
+        buildingId.trim()
+      )}/period-start/${startDate}/period-end/${endDate}/quarterly-comparison`;
+      const res = await api.get<QuarterlyComparison>(url);
+      setQuarterlyCmp(res.data || null);
+    } catch (e: any) {
+      handleError("Quarterly comparison error", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runYearly = async () => {
+    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
+    if (!/^\d{4}$/.test(String(year))) return notify("Invalid year", "Use YYYY.");
+    setBusy("yearly");
+    setErrText("");
+    setYearlyCmp(null);
+    try {
+      const url = `/rateofchange/buildings/${encodeURIComponent(
+        buildingId.trim()
+      )}/year/${encodeURIComponent(String(year))}/yearly-comparison`;
+      const res = await api.get<YearlyComparison>(url);
+      setYearlyCmp(res.data || null);
+    } catch (e: any) {
+      handleError("Yearly comparison error", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** ======================= CSV exports ======================= */
+  const exportMonthlyCsv = () => {
+    if (!monthlyCmp) return notify("Nothing to export", "Run Monthly comparison first.");
+    const bid = monthlyCmp.building_id ?? "";
+    const ps = monthlyCmp.period?.start ?? "";
+    const pe = monthlyCmp.period?.end ?? "";
+    const t = monthlyCmp.totals ?? {};
+    const header = ["Building ID", "Period Start", "Period End", "Electric", "Water", "LPG"];
+    const row = [bid, ps, pe, t.electric ?? "", t.water ?? "", t.lpg ?? ""]
+      .map((s) => `"${String(s ?? "").replace(/"/g, '""')}"`)
+      .join(",");
+    dl(`monthly_comparison_${bid}_${ps}_${pe}.csv`, `"${header.join('","')}"\n${row}\n`);
+  };
+
+  const exportQuarterlyCsv = () => {
+    if (!quarterlyCmp) return notify("Nothing to export", "Run Quarterly comparison first.");
+    const bid = quarterlyCmp.building_id ?? "";
+    const w = quarterlyCmp.window ?? {};
+    const header = [
+      "Month",
+      "Start",
+      "End",
+      "Prev Month",
+      "Prev Start",
+      "Prev End",
+      "Electric",
+      "Water",
+      "LPG",
+    ];
+    const lines = [`"${header.join('","')}"`];
+    (quarterlyCmp.months ?? []).forEach((m) => {
+      const prev = m.previous ?? {};
+      const tot = m.totals ?? {};
+      lines.push(
+        [
+          m.label ?? "",
+          m.start ?? "",
+          m.end ?? "",
+          prev.month ?? "",
+          prev.start ?? "",
+          prev.end ?? "",
+          tot.electric ?? "",
+          tot.water ?? "",
+          tot.lpg ?? "",
+        ]
+          .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
+          .join(",")
+      );
+    });
+    const all = quarterlyCmp.totals_all ?? {};
+    lines.push(
+      `"\u2211 Totals","","","","","",${all.electric ?? ""},${all.water ?? ""},${all.lpg ?? ""}`
+    );
+    lines.push(`"All Utilities","","","","","",${all.all_utilities ?? ""},,`);
+    dl(
+      `quarterly_comparison_${bid}_${w.start ?? ""}_${w.end ?? ""}.csv`,
+      lines.join("\n") + "\n"
     );
   };
 
-  /* ==================== UI ==================== */
-  const Header = () => (
-    <View style={styles.headerRow}>
-      <Text style={styles.title}>Rate of Change</Text>
-      <Text style={styles.subtitle}>
-        Compare current vs previous (21→20) periods by tenant, meter, or building.
-      </Text>
-    </View>
+  const exportYearlyCsv = () => {
+    if (!yearlyCmp) return notify("Nothing to export", "Run Yearly comparison first.");
+    const bid = yearlyCmp.building_id ?? "";
+    const header = ["Month", "Start", "End", "Prev Month", "Prev Start", "Prev End", "Electric", "Water", "LPG"];
+    const lines = [`"${header.join('","')}"`];
+    (yearlyCmp.months ?? []).forEach((m) => {
+      const prev = m.previous ?? {};
+      const tot = m.totals ?? {};
+      lines.push(
+        [
+          m.label ?? "",
+          m.start ?? "",
+          m.end ?? "",
+          prev.month ?? "",
+          prev.start ?? "",
+          prev.end ?? "",
+          tot.electric ?? "",
+          tot.water ?? "",
+          tot.lpg ?? "",
+        ]
+          .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
+          .join(",")
+      );
+    });
+    const all = yearlyCmp.totals_all ?? {};
+    lines.push(
+      `"\u2211 Annual Totals","","","","","",${all.electric ?? ""},${all.water ?? ""},${all.lpg ?? ""}`
+    );
+    lines.push(`"All Utilities","","","","","",${all.all_utilities ?? ""},,`);
+    dl(`yearly_comparison_${bid}_${yearlyCmp.year ?? ""}.csv`, lines.join("\n") + "\n");
+  };
+
+  /** ======================= Render helpers ======================= */
+  const Action = ({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) => (
+    <TouchableOpacity onPress={onPress} disabled={!!disabled} style={[styles.btn, disabled && styles.btnDisabled]}>
+      <Ionicons name="flash" size={16} color="#fff" />
+      <Text style={styles.btnText}>{label}</Text>
+    </TouchableOpacity>
   );
 
-  const Toolbar = () => (
-    <View style={styles.toolbar}>
-      {/* Mode switch */}
-      <View style={styles.modeSwitch}>
-        <TouchableOpacity
-          onPress={() => setMode("tenant")}
-          style={[styles.modeBtn, mode === "tenant" && styles.modeBtnActive]}
-          accessibilityRole="button"
-          accessibilityState={{ selected: mode === "tenant" }}
-        >
-          <Ionicons name="people-outline" size={16} color={mode === "tenant" ? "#fff" : "#0f172a"} />
-          <Text style={[styles.modeText, mode === "tenant" && styles.modeTextActive]}>Tenant</Text>
-        </TouchableOpacity>
+  const ExportBtn = ({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={!!disabled}
+      style={[styles.btnSecondary, disabled && styles.btnSecondaryDisabled]}
+    >
+      <Ionicons name="download" size={16} color="#0f172a" />
+      <Text style={styles.btnSecondaryText}>{label}</Text>
+    </TouchableOpacity>
+  );
 
-        <TouchableOpacity
-          onPress={() => setMode("meter")}
-          style={[styles.modeBtn, mode === "meter" && styles.modeBtnActive]}
-          accessibilityRole="button"
-          accessibilityState={{ selected: mode === "meter" }}
-        >
-          <Ionicons name="speedometer-outline" size={16} color={mode === "meter" ? "#fff" : "#0f172a"} />
-          <Text style={[styles.modeText, mode === "meter" && styles.modeTextActive]}>Meter</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => setMode("building")}
-          style={[styles.modeBtn, mode === "building" && styles.modeBtnActive]}
-          accessibilityRole="button"
-          accessibilityState={{ selected: mode === "building" }}
-        >
-          <Ionicons name="business-outline" size={16} color={mode === "building" ? "#fff" : "#0f172a"} />
-          <Text style={[styles.modeText, mode === "building" && styles.modeTextActive]}>Building</Text>
-        </TouchableOpacity>
-      </View>
-
+  /** ======================= Render ======================= */
+  return (
+    <View style={styles.wrap}>
       {/* Inputs */}
-      <View style={styles.inputRow}>
-        <View style={styles.inputWrap}>
-          <Ionicons name="calendar-outline" size={16} color="#0f172a" style={{ marginRight: 6 }} />
+      <View style={styles.card}>
+        <Text style={styles.h1}>Rate of Change & Comparison</Text>
+        <Text style={styles.hint}>
+          Connects to your <Text style={styles.bold}>rateofchange.js</Text> API (meter, tenant, building; monthly /
+          quarterly / yearly).
+        </Text>
+
+        <View style={styles.row}>
+          <Text style={styles.label}>Building ID</Text>
           <TextInput
-            value={endDate}
-            onChangeText={setEndDate}
-            placeholder="YYYY-MM-DD"
+            value={buildingId}
+            onChangeText={setBuildingId}
+            placeholder="e.g. BLDG-1"
+            autoCapitalize={Platform.OS === "web" ? "none" : "characters"}
             style={styles.input}
-            autoCapitalize="none"
+          />
+        </View>
+        <View style={styles.row}>
+          <Text style={styles.label}>Tenant ID</Text>
+          <TextInput
+            value={tenantId}
+            onChangeText={setTenantId}
+            placeholder="e.g. TNT-1"
+            autoCapitalize="characters"
+            style={styles.input}
+          />
+        </View>
+        <View style={styles.row}>
+          <Text style={styles.label}>Meter ID</Text>
+          <TextInput
+            value={meterId}
+            onChangeText={setMeterId}
+            placeholder="e.g. MTR-1"
+            autoCapitalize="characters"
+            style={styles.input}
           />
         </View>
 
-        {mode === "tenant" && (
-          <View style={styles.inputWrap}>
-            <Ionicons name="person-circle-outline" size={16} color="#0f172a" style={{ marginRight: 6 }} />
+        <View style={styles.row2}>
+          <View style={styles.col}>
+            <Text style={styles.label}>Start (YYYY-MM-DD)</Text>
             <TextInput
-              value={tenantId}
-              onChangeText={setTenantId}
-              placeholder="TNT-1"
-              style={styles.input}
+              value={startDate}
+              onChangeText={setStartDate}
+              placeholder="YYYY-MM-DD"
               autoCapitalize="none"
+              style={styles.input}
             />
           </View>
-        )}
-        {mode === "meter" && (
-          <View style={styles.inputWrap}>
-            <Ionicons name="bonfire-outline" size={16} color="#0f172a" style={{ marginRight: 6 }} />
+          <View style={styles.col}>
+            <Text style={styles.label}>End (YYYY-MM-DD)</Text>
             <TextInput
-              value={meterId}
-              onChangeText={setMeterId}
-              placeholder="MTR-1"
-              style={styles.input}
+              value={endDate}
+              onChangeText={setEndDate}
+              placeholder="YYYY-MM-DD"
               autoCapitalize="none"
+              style={styles.input}
             />
           </View>
-        )}
-        {mode === "building" && (
-          <View style={styles.inputWrap}>
-            <Ionicons name="home-outline" size={16} color="#0f172a" style={{ marginRight: 6 }} />
+          <View style={styles.col}>
+            <Text style={styles.label}>Year (YYYY)</Text>
             <TextInput
-              value={buildingId}
-              onChangeText={setBuildingId}
-              placeholder="BLDG-1"
+              value={year}
+              onChangeText={(v) => setYear(v.replace(/[^\d]/g, "").slice(0, 4))}
+              placeholder="2025"
+              keyboardType="numeric"
               style={styles.input}
-              autoCapitalize="none"
             />
           </View>
-        )}
+        </View>
 
-        <TouchableOpacity onPress={onRun} style={styles.runBtn}>
-          <Text style={styles.runText}>Run</Text>
-        </TouchableOpacity>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+          <View style={styles.actions}>
+            <Action label="Meter ROC" onPress={runMeter} disabled={busy !== null} />
+            <Action label="Tenant ROC" onPress={runTenant} disabled={busy !== null} />
+            <Action label="Building ROC" onPress={runBuilding} disabled={busy !== null} />
+            <Action label="Monthly Comparison" onPress={runMonthly} disabled={busy !== null} />
+            <Action label="Quarterly Comparison" onPress={runQuarterly} disabled={busy !== null} />
+            <Action label="Yearly Comparison" onPress={runYearly} disabled={busy !== null} />
+          </View>
+        </ScrollView>
+
+        {!!errText && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errText}>{String(errText)}</Text>
+          </View>
+        )}
       </View>
-    </View>
-  );
-
-  return (
-    <View style={styles.screen}>
-      <Header />
-      <Toolbar />
 
       {busy ? (
-        <ActivityIndicator size="small" color="#1f2a59" />
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" />
+          <Text style={styles.loadingText}>Loading {busy}…</Text>
+        </View>
       ) : (
-        <>
-          {/* Tenant / Meter modes */}
-          {mode !== "building" && (
-            <>
-              {!meterRows ? (
-                <Text style={styles.empty}>Enter details and tap Run.</Text>
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          {/* Meter ROC */}
+          {meterROC && (
+            <View style={styles.card}>
+              <Text style={styles.h2}>Meter ROC</Text>
+              {"error" in meterROC && meterROC.error ? (
+                <Text style={styles.errText}>{String(meterROC.error)}</Text>
               ) : (
-                <>
-                  {/* Table header */}
-                  <View style={[styles.row, { borderBottomColor: "transparent" }]}>
-                    <View style={[styles.cellWide]}><Text style={styles.caption}>Meter</Text></View>
-                    <View style={styles.cell}><Text style={styles.caption}>Prev Index</Text></View>
-                    <View style={styles.cell}><Text style={styles.caption}>Present Index</Text></View>
-                    <View style={styles.cell}><Text style={styles.caption}>Prev Cons.</Text></View>
-                    <View style={styles.cell}><Text style={styles.caption}>Current Cons.</Text></View>
-                  </View>
-
-                  <FlatList
-                    data={meterRows}
-                    keyExtractor={(r) => r.meter_id}
-                    renderItem={ROCRow}
+                <View style={styles.grid}>
+                  <KV k="Meter ID" v={meterROC.meter_id ?? "—"} />
+                  <KV k="Current Consumption" v={`${fmt(meterROC.current_consumption, 2)} kWh`} />
+                  <KV k="Previous Consumption" v={`${fmt(meterROC.previous_consumption, 2)} kWh`} />
+                  <KV
+                    k="Rate of Change"
+                    v={
+                      meterROC.rate_of_change == null
+                        ? "—"
+                        : `${fmt(meterROC.rate_of_change, 0)}%`
+                    }
                   />
-
-                  {tenantTotals ? (
-                    <View style={styles.summary}>
-                      <Text style={styles.summaryTitle}>Tenant totals</Text>
-                      <View style={styles.summaryRow}><Text style={styles.summaryKey}>Previous</Text><Text style={styles.summaryVal}>{fmt(tenantTotals.previous_consumption)}</Text></View>
-                      <View style={styles.summaryRow}><Text style={styles.summaryKey}>Current</Text><Text style={styles.summaryVal}>{fmt(tenantTotals.current_consumption)}</Text></View>
-                      <View style={styles.summaryRow}><Text style={styles.summaryKey}>Rate of change</Text><Text style={styles.summaryVal}>{tenantTotals.rate_of_change == null ? "—" : `${Math.round(tenantTotals.rate_of_change)}%`}</Text></View>
-                    </View>
-                  ) : null}
-                </>
+                </View>
               )}
-            </>
+            </View>
           )}
 
-          {/* Building mode */}
-          {mode === "building" && (
-            <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
-              {/* Grouped by tenant (per-meters returned) */}
-              {buildingGrouped ? (
-                <>
-                  <View style={styles.headerRow2}>
-                    <Text style={styles.sectionTitle}>Building — grouped by tenant</Text>
-                    <Text style={styles.caption}>
-                      Current vs previous periods across all meters assigned to each tenant.
-                    </Text>
-                  </View>
-                  {buildingGrouped.tenants.length === 0 ? (
-                    <Text style={styles.empty}>No tenants found for this building.</Text>
-                  ) : (
-                    buildingGrouped.tenants.map((t, idx) => (
-                      <View key={idx} style={[styles.summary, { marginBottom: 12 }]}>
-                        <Text style={styles.summaryTitle}>
-                          {t.tenant_id ?? "UNASSIGNED"}
-                        </Text>
-                        <View style={styles.summaryRow}>
-                          <Text style={styles.summaryKey}>Previous</Text>
-                          <Text style={styles.summaryVal}>{fmt(t.totals.previous_consumption)}</Text>
-                        </View>
-                        <View style={styles.summaryRow}>
-                          <Text style={styles.summaryKey}>Current</Text>
-                          <Text style={styles.summaryVal}>{fmt(t.totals.current_consumption)}</Text>
-                        </View>
-                        <View style={styles.summaryRow}>
-                          <Text style={styles.summaryKey}>Rate of change</Text>
-                          <Text style={styles.summaryVal}>
-                            {t.totals.rate_of_change == null ? "—" : `${Math.round(Number(t.totals.rate_of_change))}%`}
-                          </Text>
-                        </View>
-
-                        {/* Small per-meter list with warnings */}
-                        {t.meters?.length ? (
-                          <>
-                            <View style={[styles.row, { marginTop: 8, borderBottomColor: "transparent" }]}>
-                              <View style={[styles.cellWide]}><Text style={styles.caption}>Meter</Text></View>
-                              <View style={styles.cell}><Text style={styles.caption}>Prev</Text></View>
-                              <View style={styles.cell}><Text style={styles.caption}>Present</Text></View>
-                              <View style={styles.cell}><Text style={styles.caption}>Prev Cons.</Text></View>
-                              <View style={styles.cell}><Text style={styles.caption}>Curr Cons.</Text></View>
-                            </View>
-                            {t.meters.map((m) => <ROCRow key={m.meter_id} item={m} />)}
-                          </>
-                        ) : null}
-                      </View>
-                    ))
+          {/* Tenant ROC */}
+          {tenantROC && (
+            <View style={styles.card}>
+              <Text style={styles.h2}>Tenant ROC</Text>
+              <Text style={styles.subtle}>
+                {(tenantROC.period?.current?.start ?? "—")} → {(tenantROC.period?.current?.end ?? "—")}{" "}
+                {tenantROC.period?.previous?.month ? `(prev ${tenantROC.period?.previous?.month})` : ""}
+              </Text>
+              {Object.entries(tenantROC.groups ?? {}).map(([type, g]) => (
+                <View key={type} style={styles.group}>
+                  <Text style={styles.groupTitle}>{String(type || "").toUpperCase()}</Text>
+                  {g?.totals && (
+                    <View style={styles.grid}>
+                      <KV k="Current kWh" v={fmt(g.totals.current_consumption, 2)} />
+                      <KV k="Previous kWh" v={fmt(g.totals.previous_consumption, 2)} />
+                      <KV
+                        k="ROC %"
+                        v={
+                          g.totals.rate_of_change == null
+                            ? "—"
+                            : `${fmt(g.totals.rate_of_change, 0)}%`
+                        }
+                      />
+                    </View>
                   )}
-                </>
-              ) : null}
-
-              {/* Monthly totals */}
-              {buildingMonthly ? (
-                <>
-                  <View style={styles.headerRow2}>
-                    <Text style={styles.sectionTitle}>Monthly totals (current window)</Text>
-                    <Text style={styles.caption}>Electric / Water / LPG totals for current period.</Text>
-                  </View>
-                  <View style={styles.summary}>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryKey}>Electric</Text>
-                      <Text style={styles.summaryVal}>{fmt(buildingMonthly.totals.electric)}</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryKey}>Water</Text>
-                      <Text style={styles.summaryVal}>{fmt(buildingMonthly.totals.water)}</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryKey}>LPG</Text>
-                      <Text style={styles.summaryVal}>{fmt(buildingMonthly.totals.lpg)}</Text>
-                    </View>
-                  </View>
-                </>
-              ) : null}
-
-              {/* Four-month comparison */}
-              {buildingFour ? (
-                <>
-                  <View style={styles.headerRow2}>
-                    <Text style={styles.sectionTitle}>Four-month comparison</Text>
-                    <Text style={styles.caption}>Rolling 21→20 windows (oldest → latest).</Text>
-                  </View>
-                  <View style={[styles.row, { borderBottomColor: "transparent" }]}>
-                    <View style={[styles.cellWide]}><Text style={styles.caption}>Month</Text></View>
-                    <View style={styles.cell}><Text style={styles.caption}>Electric</Text></View>
-                    <View style={styles.cell}><Text style={styles.caption}>Water</Text></View>
-                    <View style={styles.cell}><Text style={styles.caption}>LPG</Text></View>
-                  </View>
-                  {buildingFour.four_months.periods.map((p) => (
-                    <View key={p.month} style={styles.row}>
-                      <View style={styles.cellWide}><Text style={styles.mono}>{p.month}</Text></View>
-                      <View style={styles.cell}><Text style={styles.num}>{fmt(p.totals.electric)}</Text></View>
-                      <View style={styles.cell}><Text style={styles.num}>{fmt(p.totals.water)}</Text></View>
-                      <View style={styles.cell}><Text style={styles.num}>{fmt(p.totals.lpg)}</Text></View>
+                  {(g?.meters ?? []).map((m, i) => (
+                    <View key={`${type}-${i}`} style={styles.mRow}>
+                      <Text style={styles.meterId}>{m.meter_id ?? "—"}</Text>
+                      {"error" in m && m.error ? (
+                        <Text style={styles.errTextSmall}>{String(m.error)}</Text>
+                      ) : (
+                        <Text style={styles.meterLine}>
+                          Curr {fmt(m.current_consumption, 2)} • Prev {fmt(m.previous_consumption, 2)} • ROC{" "}
+                          {m.rate_of_change == null ? "—" : `${fmt(m.rate_of_change, 0)}%`}
+                        </Text>
+                      )}
                     </View>
                   ))}
-                </>
-              ) : null}
-            </ScrollView>
+                </View>
+              ))}
+            </View>
           )}
-        </>
+
+          {/* Building ROC */}
+          {buildingROC && (
+            <View style={styles.card}>
+              <Text style={styles.h2}>Building ROC</Text>
+              <Text style={styles.subtle}>
+                {(buildingROC.building_id ?? "—")}
+                {buildingROC.building_name ? ` • ${buildingROC.building_name}` : ""}
+              </Text>
+              <Text style={styles.subtle}>
+                {(buildingROC.period?.current?.start ?? "—")} → {(buildingROC.period?.current?.end ?? "—")}
+              </Text>
+
+              {(buildingROC.tenants ?? []).map((t, idx) => (
+                <View key={`tenant-${idx}`} style={styles.group}>
+                  <Text style={styles.groupTitle}>{t.tenant_id || "Unassigned Tenant"}</Text>
+                  {t?.totals && (
+                    <View style={styles.grid}>
+                      <KV k="Current kWh" v={fmt(t.totals.current_consumption, 2)} />
+                      <KV k="Previous kWh" v={fmt(t.totals.previous_consumption, 2)} />
+                      <KV
+                        k="ROC %"
+                        v={t.totals.rate_of_change == null ? "—" : `${fmt(t.totals.rate_of_change, 0)}%`}
+                      />
+                    </View>
+                  )}
+                  {(t?.meters ?? []).map((m, i) => (
+                    <View key={`m-${idx}-${i}`} style={styles.mRow}>
+                      <Text style={styles.meterId}>{m.meter_id ?? "—"}</Text>
+                      {"error" in m && m.error ? (
+                        <Text style={styles.errTextSmall}>{String(m.error)}</Text>
+                      ) : (
+                        <Text style={styles.meterLine}>
+                          Curr {fmt(m.current_consumption, 2)} • Prev {fmt(m.previous_consumption, 2)} • ROC{" "}
+                          {m.rate_of_change == null ? "—" : `${fmt(m.rate_of_change, 0)}%`}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Monthly comparison */}
+          {monthlyCmp && (
+            <View style={styles.card}>
+              <Text style={styles.h2}>Monthly Comparison</Text>
+              <Text style={styles.subtle}>
+                {(monthlyCmp.building_id ?? "—")}
+                {monthlyCmp.building_name ? ` • ${monthlyCmp.building_name}` : ""} |{" "}
+                {(monthlyCmp.period?.start ?? "—")} → {(monthlyCmp.period?.end ?? "—")}
+              </Text>
+              <View style={styles.grid}>
+                <KV k="Electric" v={`${fmt(monthlyCmp.totals?.electric, 2)} units`} />
+                <KV k="Water" v={`${fmt(monthlyCmp.totals?.water, 2)} units`} />
+                <KV k="LPG" v={`${fmt(monthlyCmp.totals?.lpg, 2)} units`} />
+              </View>
+              <View style={styles.actionsLine}>
+                <ExportBtn label="Export CSV" onPress={exportMonthlyCsv} />
+              </View>
+            </View>
+          )}
+
+          {/* Quarterly comparison */}
+          {quarterlyCmp && (
+            <View style={styles.card}>
+              <Text style={styles.h2}>Quarterly Comparison (4 months)</Text>
+              <Text style={styles.subtle}>
+                {(quarterlyCmp.building_id ?? "—")}
+                {quarterlyCmp.building_name ? ` • ${quarterlyCmp.building_name}` : ""} |{" "}
+                {(quarterlyCmp.window?.start ?? "—")} → {(quarterlyCmp.window?.end ?? "—")}
+              </Text>
+              <View style={styles.tableHead}>
+                <Text style={[styles.th, { flex: 1.2 }]}>Month</Text>
+                <Text style={[styles.th, { flex: 0.9 }]}>Electric</Text>
+                <Text style={[styles.th, { flex: 0.9 }]}>Water</Text>
+                <Text style={[styles.th, { flex: 0.9 }]}>LPG</Text>
+              </View>
+              {(quarterlyCmp.months ?? []).map((m, i) => (
+                <View key={`q-${i}`} style={styles.tableRow}>
+                  <Text style={[styles.td, { flex: 1.2 }]}>{m.label ?? "—"}</Text>
+                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.electric, 2)}</Text>
+                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.water, 2)}</Text>
+                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.lpg, 2)}</Text>
+                </View>
+              ))}
+              <View style={styles.totalLine}>
+                <Text style={[styles.totalK, { flex: 1.2 }]}>Σ Totals</Text>
+                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(quarterlyCmp.totals_all?.electric, 2)}</Text>
+                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(quarterlyCmp.totals_all?.water, 2)}</Text>
+                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(quarterlyCmp.totals_all?.lpg, 2)}</Text>
+              </View>
+              <Text style={styles.allUtil}>All Utilities: {fmt(quarterlyCmp.totals_all?.all_utilities, 2)}</Text>
+              <View style={styles.actionsLine}>
+                <ExportBtn label="Export CSV" onPress={exportQuarterlyCsv} />
+              </View>
+            </View>
+          )}
+
+          {/* Yearly comparison */}
+          {yearlyCmp && (
+            <View style={styles.card}>
+              <Text style={styles.h2}>Yearly Comparison ({yearlyCmp.year ?? "—"})</Text>
+              <Text style={styles.subtle}>
+                {(yearlyCmp.building_id ?? "—")}
+                {yearlyCmp.building_name ? ` • ${yearlyCmp.building_name}` : ""}
+              </Text>
+              <View style={styles.tableHead}>
+                <Text style={[styles.th, { flex: 1.2 }]}>Month</Text>
+                <Text style={[styles.th, { flex: 0.9 }]}>Electric</Text>
+                <Text style={[styles.th, { flex: 0.9 }]}>Water</Text>
+                <Text style={[styles.th, { flex: 0.9 }]}>LPG</Text>
+              </View>
+              {(yearlyCmp.months ?? []).map((m, i) => (
+                <View key={`y-${i}`} style={styles.tableRow}>
+                  <Text style={[styles.td, { flex: 1.2 }]}>{m.label ?? "—"}</Text>
+                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.electric, 2)}</Text>
+                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.water, 2)}</Text>
+                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.lpg, 2)}</Text>
+                </View>
+              ))}
+              <View style={styles.totalLine}>
+                <Text style={[styles.totalK, { flex: 1.2 }]}>Σ Totals</Text>
+                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(yearlyCmp.totals_all?.electric, 2)}</Text>
+                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(yearlyCmp.totals_all?.water, 2)}</Text>
+                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(yearlyCmp.totals_all?.lpg, 2)}</Text>
+              </View>
+              <Text style={styles.allUtil}>All Utilities: {fmt(yearlyCmp.totals_all?.all_utilities, 2)}</Text>
+              <View style={styles.actionsLine}>
+                <ExportBtn label="Export CSV" onPress={exportYearlyCsv} />
+              </View>
+            </View>
+          )}
+        </ScrollView>
       )}
     </View>
   );
 }
 
-/* ==================== Styles ==================== */
+const KV = ({ k, v }: { k: string; v: string }) => (
+  <View style={styles.kv}>
+    <Text style={styles.kKey}>{k}</Text>
+    <Text style={styles.kVal}>{v}</Text>
+  </View>
+);
+
 const styles = StyleSheet.create({
-  screen: { flex: 1, padding: 16, backgroundColor: "#fff" },
-  headerRow: { marginBottom: 12 },
-  title: { fontSize: 20, fontWeight: "800", color: "#0f172a" },
-  subtitle: { color: "#475569", marginTop: 2 },
+  wrap: { backgroundColor: "#f8fafc", borderRadius: 12, padding: 12 },
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    borderColor: "#e2e8f0",
+    borderWidth: 1,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
 
-  toolbar: { gap: 10, marginBottom: 12 },
-  modeSwitch: { flexDirection: "row", gap: 8 },
-  modeBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: "#e2e8f0" },
-  modeBtnActive: { backgroundColor: "#1f2a59" },
-  modeText: { color: "#0f172a", fontWeight: "600" },
-  modeTextActive: { color: "#fff" },
+  h1: { fontSize: 16, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
+  h2: { fontSize: 15, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
+  bold: { fontWeight: "700" },
+  hint: { color: "#475569" },
 
-  inputRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  inputWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 10 },
-  input: { minWidth: 120, color: "#0f172a" },
-  runBtn: { backgroundColor: "#1f2a59", paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10 },
-  runText: { color: "#fff", fontWeight: "700" },
+  row: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
+  row2: { flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap" },
+  col: { flexGrow: 1, flexBasis: 180 },
 
-  headerRow2: { marginTop: 6, marginBottom: 4 },
-  sectionTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
+  label: { color: "#334155", fontSize: 13, fontWeight: "600" },
+  input: {
+    backgroundColor: "#f1f5f9",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#0f172a",
+  },
 
-  empty: { color: "#475569", padding: 8 },
-  row: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e2e8f0" },
-  cellWide: { flex: 1.2 },
-  cell: { width: 100, alignItems: "flex-end" },
+  actions: { flexDirection: "row", gap: 8, paddingVertical: 6, paddingRight: 6 },
+  actionsLine: { flexDirection: "row", gap: 8, marginTop: 8 },
 
-  num: { fontVariant: ["tabular-nums"], fontSize: 14, color: "#0f172a", fontWeight: "600" },
-  mono: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }), color: "#0f172a" },
-  caption: { fontSize: 11, color: "#64748b" },
+  btn: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    backgroundColor: "#0ea5e9",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  btnText: { color: "#fff", fontWeight: "700" },
+  btnDisabled: { opacity: 0.5 },
 
-  summary: { marginTop: 6, marginBottom: 6, backgroundColor: "#f8fafc", borderRadius: 8, padding: 10 },
-  summaryTitle: { fontSize: 13, fontWeight: "700", color: "#0f172a", marginBottom: 6 },
-  summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
-  summaryKey: { color: "#334155" },
-  summaryVal: { color: "#0f172a", fontWeight: "700" },
+  btnSecondary: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  btnSecondaryText: { color: "#0f172a", fontWeight: "700" },
+  btnSecondaryDisabled: { opacity: 0.5 },
 
-  // % badge
-  badge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "#334155" },
-  badgeWarn: { backgroundColor: "#dc2626" },
-  badgeText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  loading: { alignItems: "center", paddingVertical: 24 },
+  loadingText: { marginTop: 8, color: "#475569" },
+
+  errorBox: {
+    backgroundColor: "#fee2e2",
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 8,
+  },
+  errText: { color: "#991b1b" },
+  errTextSmall: { color: "#b91c1c", fontSize: 12 },
+
+  grid: { gap: 6, marginTop: 6 },
+  kv: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  kKey: { color: "#334155", fontWeight: "700" },
+  kVal: { color: "#0f172a" },
+
+  group: { marginTop: 8, paddingTop: 8, borderTopColor: "#e2e8f0", borderTopWidth: 1 },
+  groupTitle: { fontWeight: "800", color: "#0f172a", marginBottom: 6 },
+
+  tableHead: {
+    flexDirection: "row",
+    backgroundColor: "#f8fafc",
+    paddingVertical: 8,
+    borderBottomColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    marginTop: 8,
+  },
+  tableRow: {
+    flexDirection: "row",
+    paddingVertical: 8,
+    borderBottomColor: "#f1f5f9",
+    borderBottomWidth: 1,
+  },
+  th: { fontWeight: "800", color: "#334155", paddingRight: 8 },
+  td: { color: "#0f172a", paddingRight: 8 },
+  totalLine: {
+    flexDirection: "row",
+    paddingVertical: 8,
+    borderTopColor: "#e2e8f0",
+    borderTopWidth: 1,
+    marginTop: 6,
+  },
+  totalK: { fontWeight: "800", color: "#334155" },
+  totalV: { textAlign: "right", color: "#0f172a", fontWeight: "700" },
+  allUtil: { marginTop: 8, fontWeight: "800", color: "#0f172a" },
+
+  meterId: { fontWeight: "700", color: "#0f172a" },
+  meterLine: { color: "#0f172a" },
+  mRow: { marginBottom: 6 },
 });
+
+export default memo(RateOfChangePanelImpl)
