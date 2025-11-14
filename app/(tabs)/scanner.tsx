@@ -1,4 +1,3 @@
-// app/(tabs)/scanner.tsx
 import {
   OnSuccessfulScanProps,
   QRCodeScanner,
@@ -17,30 +16,20 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
-
 const today = () => new Date().toISOString().slice(0, 10);
-
 export default function ScannerScreen() {
   const router = useRouter();
-  // ⬇️ use queueScan instead of addScan (Ctx does not have addScan)
   const { queueScan } = useScanHistory();
   const [scanned, setScanned] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
-
   const handleScan = async (data: OnSuccessfulScanProps) => {
     if (scanned) return;
     setScanned(true);
-
     const scanText =
       (data as any)?.rawData || (data as any)?.data || JSON.stringify(data);
     const raw = String(scanText).trim();
-
-    // Try to extract a meter id like MTR-123...
     const match = raw.match(/\bMTR-[A-Za-z0-9-]+\b/i);
     const meterId = match ? match[0].toUpperCase() : "";
-
-    // If we detected a meter id, queue an offline "placeholder" reading (value 0, today).
-    // This lets the reading appear in Offline History for later approval when online.
     try {
       if (meterId) {
         await queueScan({
@@ -50,22 +39,16 @@ export default function ScannerScreen() {
         });
       }
     } catch {
-      // Non-fatal — continue navigation anyway
     }
-
-    // Go to Billing screen after scan
     router.replace("/(tabs)/billing");
-
     Alert.alert("Scanned!", meterId || raw);
     setTimeout(() => setScanned(false), 3000);
   };
-
   useFocusEffect(
     React.useCallback(() => {
-      setScannerKey((prev) => prev + 1); // re-create scanner on focus
+      setScannerKey((prev) => prev + 1); 
     }, []),
   );
-
   return (
     <View style={styles.container}>
       <QRCodeScanner
@@ -74,13 +57,11 @@ export default function ScannerScreen() {
         scanning={{ cooldownDuration: 1200 }}
         uiControls={{
           showControls: true,
-          showTorchButton: true, // built-in flash toggle
+          showTorchButton: true, 
           showStatus: true,
         }}
         permissionScreen={{}}
       />
-
-      {/* Make overlays non-interactive so touches reach the torch button */}
       <View pointerEvents="none" style={styles.logoContainer}>
         <Image
           source={require("../../assets/images/logo.png")}
@@ -88,7 +69,6 @@ export default function ScannerScreen() {
           resizeMode="contain"
         />
       </View>
-
       <View pointerEvents="none" style={styles.overlay}>
         <Text style={styles.overlayText}>Point your camera at a QR Code</Text>
         {Platform.OS === "web" ? (
@@ -98,10 +78,8 @@ export default function ScannerScreen() {
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
-
   topBar: {
     position: "absolute",
     top: 0,
@@ -120,7 +98,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     padding: 8,
   },
-
   logoContainer: {
     position: "absolute",
     top: 40,
@@ -130,7 +107,6 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   logo: { width: 100, height: 100, opacity: 0.9 },
-
   overlay: {
     position: "absolute",
     bottom: 60,

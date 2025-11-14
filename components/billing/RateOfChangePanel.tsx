@@ -1,50 +1,128 @@
-import React, { useMemo, useState, memo } from "react";
+import React, { memo, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  ScrollView,
 } from "react-native";
-import axios from "axios";
-// If you don't use Expo icons, remove this import safely.
+import axios, { AxiosInstance } from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../contexts/AuthContext";
-// If you don’t have a constants file, just set: const BASE_API = process.env.EXPO_PUBLIC_API ?? "";
 import { BASE_API } from "../../constants/api";
 
-/** ======================= Types (loose to match backend variations) ======================= */
+const isWeb = Platform.OS === "web";
+const today = () => new Date().toISOString().slice(0, 10);
+const isYMD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+
+const fmt = (v: any, d = 2) => {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (!isFinite(n)) return "—";
+  return Intl.NumberFormat(undefined, {
+    minimumFractionDigits: d,
+    maximumFractionDigits: d,
+  }).format(n);
+};
+
+const toText = (v: any) => {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+};
+
+const notify = (title: string, message?: any) => {
+  const m = toText(message);
+  if (isWeb && typeof window !== "undefined" && window.alert) {
+    window.alert(m ? `${title}\n\n${m}` : title);
+  } else {
+    try {
+      Alert.alert(title, m || undefined);
+    } catch {
+      console.warn(`${title}: ${m}`);
+    }
+  }
+};
+
+const handleError = (
+  setErr: (s: string) => void,
+  fallbackMsg: string,
+  e: any
+) => {
+  const status = e?.response?.status;
+  const url = e?.config?.url;
+  const method = e?.config?.method;
+  const data = e?.response?.data;
+  const core =
+    e?.response?.data?.error ??
+    e?.response?.data?.message ??
+    e?.message ??
+    fallbackMsg;
+  const detail = [
+    status ? `HTTP ${status}` : null,
+    method && url ? `${String(method).toUpperCase()} ${url}` : url,
+    data ? `\nResponse:\n${toText(data)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" — ");
+  const text = [toText(core), detail].filter(Boolean).join("\n");
+  setErr(text);
+  notify("Request failed", text);
+};
+
 type RocMeter = {
-  meter_id: string;
+  meter_id?: string;
+  meter_sn?: string;
+  meter_type?: string;
+  stall_id?: string | null;
+  tenant_id?: string | null;
+  building_id?: string | null;
+  current_period?: { start?: string; end?: string };
+  previous_period?: { start?: string; end?: string; month?: string | null };
   current_consumption?: number | null;
   previous_consumption?: number | null;
   rate_of_change?: number | null;
   error?: string;
-  [k: string]: any;
+  [key: string]: any;
+};
+
+type RocTenantGroup = {
+  meter_type?: string;
+  meters?: RocMeter[];
+  totals?: {
+    current_consumption?: number | null;
+    previous_consumption?: number | null;
+    rate_of_change?: number | null;
+  };
 };
 
 type RocTenant = {
-  tenant_id?: string | null;
+  tenant_id?: string;
   period?: {
     current?: { start?: string; end?: string };
-    previous?: { start?: string; end?: string; month?: string };
-    anchor?: { start?: string; end?: string; month?: string };
+    previous?: { start?: string; end?: string; month?: string | null };
+    anchor?: { start?: string; end?: string; month?: string | null };
   };
-  groups?: Record<
-    string,
-    {
-      meters?: RocMeter[];
-      totals?: {
-        current_consumption?: number | null;
-        previous_consumption?: number | null;
-        rate_of_change?: number | null;
-      };
-    }
-  >;
+  groups?: RocTenantGroup[];
+};
+
+type RocBuildingTenantRow = {
+  tenant_id?: string | null;
+  tenant_sn?: string | null;
+  tenant_name?: string | null;
+  meters?: RocMeter[];
+  totals?: {
+    current_consumption?: number | null;
+    previous_consumption?: number | null;
+    rate_of_change?: number | null;
+  };
 };
 
 type RocBuilding = {
@@ -54,113 +132,67 @@ type RocBuilding = {
     current?: { start?: string; end?: string };
     previous?: { start?: string; end?: string };
   };
-  tenants?: Array<{
-    tenant_id?: string | null;
-    meters?: RocMeter[];
-    totals?: {
-      current_consumption?: number | null;
-      previous_consumption?: number | null;
-      rate_of_change?: number | null;
-    };
-  }>;
+  tenants?: RocBuildingTenantRow[];
 };
 
-type MonthlyComparison = {
+type BuildingMonthlyTotals = {
   building_id?: string;
   building_name?: string | null;
   period?: { start?: string; end?: string };
   totals?: { electric?: number; water?: number; lpg?: number };
 };
 
-type QuarterlyComparison = {
+type BuildingFourMonths = {
   building_id?: string;
   building_name?: string | null;
   window?: { start?: string; end?: string };
   months?: Array<{
-    label?: string; // YYYY-MM
+    label?: string;
     start?: string;
     end?: string;
     previous?: { month?: string; start?: string; end?: string };
     totals?: { electric?: number; water?: number; lpg?: number };
   }>;
-  totals_all?: { electric?: number; water?: number; lpg?: number; all_utilities?: number };
+  totals_all?: {
+    electric?: number;
+    water?: number;
+    lpg?: number;
+    all_utilities?: number;
+  };
 };
 
-type YearlyComparison = {
+type BuildingYearly = {
   building_id?: string;
   building_name?: string | null;
   year?: number;
   months?: Array<{
-    label?: string; // YYYY-MM
+    label?: string;
     start?: string;
     end?: string;
     previous?: { month?: string; start?: string; end?: string };
     totals?: { electric?: number; water?: number; lpg?: number };
   }>;
-  totals_all?: { electric?: number; water?: number; lpg?: number; all_utilities?: number };
+  totals_all?: {
+    electric?: number;
+    water?: number;
+    lpg?: number;
+    all_utilities?: number;
+  };
 };
 
-/** ======================= Utils ======================= */
-const isWeb = Platform.OS === "web";
+type BusyKey =
+  | null
+  | "meter"
+  | "tenant"
+  | "building"
+  | "monthly"
+  | "quarterly"
+  | "yearly";
 
-const notify = (title: string, message?: string) => {
-  // Avoid calling window.alert in SSR or exotic runtimes
-  if (isWeb && typeof window !== "undefined" && typeof window.alert === "function") {
-    window.alert(message ? `${title}\n\n${message}` : title);
-  } else {
-    try {
-      Alert.alert(title, message);
-    } catch {
-      // last-resort fallback
-      console.warn(`${title}${message ? `: ${message}` : ""}`);
-    }
-  }
-};
+type Mode = "meter" | "tenant" | "building" | "comparison";
 
-const isYMD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
-
-const fmt = (v: any, d = 2) => {
-  const n = Number(v);
-  if (!isFinite(n)) return "—";
-  return Intl.NumberFormat(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
-};
-
-function dl(filename: string, content: string, mime = "text/csv;charset=utf-8") {
-  if (!(isWeb && typeof window !== "undefined")) {
-    notify("CSV created", "Use your device’s share or downloads feature.");
-    return;
-  }
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, 0);
-}
-
-/** ======================= Component ======================= */
-type Props = {
-  /** Optional: sync from parent Billing form */
-  initialBuildingId?: string;
-  initialStart?: string;
-  initialEnd?: string;
-  initialYear?: string | number;
-};
-
-function RateOfChangePanelImpl({
-  initialBuildingId = "",
-  initialStart = "2025-01-21",
-  initialEnd = "2025-02-20",
-  initialYear,
-}: Props) {
+function RateOfChangePanel() {
   const { token } = useAuth();
-
   const headerToken =
     token && /^Bearer\s/i.test(token.trim())
       ? token.trim()
@@ -168,195 +200,274 @@ function RateOfChangePanelImpl({
       ? `Bearer ${token.trim()}`
       : "";
 
-  const api = useMemo(
+  const api: AxiosInstance = useMemo(
     () =>
       axios.create({
-        baseURL: BASE_API ?? "", // safe default
+        baseURL: BASE_API ?? "",
         timeout: 20000,
         headers: headerToken ? { Authorization: headerToken } : {},
       }),
     [headerToken]
   );
 
-  // Inputs
-  const [buildingId, setBuildingId] = useState(String(initialBuildingId || ""));
-  const [tenantId, setTenantId] = useState("");
+  const detectedPrefixRef = useRef<string | null>(null);
+  const candidates = useRef<string[]>(["", "/api", "/v1", "/api/v1"]).current;
+
+  const [mode, setMode] = useState<Mode>("meter");
+  const [buildingId, setBuildingId] = useState("");
   const [meterId, setMeterId] = useState("");
-  const [startDate, setStartDate] = useState(String(initialStart || "2025-01-21"));
-  const [endDate, setEndDate] = useState(String(initialEnd || "2025-02-20"));
-  const [year, setYear] = useState(
-    String(
-      initialYear != null && String(initialYear).trim()
-        ? initialYear
-        : new Date().getFullYear()
-    )
-  );
+  const [tenantId, setTenantId] = useState("");
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = new Date();
+    const y = d.getMonth() === 0 ? d.getFullYear() - 1 : d.getFullYear();
+    const m = d.getMonth() === 0 ? 11 : d.getMonth() - 1;
+    return `${y}-${String(m + 1).padStart(2, "0")}-21`;
+  });
+  const [endDate, setEndDate] = useState<string>(today());
+  const [year, setYear] = useState<string>(String(new Date().getFullYear()));
 
-  // Busy + error banner (render-safe)
-  const [busy, setBusy] = useState<string | null>(null);
-  const [errText, setErrText] = useState<string>("");
+  const [busy, setBusy] = useState<BusyKey>(null);
+  const [errText, setErrText] = useState("");
 
-  // Results
-  const [meterROC, setMeterROC] = useState<RocMeter | null>(null);
-  const [tenantROC, setTenantROC] = useState<RocTenant | null>(null);
-  const [buildingROC, setBuildingROC] = useState<RocBuilding | null>(null);
-  const [monthlyCmp, setMonthlyCmp] = useState<MonthlyComparison | null>(null);
-  const [quarterlyCmp, setQuarterlyCmp] = useState<QuarterlyComparison | null>(null);
-  const [yearlyCmp, setYearlyCmp] = useState<YearlyComparison | null>(null);
+  const [meterRoc, setMeterRoc] = useState<RocMeter | null>(null);
+  const [tenantRoc, setTenantRoc] = useState<RocTenant | null>(null);
+  const [buildingRoc, setBuildingRoc] = useState<RocBuilding | null>(null);
+  const [cmpMonthly, setCmpMonthly] = useState<BuildingMonthlyTotals | null>(null);
+  const [cmpFour, setCmpFour] = useState<BuildingFourMonths | null>(null);
+  const [cmpYearly, setCmpYearly] = useState<BuildingYearly | null>(null);
 
-  const guardDates = () => {
-    if (!isYMD(startDate) || !isYMD(endDate)) {
-      setErrText("Invalid dates. Use YYYY-MM-DD.");
-      notify("Invalid dates", "Use YYYY-MM-DD.");
-      return false;
+  async function getWithAutoPrefix<T>(rawPath: string) {
+    const tried: Array<{ prefix: string; status: number | "netfail" }> = [];
+
+    if (detectedPrefixRef.current != null) {
+      const pref = detectedPrefixRef.current!;
+      const path = `${pref}${rawPath}`;
+      try {
+        const res = await api.get<T>(path);
+        return res.data;
+      } catch (e: any) {
+        const st = e?.response?.status;
+        if (st === 404) detectedPrefixRef.current = null;
+        else throw e;
+      }
     }
-    return true;
-  };
 
-  const handleError = (fallbackMsg: string, e: any) => {
-    const msg =
-      e?.response?.data?.error ||
-      e?.response?.data?.message ||
-      e?.message ||
-      fallbackMsg;
-    setErrText(String(msg));
-    // Avoid throwing inside render — show banner + toast
-    notify("Request failed", String(msg));
-  };
+    for (const pref of candidates) {
+      const path = `${pref}${rawPath}`;
+      try {
+        const res = await api.get<T>(path);
+        detectedPrefixRef.current = pref;
+        return res.data;
+      } catch (e: any) {
+        const st = e?.response?.status;
+        tried.push({ prefix: pref, status: st ?? "netfail" });
+        if (st && st !== 404) {
+          detectedPrefixRef.current = pref;
+          throw e;
+        }
+      }
+    }
 
-  /** ================= Calls (align to rateofchange.js) ================= */
-  const runMeter = async () => {
-    if (!meterId.trim()) return notify("Missing meter", "Enter a meter ID.");
-    if (!guardDates()) return;
+    const matrix = tried
+      .map((t) => `${t.prefix || "(root)"} → ${String(t.status)}`)
+      .join("\n");
+    throw new Error(`All route prefixes returned 404.\nTried:\n${matrix}`);
+  }
+
+  const runMeterRoc = async () => {
+    if (!meterId.trim()) return notify("Missing Meter ID");
+    if (!isYMD(startDate) || !isYMD(endDate))
+      return notify("Invalid dates", "Use YYYY-MM-DD.");
+
     setBusy("meter");
     setErrText("");
-    setMeterROC(null);
+    setMeterRoc(null);
+
     try {
-      const url = `/rateofchange/meters/${encodeURIComponent(
+      const raw = `/roc/meters/${encodeURIComponent(
         meterId.trim()
-      )}/period-start/${startDate}/period-end/${endDate}`;
-      const res = await api.get<RocMeter>(url);
-      setMeterROC(res.data || null);
+      )}/period-start/${encodeURIComponent(
+        startDate
+      )}/period-end/${encodeURIComponent(endDate)}`;
+      const data = await getWithAutoPrefix<RocMeter>(raw);
+      setMeterRoc(data || null);
     } catch (e: any) {
-      handleError("Meter ROC error", e);
+      handleError(setErrText, "Meter rate-of-change failed", e);
     } finally {
       setBusy(null);
     }
   };
 
-  const runTenant = async () => {
-    if (!tenantId.trim()) return notify("Missing tenant", "Enter a tenant ID.");
-    if (!guardDates()) return;
+  const runTenantRoc = async () => {
+    if (!tenantId.trim()) return notify("Missing Tenant ID");
+    if (!isYMD(startDate) || !isYMD(endDate))
+      return notify("Invalid dates", "Use YYYY-MM-DD.");
+
     setBusy("tenant");
     setErrText("");
-    setTenantROC(null);
+    setTenantRoc(null);
+
     try {
-      const url = `/rateofchange/tenants/${encodeURIComponent(
+      const raw = `/roc/tenants/${encodeURIComponent(
         tenantId.trim()
-      )}/period-start/${startDate}/period-end/${endDate}`;
-      const res = await api.get<RocTenant>(url);
-      setTenantROC(res.data || null);
+      )}/period-start/${encodeURIComponent(
+        startDate
+      )}/period-end/${encodeURIComponent(endDate)}`;
+      const data = await getWithAutoPrefix<RocTenant>(raw);
+      setTenantRoc(data || null);
     } catch (e: any) {
-      handleError("Tenant ROC error", e);
+      handleError(setErrText, "Tenant rate-of-change failed", e);
     } finally {
       setBusy(null);
     }
   };
 
-  const runBuilding = async () => {
-    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
-    if (!guardDates()) return;
+  const runBuildingRoc = async () => {
+    if (!buildingId.trim()) return notify("Missing Building ID");
+    if (!isYMD(startDate) || !isYMD(endDate))
+      return notify("Invalid dates", "Use YYYY-MM-DD.");
+
     setBusy("building");
     setErrText("");
-    setBuildingROC(null);
+    setBuildingRoc(null);
+
     try {
-      const url = `/rateofchange/buildings/${encodeURIComponent(
+      const raw = `/roc/buildings/${encodeURIComponent(
         buildingId.trim()
-      )}/period-start/${startDate}/period-end/${endDate}`;
-      const res = await api.get<RocBuilding>(url);
-      setBuildingROC(res.data || null);
+      )}/period-start/${encodeURIComponent(
+        startDate
+      )}/period-end/${encodeURIComponent(endDate)}`;
+      const data = await getWithAutoPrefix<RocBuilding>(raw);
+      setBuildingRoc(data || null);
     } catch (e: any) {
-      handleError("Building ROC error", e);
+      handleError(setErrText, "Building rate-of-change failed", e);
     } finally {
       setBusy(null);
     }
   };
 
   const runMonthly = async () => {
-    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
-    if (!guardDates()) return;
+    if (!buildingId.trim()) return notify("Missing Building ID");
+    if (!isYMD(startDate) || !isYMD(endDate))
+      return notify("Invalid dates", "Use YYYY-MM-DD.");
+
     setBusy("monthly");
     setErrText("");
-    setMonthlyCmp(null);
+    setCmpMonthly(null);
+
     try {
-      const url = `/rateofchange/buildings/${encodeURIComponent(
+      const raw = `/roc/buildings/${encodeURIComponent(
         buildingId.trim()
-      )}/period-start/${startDate}/period-end/${endDate}/monthly-comparison`;
-      const res = await api.get<MonthlyComparison>(url);
-      setMonthlyCmp(res.data || null);
+      )}/period-start/${encodeURIComponent(
+        startDate
+      )}/period-end/${encodeURIComponent(endDate)}/monthly-comparison`;
+      const data = await getWithAutoPrefix<BuildingMonthlyTotals>(raw);
+      setCmpMonthly(data || null);
     } catch (e: any) {
-      handleError("Monthly comparison error", e);
+      handleError(setErrText, "Monthly comparison failed", e);
     } finally {
       setBusy(null);
     }
   };
 
   const runQuarterly = async () => {
-    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
-    if (!guardDates()) return;
+    if (!buildingId.trim()) return notify("Missing Building ID");
+    if (!isYMD(startDate) || !isYMD(endDate))
+      return notify("Invalid dates", "Use YYYY-MM-DD.");
+
     setBusy("quarterly");
     setErrText("");
-    setQuarterlyCmp(null);
+    setCmpFour(null);
+
     try {
-      const url = `/rateofchange/buildings/${encodeURIComponent(
+      const raw = `/roc/buildings/${encodeURIComponent(
         buildingId.trim()
-      )}/period-start/${startDate}/period-end/${endDate}/quarterly-comparison`;
-      const res = await api.get<QuarterlyComparison>(url);
-      setQuarterlyCmp(res.data || null);
+      )}/period-start/${encodeURIComponent(
+        startDate
+      )}/period-end/${encodeURIComponent(endDate)}/quarterly-comparison`;
+      const data = await getWithAutoPrefix<BuildingFourMonths>(raw);
+      setCmpFour(data || null);
     } catch (e: any) {
-      handleError("Quarterly comparison error", e);
+      handleError(setErrText, "4-Month comparison failed", e);
     } finally {
       setBusy(null);
     }
   };
 
   const runYearly = async () => {
-    if (!buildingId.trim()) return notify("Missing building", "Enter a building ID.");
-    if (!/^\d{4}$/.test(String(year))) return notify("Invalid year", "Use YYYY.");
+    if (!buildingId.trim()) return notify("Missing Building ID");
+    const yr = parseInt(year, 10);
+    if (isNaN(yr) || yr < 1900) return notify("Invalid year", "Enter YYYY.");
+
     setBusy("yearly");
     setErrText("");
-    setYearlyCmp(null);
+    setCmpYearly(null);
+
     try {
-      const url = `/rateofchange/buildings/${encodeURIComponent(
+      const raw = `/roc/buildings/${encodeURIComponent(
         buildingId.trim()
-      )}/year/${encodeURIComponent(String(year))}/yearly-comparison`;
-      const res = await api.get<YearlyComparison>(url);
-      setYearlyCmp(res.data || null);
+      )}/year/${encodeURIComponent(String(yr))}/yearly-comparison`;
+      const data = await getWithAutoPrefix<BuildingYearly>(raw);
+      setCmpYearly(data || null);
     } catch (e: any) {
-      handleError("Yearly comparison error", e);
+      handleError(setErrText, "Yearly comparison failed", e);
     } finally {
       setBusy(null);
     }
   };
 
-  /** ======================= CSV exports ======================= */
+  const dl = (
+    filename: string,
+    content: string,
+    mime = "text/csv;charset=utf-8"
+  ) => {
+    if (!(isWeb && typeof window !== "undefined")) {
+      notify("CSV created", "Use your device's share/download feature.");
+      return;
+    }
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
+  };
+
   const exportMonthlyCsv = () => {
-    if (!monthlyCmp) return notify("Nothing to export", "Run Monthly comparison first.");
-    const bid = monthlyCmp.building_id ?? "";
-    const ps = monthlyCmp.period?.start ?? "";
-    const pe = monthlyCmp.period?.end ?? "";
-    const t = monthlyCmp.totals ?? {};
-    const header = ["Building ID", "Period Start", "Period End", "Electric", "Water", "LPG"];
+    if (!cmpMonthly)
+      return notify("Nothing to export", "Run Monthly comparison first.");
+    const bid = cmpMonthly.building_id ?? "";
+    const ps = cmpMonthly.period?.start ?? "";
+    const pe = cmpMonthly.period?.end ?? "";
+    const t = cmpMonthly.totals ?? {};
+    const header = [
+      "Building ID",
+      "Period Start",
+      "Period End",
+      "Electric",
+      "Water",
+      "LPG",
+    ];
     const row = [bid, ps, pe, t.electric ?? "", t.water ?? "", t.lpg ?? ""]
       .map((s) => `"${String(s ?? "").replace(/"/g, '""')}"`)
       .join(",");
-    dl(`monthly_comparison_${bid}_${ps}_${pe}.csv`, `"${header.join('","')}"\n${row}\n`);
+    dl(
+      `monthly_comparison_${bid}_${ps}_${pe}.csv`,
+      `"${header.join('","')}"\n${row}\n`
+    );
   };
 
   const exportQuarterlyCsv = () => {
-    if (!quarterlyCmp) return notify("Nothing to export", "Run Quarterly comparison first.");
-    const bid = quarterlyCmp.building_id ?? "";
-    const w = quarterlyCmp.window ?? {};
+    if (!cmpFour)
+      return notify("Nothing to export", "Run 4-Month comparison first.");
+    const bid = cmpFour.building_id ?? "";
+    const win = cmpFour.window ?? {};
     const header = [
       "Month",
       "Start",
@@ -369,7 +480,7 @@ function RateOfChangePanelImpl({
       "LPG",
     ];
     const lines = [`"${header.join('","')}"`];
-    (quarterlyCmp.months ?? []).forEach((m) => {
+    (cmpFour.months ?? []).forEach((m) => {
       const prev = m.previous ?? {};
       const tot = m.totals ?? {};
       lines.push(
@@ -388,23 +499,38 @@ function RateOfChangePanelImpl({
           .join(",")
       );
     });
-    const all = quarterlyCmp.totals_all ?? {};
+    const all = cmpFour.totals_all ?? {};
     lines.push(
-      `"\u2211 Totals","","","","","",${all.electric ?? ""},${all.water ?? ""},${all.lpg ?? ""}`
+      `"Σ Totals","","","","","",${all.electric ?? ""},${
+        all.water ?? ""
+      },${all.lpg ?? ""}`
     );
-    lines.push(`"All Utilities","","","","","",${all.all_utilities ?? ""},,`);
+    lines.push(
+      `"All Utilities","","","","","",${all.all_utilities ?? ""},,`
+    );
     dl(
-      `quarterly_comparison_${bid}_${w.start ?? ""}_${w.end ?? ""}.csv`,
+      `quarterly_comparison_${bid}_${win.start ?? ""}_${win.end ?? ""}.csv`,
       lines.join("\n") + "\n"
     );
   };
 
   const exportYearlyCsv = () => {
-    if (!yearlyCmp) return notify("Nothing to export", "Run Yearly comparison first.");
-    const bid = yearlyCmp.building_id ?? "";
-    const header = ["Month", "Start", "End", "Prev Month", "Prev Start", "Prev End", "Electric", "Water", "LPG"];
+    if (!cmpYearly)
+      return notify("Nothing to export", "Run Yearly comparison first.");
+    const bid = cmpYearly.building_id ?? "";
+    const header = [
+      "Month",
+      "Start",
+      "End",
+      "Prev Month",
+      "Prev Start",
+      "Prev End",
+      "Electric",
+      "Water",
+      "LPG",
+    ];
     const lines = [`"${header.join('","')}"`];
-    (yearlyCmp.months ?? []).forEach((m) => {
+    (cmpYearly.months ?? []).forEach((m) => {
       const prev = m.previous ?? {};
       const tot = m.totals ?? {};
       lines.push(
@@ -423,458 +549,976 @@ function RateOfChangePanelImpl({
           .join(",")
       );
     });
-    const all = yearlyCmp.totals_all ?? {};
+    const all = cmpYearly.totals_all ?? {};
     lines.push(
-      `"\u2211 Annual Totals","","","","","",${all.electric ?? ""},${all.water ?? ""},${all.lpg ?? ""}`
+      `"Σ Annual Totals","","","","","",${all.electric ?? ""},${
+        all.water ?? ""
+      },${all.lpg ?? ""}`
     );
-    lines.push(`"All Utilities","","","","","",${all.all_utilities ?? ""},,`);
-    dl(`yearly_comparison_${bid}_${yearlyCmp.year ?? ""}.csv`, lines.join("\n") + "\n");
+    lines.push(
+      `"All Utilities","","","","","",${all.all_utilities ?? ""},,`
+    );
+    dl(
+      `yearly_comparison_${bid}_${cmpYearly.year ?? ""}.csv`,
+      lines.join("\n") + "\n"
+    );
   };
 
-  /** ======================= Render helpers ======================= */
-  const Action = ({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) => (
-    <TouchableOpacity onPress={onPress} disabled={!!disabled} style={[styles.btn, disabled && styles.btnDisabled]}>
-      <Ionicons name="flash" size={16} color="#fff" />
-      <Text style={styles.btnText}>{label}</Text>
-    </TouchableOpacity>
-  );
-
-  const ExportBtn = ({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) => (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={!!disabled}
-      style={[styles.btnSecondary, disabled && styles.btnSecondaryDisabled]}
-    >
-      <Ionicons name="download" size={16} color="#0f172a" />
-      <Text style={styles.btnSecondaryText}>{label}</Text>
-    </TouchableOpacity>
-  );
-
-  /** ======================= Render ======================= */
   return (
-    <View style={styles.wrap}>
-      {/* Inputs */}
-      <View style={styles.card}>
-        <Text style={styles.h1}>Rate of Change & Comparison</Text>
-        <Text style={styles.hint}>
-          Connects to your <Text style={styles.bold}>rateofchange.js</Text> API (meter, tenant, building; monthly /
-          quarterly / yearly).
+    <ScrollView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Rate of Change Analysis</Text>
+        <Text style={styles.subtitle}>
+          Analyze consumption patterns and trends across meters, tenants, and buildings
         </Text>
-
-        <View style={styles.row}>
-          <Text style={styles.label}>Building ID</Text>
-          <TextInput
-            value={buildingId}
-            onChangeText={setBuildingId}
-            placeholder="e.g. BLDG-1"
-            autoCapitalize={Platform.OS === "web" ? "none" : "characters"}
-            style={styles.input}
-          />
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Tenant ID</Text>
-          <TextInput
-            value={tenantId}
-            onChangeText={setTenantId}
-            placeholder="e.g. TNT-1"
-            autoCapitalize="characters"
-            style={styles.input}
-          />
-        </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Meter ID</Text>
-          <TextInput
-            value={meterId}
-            onChangeText={setMeterId}
-            placeholder="e.g. MTR-1"
-            autoCapitalize="characters"
-            style={styles.input}
-          />
-        </View>
-
-        <View style={styles.row2}>
-          <View style={styles.col}>
-            <Text style={styles.label}>Start (YYYY-MM-DD)</Text>
-            <TextInput
-              value={startDate}
-              onChangeText={setStartDate}
-              placeholder="YYYY-MM-DD"
-              autoCapitalize="none"
-              style={styles.input}
-            />
-          </View>
-          <View style={styles.col}>
-            <Text style={styles.label}>End (YYYY-MM-DD)</Text>
-            <TextInput
-              value={endDate}
-              onChangeText={setEndDate}
-              placeholder="YYYY-MM-DD"
-              autoCapitalize="none"
-              style={styles.input}
-            />
-          </View>
-          <View style={styles.col}>
-            <Text style={styles.label}>Year (YYYY)</Text>
-            <TextInput
-              value={year}
-              onChangeText={(v) => setYear(v.replace(/[^\d]/g, "").slice(0, 4))}
-              placeholder="2025"
-              keyboardType="numeric"
-              style={styles.input}
-            />
-          </View>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-          <View style={styles.actions}>
-            <Action label="Meter ROC" onPress={runMeter} disabled={busy !== null} />
-            <Action label="Tenant ROC" onPress={runTenant} disabled={busy !== null} />
-            <Action label="Building ROC" onPress={runBuilding} disabled={busy !== null} />
-            <Action label="Monthly Comparison" onPress={runMonthly} disabled={busy !== null} />
-            <Action label="Quarterly Comparison" onPress={runQuarterly} disabled={busy !== null} />
-            <Action label="Yearly Comparison" onPress={runYearly} disabled={busy !== null} />
-          </View>
-        </ScrollView>
-
-        {!!errText && (
-          <View style={styles.errorBox}>
-            <Text style={styles.errText}>{String(errText)}</Text>
-          </View>
-        )}
       </View>
 
-      {busy ? (
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" />
-          <Text style={styles.loadingText}>Loading {busy}…</Text>
+      {}
+      <View style={styles.tabContainer}>
+        <TabButton
+          icon="speedometer"
+          label="Meter"
+          active={mode === "meter"}
+          onPress={() => setMode("meter")}
+        />
+        <TabButton
+          icon="person"
+          label="Tenant"
+          active={mode === "tenant"}
+          onPress={() => setMode("tenant")}
+        />
+        <TabButton
+          icon="business"
+          label="Building"
+          active={mode === "building"}
+          onPress={() => setMode("building")}
+        />
+        <TabButton
+          icon="analytics"
+          label="Comparison"
+          active={mode === "comparison"}
+          onPress={() => setMode("comparison")}
+        />
+      </View>
+
+      {!!errText && (
+        <View style={styles.errorCard}>
+          <Ionicons name="warning" size={20} color="#DC2626" />
+          <View style={styles.errorContent}>
+            <Text style={styles.errorTitle}>Request Failed</Text>
+            <Text style={styles.errorText}>{errText}</Text>
+          </View>
         </View>
-      ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-          {/* Meter ROC */}
-          {meterROC && (
-            <View style={styles.card}>
-              <Text style={styles.h2}>Meter ROC</Text>
-              {"error" in meterROC && meterROC.error ? (
-                <Text style={styles.errText}>{String(meterROC.error)}</Text>
-              ) : (
-                <View style={styles.grid}>
-                  <KV k="Meter ID" v={meterROC.meter_id ?? "—"} />
-                  <KV k="Current Consumption" v={`${fmt(meterROC.current_consumption, 2)} kWh`} />
-                  <KV k="Previous Consumption" v={`${fmt(meterROC.previous_consumption, 2)} kWh`} />
-                  <KV
-                    k="Rate of Change"
-                    v={
-                      meterROC.rate_of_change == null
-                        ? "—"
-                        : `${fmt(meterROC.rate_of_change, 0)}%`
-                    }
+      )}
+
+      {}
+      <View style={styles.inputCard}>
+        <Text style={styles.sectionTitle}>Parameters</Text>
+
+        <View style={styles.inputGrid}>
+          {mode === "meter" && (
+            <InputField
+              label="Meter ID"
+              value={meterId}
+              onChangeText={setMeterId}
+              placeholder="MTR-001"
+              icon="hardware-chip"
+            />
+          )}
+
+          {mode === "tenant" && (
+            <InputField
+              label="Tenant ID"
+              value={tenantId}
+              onChangeText={setTenantId}
+              placeholder="TNT-001"
+              icon="person"
+            />
+          )}
+
+          {(mode === "building" || mode === "comparison") && (
+            <InputField
+              label="Building ID"
+              value={buildingId}
+              onChangeText={setBuildingId}
+              placeholder="BLDG-001"
+              icon="business"
+            />
+          )}
+
+          <InputField
+            label="Start Date"
+            value={startDate}
+            onChangeText={setStartDate}
+            placeholder="YYYY-MM-DD"
+            icon="calendar"
+          />
+
+          <InputField
+            label="End Date"
+            value={endDate}
+            onChangeText={setEndDate}
+            placeholder="YYYY-MM-DD"
+            icon="calendar"
+          />
+
+          {mode === "comparison" && (
+            <InputField
+              label="Year"
+              value={year}
+              onChangeText={(v) => setYear(v.replace(/[^\d]/g, "").slice(0, 4))}
+              placeholder="2024"
+              icon="today"
+              keyboardType="numeric"
+            />
+          )}
+        </View>
+
+        <View style={styles.actionRow}>
+          {mode === "meter" && (
+            <ActionButton
+              label="Generate ROC"
+              icon="play"
+              onPress={runMeterRoc}
+              loading={busy === "meter"}
+              variant="primary"
+            />
+          )}
+          {mode === "tenant" && (
+            <ActionButton
+              label="Generate ROC"
+              icon="play"
+              onPress={runTenantRoc}
+              loading={busy === "tenant"}
+              variant="primary"
+            />
+          )}
+          {mode === "building" && (
+            <ActionButton
+              label="Generate ROC"
+              icon="play"
+              onPress={runBuildingRoc}
+              loading={busy === "building"}
+              variant="primary"
+            />
+          )}
+          {mode === "comparison" && (
+            <View style={styles.comparisonActions}>
+              <ActionButton
+                label="Monthly"
+                icon="calendar"
+                onPress={runMonthly}
+                loading={busy === "monthly"}
+                variant="secondary"
+              />
+              <ActionButton
+                label="4-Month"
+                icon="git-branch"
+                onPress={runQuarterly}
+                loading={busy === "quarterly"}
+                variant="secondary"
+              />
+              <ActionButton
+                label="Yearly"
+                icon="albums"
+                onPress={runYearly}
+                loading={busy === "yearly"}
+                variant="secondary"
+              />
+            </View>
+          )}
+        </View>
+      </View>
+
+      {}
+      <View style={styles.resultsSection}>
+        {}
+        {mode === "meter" && meterRoc && (
+          <ResultsCard title="Meter Analysis" icon="speedometer">
+            <View style={styles.meterHeader}>
+              <Text style={styles.meterId}>{meterRoc.meter_sn || meterRoc.meter_id}</Text>
+              <Text style={styles.meterType}>{meterRoc.meter_type}</Text>
+            </View>
+
+            <View style={styles.statsGrid}>
+              <StatCard
+                label="Current Period"
+                value={fmt(meterRoc.current_consumption, 2)}
+                unit="kWh"
+                trend="current"
+              />
+              <StatCard
+                label="Previous Period"
+                value={fmt(meterRoc.previous_consumption, 2)}
+                unit="kWh"
+                trend="previous"
+              />
+              <StatCard
+                label="Rate of Change"
+                value={fmt(meterRoc.rate_of_change, 2)}
+                unit="%"
+                trend={meterRoc.rate_of_change && meterRoc.rate_of_change > 0 ? "up" : "down"}
+              />
+            </View>
+          </ResultsCard>
+        )}
+
+        {}
+        {mode === "tenant" && tenantRoc && (
+          <ResultsCard title="Tenant Analysis" icon="person">
+            <Text style={styles.tenantId}>Tenant: {tenantRoc.tenant_id}</Text>
+
+            {(tenantRoc.groups ?? []).map((group, index) => (
+              <View key={index} style={styles.utilitySection}>
+                <Text style={styles.utilityTitle}>{group.meter_type} Consumption</Text>
+                {group.totals && (
+                  <View style={styles.statsGrid}>
+                    <StatCard
+                      label="Current"
+                      value={fmt(group.totals.current_consumption, 2)}
+                      unit="kWh"
+                    />
+                    <StatCard
+                      label="Previous"
+                      value={fmt(group.totals.previous_consumption, 2)}
+                      unit="kWh"
+                    />
+                    <StatCard
+                      label="ROC"
+                      value={fmt(group.totals.rate_of_change, 2)}
+                      unit="%"
+                    />
+                  </View>
+                )}
+              </View>
+            ))}
+          </ResultsCard>
+        )}
+
+        {}
+        {mode === "building" && buildingRoc && (
+          <ResultsCard title="Building Analysis" icon="business">
+            <View style={styles.buildingHeader}>
+              <Text style={styles.buildingName}>{buildingRoc.building_name}</Text>
+              <Text style={styles.buildingId}>{buildingRoc.building_id}</Text>
+            </View>
+
+            {(buildingRoc.tenants ?? []).map((tenant, index) => (
+              <View key={index} style={styles.tenantCard}>
+                <Text style={styles.tenantName}>
+                  {tenant.tenant_name || tenant.tenant_id}
+                </Text>
+                {tenant.totals && (
+                  <View style={styles.statsGrid}>
+                    <StatCard
+                      label="Current"
+                      value={fmt(tenant.totals.current_consumption, 2)}
+                      unit="kWh"
+                      compact
+                    />
+                    <StatCard
+                      label="Previous"
+                      value={fmt(tenant.totals.previous_consumption, 2)}
+                      unit="kWh"
+                      compact
+                    />
+                    <StatCard
+                      label="ROC"
+                      value={fmt(tenant.totals.rate_of_change, 2)}
+                      unit="%"
+                      compact
+                    />
+                  </View>
+                )}
+              </View>
+            ))}
+          </ResultsCard>
+        )}
+
+        {}
+        {mode === "comparison" && (
+          <>
+            {}
+            {cmpMonthly && (
+              <ResultsCard title="Monthly Comparison" icon="calendar">
+                <View style={styles.comparisonHeader}>
+                  <Text style={styles.period}>
+                    {cmpMonthly.period?.start} → {cmpMonthly.period?.end}
+                  </Text>
+                </View>
+                <View style={styles.statsGrid}>
+                  <StatCard
+                    label="Electric"
+                    value={fmt(cmpMonthly.totals?.electric)}
+                    unit="kWh"
+                    variant="electric"
+                  />
+                  <StatCard
+                    label="Water"
+                    value={fmt(cmpMonthly.totals?.water)}
+                    unit="m³"
+                    variant="water"
+                  />
+                  <StatCard
+                    label="LPG"
+                    value={fmt(cmpMonthly.totals?.lpg)}
+                    unit="kg"
+                    variant="lpg"
                   />
                 </View>
-              )}
-            </View>
-          )}
-
-          {/* Tenant ROC */}
-          {tenantROC && (
-            <View style={styles.card}>
-              <Text style={styles.h2}>Tenant ROC</Text>
-              <Text style={styles.subtle}>
-                {(tenantROC.period?.current?.start ?? "—")} → {(tenantROC.period?.current?.end ?? "—")}{" "}
-                {tenantROC.period?.previous?.month ? `(prev ${tenantROC.period?.previous?.month})` : ""}
-              </Text>
-              {Object.entries(tenantROC.groups ?? {}).map(([type, g]) => (
-                <View key={type} style={styles.group}>
-                  <Text style={styles.groupTitle}>{String(type || "").toUpperCase()}</Text>
-                  {g?.totals && (
-                    <View style={styles.grid}>
-                      <KV k="Current kWh" v={fmt(g.totals.current_consumption, 2)} />
-                      <KV k="Previous kWh" v={fmt(g.totals.previous_consumption, 2)} />
-                      <KV
-                        k="ROC %"
-                        v={
-                          g.totals.rate_of_change == null
-                            ? "—"
-                            : `${fmt(g.totals.rate_of_change, 0)}%`
-                        }
-                      />
-                    </View>
-                  )}
-                  {(g?.meters ?? []).map((m, i) => (
-                    <View key={`${type}-${i}`} style={styles.mRow}>
-                      <Text style={styles.meterId}>{m.meter_id ?? "—"}</Text>
-                      {"error" in m && m.error ? (
-                        <Text style={styles.errTextSmall}>{String(m.error)}</Text>
-                      ) : (
-                        <Text style={styles.meterLine}>
-                          Curr {fmt(m.current_consumption, 2)} • Prev {fmt(m.previous_consumption, 2)} • ROC{" "}
-                          {m.rate_of_change == null ? "—" : `${fmt(m.rate_of_change, 0)}%`}
-                        </Text>
-                      )}
-                    </View>
-                  ))}
+                <View style={styles.exportRow}>
+                  <ActionButton
+                    label="Export CSV"
+                    icon="download"
+                    onPress={exportMonthlyCsv}
+                    variant="outline"
+                  />
                 </View>
-              ))}
-            </View>
-          )}
+              </ResultsCard>
+            )}
 
-          {/* Building ROC */}
-          {buildingROC && (
-            <View style={styles.card}>
-              <Text style={styles.h2}>Building ROC</Text>
-              <Text style={styles.subtle}>
-                {(buildingROC.building_id ?? "—")}
-                {buildingROC.building_name ? ` • ${buildingROC.building_name}` : ""}
-              </Text>
-              <Text style={styles.subtle}>
-                {(buildingROC.period?.current?.start ?? "—")} → {(buildingROC.period?.current?.end ?? "—")}
-              </Text>
-
-              {(buildingROC.tenants ?? []).map((t, idx) => (
-                <View key={`tenant-${idx}`} style={styles.group}>
-                  <Text style={styles.groupTitle}>{t.tenant_id || "Unassigned Tenant"}</Text>
-                  {t?.totals && (
-                    <View style={styles.grid}>
-                      <KV k="Current kWh" v={fmt(t.totals.current_consumption, 2)} />
-                      <KV k="Previous kWh" v={fmt(t.totals.previous_consumption, 2)} />
-                      <KV
-                        k="ROC %"
-                        v={t.totals.rate_of_change == null ? "—" : `${fmt(t.totals.rate_of_change, 0)}%`}
-                      />
-                    </View>
-                  )}
-                  {(t?.meters ?? []).map((m, i) => (
-                    <View key={`m-${idx}-${i}`} style={styles.mRow}>
-                      <Text style={styles.meterId}>{m.meter_id ?? "—"}</Text>
-                      {"error" in m && m.error ? (
-                        <Text style={styles.errTextSmall}>{String(m.error)}</Text>
-                      ) : (
-                        <Text style={styles.meterLine}>
-                          Curr {fmt(m.current_consumption, 2)} • Prev {fmt(m.previous_consumption, 2)} • ROC{" "}
-                          {m.rate_of_change == null ? "—" : `${fmt(m.rate_of_change, 0)}%`}
-                        </Text>
-                      )}
-                    </View>
-                  ))}
+            {}
+            {cmpFour && (
+              <ResultsCard title="4-Month Comparison" icon="git-branch">
+                <DataTable
+                  headers={["Month", "Electric", "Water", "LPG"]}
+                  data={cmpFour.months?.map(month => ({
+                    month: month.label,
+                    electric: fmt(month.totals?.electric),
+                    water: fmt(month.totals?.water),
+                    lpg: fmt(month.totals?.lpg),
+                  })) || []}
+                />
+                <View style={styles.totalsSection}>
+                  <Text style={styles.totalsTitle}>Total Consumption</Text>
+                  <View style={styles.statsGrid}>
+                    <StatCard
+                      label="Electric"
+                      value={fmt(cmpFour.totals_all?.electric)}
+                      unit="kWh"
+                      compact
+                    />
+                    <StatCard
+                      label="Water"
+                      value={fmt(cmpFour.totals_all?.water)}
+                      unit="m³"
+                      compact
+                    />
+                    <StatCard
+                      label="LPG"
+                      value={fmt(cmpFour.totals_all?.lpg)}
+                      unit="kg"
+                      compact
+                    />
+                  </View>
                 </View>
-              ))}
-            </View>
-          )}
-
-          {/* Monthly comparison */}
-          {monthlyCmp && (
-            <View style={styles.card}>
-              <Text style={styles.h2}>Monthly Comparison</Text>
-              <Text style={styles.subtle}>
-                {(monthlyCmp.building_id ?? "—")}
-                {monthlyCmp.building_name ? ` • ${monthlyCmp.building_name}` : ""} |{" "}
-                {(monthlyCmp.period?.start ?? "—")} → {(monthlyCmp.period?.end ?? "—")}
-              </Text>
-              <View style={styles.grid}>
-                <KV k="Electric" v={`${fmt(monthlyCmp.totals?.electric, 2)} units`} />
-                <KV k="Water" v={`${fmt(monthlyCmp.totals?.water, 2)} units`} />
-                <KV k="LPG" v={`${fmt(monthlyCmp.totals?.lpg, 2)} units`} />
-              </View>
-              <View style={styles.actionsLine}>
-                <ExportBtn label="Export CSV" onPress={exportMonthlyCsv} />
-              </View>
-            </View>
-          )}
-
-          {/* Quarterly comparison */}
-          {quarterlyCmp && (
-            <View style={styles.card}>
-              <Text style={styles.h2}>Quarterly Comparison (4 months)</Text>
-              <Text style={styles.subtle}>
-                {(quarterlyCmp.building_id ?? "—")}
-                {quarterlyCmp.building_name ? ` • ${quarterlyCmp.building_name}` : ""} |{" "}
-                {(quarterlyCmp.window?.start ?? "—")} → {(quarterlyCmp.window?.end ?? "—")}
-              </Text>
-              <View style={styles.tableHead}>
-                <Text style={[styles.th, { flex: 1.2 }]}>Month</Text>
-                <Text style={[styles.th, { flex: 0.9 }]}>Electric</Text>
-                <Text style={[styles.th, { flex: 0.9 }]}>Water</Text>
-                <Text style={[styles.th, { flex: 0.9 }]}>LPG</Text>
-              </View>
-              {(quarterlyCmp.months ?? []).map((m, i) => (
-                <View key={`q-${i}`} style={styles.tableRow}>
-                  <Text style={[styles.td, { flex: 1.2 }]}>{m.label ?? "—"}</Text>
-                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.electric, 2)}</Text>
-                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.water, 2)}</Text>
-                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.lpg, 2)}</Text>
+                <View style={styles.exportRow}>
+                  <ActionButton
+                    label="Export CSV"
+                    icon="download"
+                    onPress={exportQuarterlyCsv}
+                    variant="outline"
+                  />
                 </View>
-              ))}
-              <View style={styles.totalLine}>
-                <Text style={[styles.totalK, { flex: 1.2 }]}>Σ Totals</Text>
-                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(quarterlyCmp.totals_all?.electric, 2)}</Text>
-                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(quarterlyCmp.totals_all?.water, 2)}</Text>
-                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(quarterlyCmp.totals_all?.lpg, 2)}</Text>
-              </View>
-              <Text style={styles.allUtil}>All Utilities: {fmt(quarterlyCmp.totals_all?.all_utilities, 2)}</Text>
-              <View style={styles.actionsLine}>
-                <ExportBtn label="Export CSV" onPress={exportQuarterlyCsv} />
-              </View>
-            </View>
-          )}
+              </ResultsCard>
+            )}
 
-          {/* Yearly comparison */}
-          {yearlyCmp && (
-            <View style={styles.card}>
-              <Text style={styles.h2}>Yearly Comparison ({yearlyCmp.year ?? "—"})</Text>
-              <Text style={styles.subtle}>
-                {(yearlyCmp.building_id ?? "—")}
-                {yearlyCmp.building_name ? ` • ${yearlyCmp.building_name}` : ""}
-              </Text>
-              <View style={styles.tableHead}>
-                <Text style={[styles.th, { flex: 1.2 }]}>Month</Text>
-                <Text style={[styles.th, { flex: 0.9 }]}>Electric</Text>
-                <Text style={[styles.th, { flex: 0.9 }]}>Water</Text>
-                <Text style={[styles.th, { flex: 0.9 }]}>LPG</Text>
-              </View>
-              {(yearlyCmp.months ?? []).map((m, i) => (
-                <View key={`y-${i}`} style={styles.tableRow}>
-                  <Text style={[styles.td, { flex: 1.2 }]}>{m.label ?? "—"}</Text>
-                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.electric, 2)}</Text>
-                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.water, 2)}</Text>
-                  <Text style={[styles.td, { flex: 0.9, textAlign: "right" }]}>{fmt(m.totals?.lpg, 2)}</Text>
+            {}
+            {cmpYearly && (
+              <ResultsCard title="Yearly Comparison" icon="albums">
+                <Text style={styles.yearTitle}>{cmpYearly.year}</Text>
+                <DataTable
+                  headers={["Month", "Electric", "Water", "LPG"]}
+                  data={cmpYearly.months?.map(month => ({
+                    month: month.label,
+                    electric: fmt(month.totals?.electric),
+                    water: fmt(month.totals?.water),
+                    lpg: fmt(month.totals?.lpg),
+                  })) || []}
+                />
+                <View style={styles.totalsSection}>
+                  <Text style={styles.totalsTitle}>Annual Totals</Text>
+                  <View style={styles.statsGrid}>
+                    <StatCard
+                      label="Electric"
+                      value={fmt(cmpYearly.totals_all?.electric)}
+                      unit="kWh"
+                      compact
+                    />
+                    <StatCard
+                      label="Water"
+                      value={fmt(cmpYearly.totals_all?.water)}
+                      unit="m³"
+                      compact
+                    />
+                    <StatCard
+                      label="LPG"
+                      value={fmt(cmpYearly.totals_all?.lpg)}
+                      unit="kg"
+                      compact
+                    />
+                  </View>
                 </View>
-              ))}
-              <View style={styles.totalLine}>
-                <Text style={[styles.totalK, { flex: 1.2 }]}>Σ Totals</Text>
-                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(yearlyCmp.totals_all?.electric, 2)}</Text>
-                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(yearlyCmp.totals_all?.water, 2)}</Text>
-                <Text style={[styles.totalV, { flex: 0.9 }]}>{fmt(yearlyCmp.totals_all?.lpg, 2)}</Text>
-              </View>
-              <Text style={styles.allUtil}>All Utilities: {fmt(yearlyCmp.totals_all?.all_utilities, 2)}</Text>
-              <View style={styles.actionsLine}>
-                <ExportBtn label="Export CSV" onPress={exportYearlyCsv} />
-              </View>
-            </View>
-          )}
-        </ScrollView>
-      )}
+                <View style={styles.exportRow}>
+                  <ActionButton
+                    label="Export CSV"
+                    icon="download"
+                    onPress={exportYearlyCsv}
+                    variant="outline"
+                  />
+                </View>
+              </ResultsCard>
+            )}
+          </>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+function TabButton({ icon, label, active, onPress }: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.tabButton, active && styles.tabButtonActive]}
+      onPress={onPress}
+    >
+      <Ionicons
+        name={icon}
+        size={16}
+        color={active ? "#2563EB" : "#64748B"}
+      />
+      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function InputField({ label, value, onChangeText, placeholder, icon, keyboardType }: {
+  label: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder?: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+  keyboardType?: "default" | "numeric";
+}) {
+  return (
+    <View style={styles.inputField}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <View style={styles.inputContainer}>
+        {icon && (
+          <Ionicons name={icon} size={16} color="#64748B" style={styles.inputIcon} />
+        )}
+        <TextInput
+          style={styles.textInput}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor="#94A3B8"
+          keyboardType={keyboardType}
+        />
+      </View>
     </View>
   );
 }
 
-const KV = ({ k, v }: { k: string; v: string }) => (
-  <View style={styles.kv}>
-    <Text style={styles.kKey}>{k}</Text>
-    <Text style={styles.kVal}>{v}</Text>
-  </View>
-);
+function ActionButton({ label, icon, onPress, loading, variant = "primary" }: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  loading?: boolean;
+  variant?: "primary" | "secondary" | "outline";
+}) {
+  return (
+    <TouchableOpacity
+      style={[
+        styles.actionButton,
+        variant === "primary" && styles.actionButtonPrimary,
+        variant === "secondary" && styles.actionButtonSecondary,
+        variant === "outline" && styles.actionButtonOutline,
+        loading && styles.actionButtonLoading,
+      ]}
+      onPress={onPress}
+      disabled={loading}
+    >
+      {loading ? (
+        <Ionicons name="refresh" size={16} color="#FFFFFF" />
+      ) : (
+        <Ionicons
+          name={icon}
+          size={16}
+          color={
+            variant === "primary" ? "#FFFFFF" :
+            variant === "outline" ? "#2563EB" : "#2563EB"
+          }
+        />
+      )}
+      <Text style={[
+        styles.actionButtonText,
+        variant === "primary" && styles.actionButtonTextPrimary,
+        variant === "secondary" && styles.actionButtonTextSecondary,
+        variant === "outline" && styles.actionButtonTextOutline,
+      ]}>
+        {loading ? "Processing..." : label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function ResultsCard({ title, icon, children }: {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.resultsCard}>
+      <View style={styles.cardHeader}>
+        <Ionicons name={icon} size={20} color="#2563EB" />
+        <Text style={styles.cardTitle}>{title}</Text>
+      </View>
+      <View style={styles.cardContent}>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function StatCard({ label, value, unit, trend, variant, compact }: {
+  label: string;
+  value: string;
+  unit: string;
+  trend?: "up" | "down" | "current" | "previous";
+  variant?: "electric" | "water" | "lpg";
+  compact?: boolean;
+}) {
+  const getTrendIcon = () => {
+    if (trend === "up") return "trending-up";
+    if (trend === "down") return "trending-down";
+    return undefined;
+  };
+
+  const getVariantColor = () => {
+    switch (variant) {
+      case "electric": return "#F59E0B";
+      case "water": return "#3B82F6";
+      case "lpg": return "#EF4444";
+      default: return "#374151";
+    }
+  };
+
+  return (
+    <View style={[styles.statCard, compact && styles.statCardCompact]}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <View style={styles.statValueRow}>
+        <Text style={[styles.statValue, { color: getVariantColor() }]}>
+          {value}
+        </Text>
+        {trend && getTrendIcon() && (
+          <Ionicons
+            name={getTrendIcon()}
+            size={14}
+            color={trend === "up" ? "#EF4444" : "#10B981"}
+          />
+        )}
+      </View>
+      <Text style={styles.statUnit}>{unit}</Text>
+    </View>
+  );
+}
+
+function DataTable({ headers, data }: {
+  headers: string[];
+  data: Array<Record<string, string | undefined>>;
+}) {
+  return (
+    <View style={styles.dataTable}>
+      <View style={styles.tableHeader}>
+        {headers.map((header, index) => (
+          <Text key={index} style={styles.tableHeaderText}>
+            {header}
+          </Text>
+        ))}
+      </View>
+      {data.map((row, rowIndex) => (
+        <View key={rowIndex} style={styles.tableRow}>
+          {headers.map((header, cellIndex) => (
+            <Text key={cellIndex} style={styles.tableCell}>
+              {row[header.toLowerCase()] || "—"}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
-  wrap: { backgroundColor: "#f8fafc", borderRadius: 12, padding: 12 },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 12,
-    borderColor: "#e2e8f0",
+  container: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+  },
+  header: {
+    padding: 24,
+    paddingBottom: 16,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: "#64748B",
+    lineHeight: 20,
+  },
+  tabContainer: {
+    flexDirection: "row",
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  tabButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginRight: 8,
+    backgroundColor: "#F8FAFC",
+  },
+  tabButtonActive: {
+    backgroundColor: "#EFF6FF",
     borderWidth: 1,
+    borderColor: "#2563EB",
+  },
+  tabLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#64748B",
+    marginLeft: 6,
+  },
+  tabLabelActive: {
+    color: "#2563EB",
+  },
+  errorCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    margin: 24,
+    marginBottom: 0,
+    padding: 16,
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 12,
+  },
+  errorContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  errorTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#DC2626",
+    marginBottom: 4,
+  },
+  errorText: {
+    fontSize: 12,
+    color: "#7F1D1D",
+    lineHeight: 16,
+  },
+  inputCard: {
+    margin: 24,
+    marginBottom: 16,
+    padding: 20,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
     shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
     shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
     elevation: 2,
   },
-
-  h1: { fontSize: 16, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
-  h2: { fontSize: 15, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
-  bold: { fontWeight: "700" },
-  hint: { color: "#475569" },
-
-  row: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
-  row2: { flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap" },
-  col: { flexGrow: 1, flexBasis: 180 },
-
-  label: { color: "#334155", fontSize: 13, fontWeight: "600" },
-  input: {
-    backgroundColor: "#f1f5f9",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#0F172A",
+    marginBottom: 16,
+  },
+  inputGrid: {
+    gap: 16,
+  },
+  inputField: {
+    gap: 6,
+  },
+  inputLabel: {
     fontSize: 14,
-    color: "#0f172a",
+    fontWeight: "500",
+    color: "#374151",
   },
-
-  actions: { flexDirection: "row", gap: 8, paddingVertical: 6, paddingRight: 6 },
-  actionsLine: { flexDirection: "row", gap: 8, marginTop: 8 },
-
-  btn: {
+  inputContainer: {
     flexDirection: "row",
-    gap: 8,
     alignItems: "center",
-    backgroundColor: "#0ea5e9",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 8,
+    backgroundColor: "#F9FAFB",
   },
-  btnText: { color: "#fff", fontWeight: "700" },
-  btnDisabled: { opacity: 0.5 },
-
-  btnSecondary: {
+  inputIcon: {
+    padding: 12,
+  },
+  textInput: {
+    flex: 1,
+    padding: 12,
+    fontSize: 14,
+    color: "#111827",
+  },
+  actionRow: {
+    marginTop: 20,
+  },
+  comparisonActions: {
     flexDirection: "row",
-    gap: 8,
+    gap: 12,
+  },
+  actionButton: {
+    flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#e2e8f0",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    gap: 8,
   },
-  btnSecondaryText: { color: "#0f172a", fontWeight: "700" },
-  btnSecondaryDisabled: { opacity: 0.5 },
-
-  loading: { alignItems: "center", paddingVertical: 24 },
-  loadingText: { marginTop: 8, color: "#475569" },
-
-  errorBox: {
-    backgroundColor: "#fee2e2",
-    borderRadius: 10,
-    padding: 10,
-    marginTop: 8,
+  actionButtonPrimary: {
+    backgroundColor: "#2563EB",
   },
-  errText: { color: "#991b1b" },
-  errTextSmall: { color: "#b91c1c", fontSize: 12 },
-
-  grid: { gap: 6, marginTop: 6 },
-  kv: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
-  kKey: { color: "#334155", fontWeight: "700" },
-  kVal: { color: "#0f172a" },
-
-  group: { marginTop: 8, paddingTop: 8, borderTopColor: "#e2e8f0", borderTopWidth: 1 },
-  groupTitle: { fontWeight: "800", color: "#0f172a", marginBottom: 6 },
-
-  tableHead: {
+  actionButtonSecondary: {
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#2563EB",
+  },
+  actionButtonOutline: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+  },
+  actionButtonLoading: {
+    opacity: 0.7,
+  },
+  actionButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  actionButtonTextPrimary: {
+    color: "#FFFFFF",
+  },
+  actionButtonTextSecondary: {
+    color: "#2563EB",
+  },
+  actionButtonTextOutline: {
+    color: "#374151",
+  },
+  resultsSection: {
+    padding: 24,
+    paddingTop: 0,
+    gap: 16,
+  },
+  resultsCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+    overflow: "hidden",
+  },
+  cardHeader: {
     flexDirection: "row",
-    backgroundColor: "#f8fafc",
-    paddingVertical: 8,
-    borderBottomColor: "#e2e8f0",
+    alignItems: "center",
+    padding: 20,
+    paddingBottom: 16,
     borderBottomWidth: 1,
-    marginTop: 8,
+    borderBottomColor: "#F1F5F9",
+    gap: 8,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#0F172A",
+  },
+  cardContent: {
+    padding: 20,
+  },
+  meterHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  meterId: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#0F172A",
+  },
+  meterType: {
+    fontSize: 14,
+    color: "#64748B",
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statsGrid: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  statCard: {
+    flex: 1,
+    padding: 16,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  statCardCompact: {
+    padding: 12,
+  },
+  statLabel: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#64748B",
+    marginBottom: 8,
+  },
+  statValueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 4,
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  statUnit: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  tenantId: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 16,
+  },
+  utilitySection: {
+    marginBottom: 20,
+  },
+  utilityTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 12,
+  },
+  buildingHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  buildingName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#0F172A",
+  },
+  buildingId: {
+    fontSize: 14,
+    color: "#64748B",
+  },
+  tenantCard: {
+    padding: 16,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  tenantName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 12,
+  },
+  comparisonHeader: {
+    marginBottom: 16,
+  },
+  period: {
+    fontSize: 14,
+    color: "#64748B",
+  },
+  yearTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#0F172A",
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  dataTable: {
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 8,
+    overflow: "hidden",
+    marginBottom: 16,
+  },
+  tableHeader: {
+    flexDirection: "row",
+    backgroundColor: "#F8FAFC",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  tableHeaderText: {
+    flex: 1,
+    padding: 12,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+    textAlign: "center",
   },
   tableRow: {
     flexDirection: "row",
-    paddingVertical: 8,
-    borderBottomColor: "#f1f5f9",
     borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
   },
-  th: { fontWeight: "800", color: "#334155", paddingRight: 8 },
-  td: { color: "#0f172a", paddingRight: 8 },
-  totalLine: {
-    flexDirection: "row",
-    paddingVertical: 8,
-    borderTopColor: "#e2e8f0",
+  tableCell: {
+    flex: 1,
+    padding: 12,
+    fontSize: 12,
+    color: "#374151",
+    textAlign: "center",
+  },
+  totalsSection: {
+    marginTop: 16,
+    paddingTop: 16,
     borderTopWidth: 1,
-    marginTop: 6,
+    borderTopColor: "#E2E8F0",
   },
-  totalK: { fontWeight: "800", color: "#334155" },
-  totalV: { textAlign: "right", color: "#0f172a", fontWeight: "700" },
-  allUtil: { marginTop: 8, fontWeight: "800", color: "#0f172a" },
-
-  meterId: { fontWeight: "700", color: "#0f172a" },
-  meterLine: { color: "#0f172a" },
-  mRow: { marginBottom: 6 },
+  totalsTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 12,
+  },
+  exportRow: {
+    marginTop: 16,
+    alignItems: "flex-start",
+  },
 });
 
-export default memo(RateOfChangePanelImpl)
+export default memo(RateOfChangePanel);

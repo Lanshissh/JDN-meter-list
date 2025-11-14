@@ -1,4 +1,3 @@
-// components/SideNav.tsx
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import {
   View,
@@ -39,7 +38,6 @@ export default function SideNav({ active, onSelect }: Props) {
   const role = useMemo(() => decodeRole(token), [token]);
   const canSeeAdmin = true;
 
-  // expand/collapse with animated width
   const [expanded, setExpanded] = useState(false);
   const widthAnim = useRef(new Animated.Value(68)).current;
 
@@ -141,8 +139,6 @@ export default function SideNav({ active, onSelect }: Props) {
   );
 }
 
-/* ===================== styles ===================== */
-/** brand palette — preserved from your original file */
 const BRAND_BG = "#082cac";
 const BORDER = "#eee";
 const TEXT = "#fff";
@@ -152,13 +148,13 @@ const styles = StyleSheet.create({
     height: "100%",
     paddingVertical: 16,
     paddingHorizontal: 8,
-    backgroundColor: BRAND_BG,              // <-- keep your base color
+    backgroundColor: BRAND_BG,
     borderRightWidth: 1,
-    borderRightColor: BORDER,               // <-- keep your border color
+    borderRightColor: BORDER,
     overflow: "hidden",
     ...(Platform.OS === "web"
       ? {
-          backdropFilter: "blur(8px)",      // subtle frost
+          backdropFilter: "blur(8px)",
           WebkitBackdropFilter: "blur(8px)",
           boxShadow:
             "inset 0 0 0 1px rgba(255,255,255,0.06), 0 8px 28px rgba(0,0,0,0.24)",
@@ -181,7 +177,6 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     ...(Platform.OS === "web"
       ? {
-          // very soft vertical light—keeps BRAND_BG dominant
           background:
             "linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.03) 40%, rgba(0,0,0,0.08) 100%)",
         }
@@ -224,7 +219,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginVertical: 4,
-    backgroundColor: "rgba(255,255,255,0.08)",  // soft white veil on brand blue
+    backgroundColor: "rgba(255,255,255,0.08)",
     ...(Platform.OS === "web"
       ? { cursor: "pointer", transition: "box-shadow 140ms ease, background 140ms ease" }
       : {}),
@@ -235,7 +230,7 @@ const styles = StyleSheet.create({
   itemRowWide: { flexDirection: "row", gap: 10 },
 
   itemActive: {
-    backgroundColor: "rgba(255,255,255,0.18)",  // brighter white, not cyan
+    backgroundColor: "rgba(255,255,255,0.18)",
     ...(Platform.OS === "web"
       ? { boxShadow: "0 0 0 3px rgba(255,255,255,0.24), 0 10px 24px rgba(0,0,0,0.25)" }
       : {

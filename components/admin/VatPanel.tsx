@@ -1,4 +1,3 @@
-// components/admin/VatPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -16,8 +15,6 @@ import {
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-
-/** ---------- Types (matches backend /vat) ---------- */
 export type VatCode = {
   tax_id: string;
   vat_code: string;
@@ -28,15 +25,12 @@ export type VatCode = {
   last_updated?: string | null;
   updated_by?: string | null;
 };
-
 type SortMode =
   | "newest" | "oldest"
   | "codeAsc" | "codeDesc"
   | "eAsc" | "eDesc"
   | "wAsc" | "wDesc"
   | "lAsc" | "lDesc";
-
-/** ---------- Helpers ---------- */
 const fmtPct = (n: number | string | null | undefined) => {
   if (n == null || n === "") return "—";
   const v = typeof n === "string" ? Number(n) : n;
@@ -56,7 +50,6 @@ const fmtDate = (iso?: string | null) => {
 };
 const cmp = (a: string | number, b: string | number) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
-
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -72,55 +65,38 @@ function errorText(err: any, fallback = "Server error.") {
   if (err?.message) return String(err.message);
   try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
-
-/** Tiny chip */
 const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
-
 export default function VatPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [rows, setRows] = useState<VatCode[]>([]);
   const [query, setQuery] = useState("");
-
-  // Modals (simple boolean flags; inline panels below)
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   const [editVisible, setEditVisible] = useState(false);
-
-  // Sort + extra filter toggles (mirrors WithholdingPanel)
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [onlyNonZero, setOnlyNonZero] = useState(false);
   const [hasAnyRate, setHasAnyRate] = useState(false);
-
-  // Create form
   const [c_code, setC_code] = useState("");
   const [c_desc, setC_desc] = useState("");
   const [c_e, setC_e] = useState("");
   const [c_w, setC_w] = useState("");
   const [c_l, setC_l] = useState("");
-
-  // Edit form
   const [editRow, setEditRow] = useState<VatCode | null>(null);
   const [e_code, setE_code] = useState("");
   const [e_desc, setE_desc] = useState("");
   const [e_e, setE_e] = useState("");
   const [e_w, setE_w] = useState("");
   const [e_l, setE_l] = useState("");
-
-  // axios
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
   const basePath = "/vat";
-
-  /* ---------- Load ---------- */
   useEffect(() => { loadAll(); }, [token]);
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage VAT codes."); return; }
@@ -132,13 +108,10 @@ export default function VatPanel({ token }: { token: string | null }) {
       notify("Load failed", errorText(err, "Could not load VAT codes."));
     } finally { setBusy(false); }
   };
-
-  /* ---------- Search + Filters + Sort ---------- */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const nz = (v: number | null) => (v == null ? false : (onlyNonZero ? Number(v) > 0 : true));
     let list = rows;
-
     if (hasAnyRate) list = list.filter((r) => nz(r.e_vat) || nz(r.w_vat) || nz(r.l_vat));
     if (q) {
       list = list.filter((r) =>
@@ -149,7 +122,6 @@ export default function VatPanel({ token }: { token: string | null }) {
     }
     return list;
   }, [rows, query, onlyNonZero, hasAnyRate]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
@@ -166,8 +138,6 @@ export default function VatPanel({ token }: { token: string | null }) {
       default: return arr.sort((a,b)=> (Date.parse(b.last_updated||"")||0) - (Date.parse(a.last_updated||"")||0));
     }
   }, [filtered, sortMode]);
-
-  /* ---------- CRUD ---------- */
   const onCreate = async () => {
     const code = c_code.trim();
     if (!code) { notify("Missing info", "VAT Code is required."); return; }
@@ -188,7 +158,6 @@ export default function VatPanel({ token }: { token: string | null }) {
       notify("Create failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const openEdit = (r: VatCode) => {
     setEditRow(r);
     setE_code(r.vat_code ?? "");
@@ -198,7 +167,6 @@ export default function VatPanel({ token }: { token: string | null }) {
     setE_l(r.l_vat != null ? String(r.l_vat) : "");
     setEditVisible(true);
   };
-
   const onUpdate = async () => {
     if (!editRow) return;
     try {
@@ -217,7 +185,6 @@ export default function VatPanel({ token }: { token: string | null }) {
       notify("Update failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const onDelete = async (r: VatCode) => {
     if (Platform.OS === "web" && typeof window !== "undefined") {
       if (!window.confirm(`Delete VAT ${r.vat_code}?`)) return;
@@ -231,8 +198,6 @@ export default function VatPanel({ token }: { token: string | null }) {
       notify("Delete failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
-  /* ---------- Row ---------- */
   const Row = ({ item }: { item: VatCode }) => (
     <View style={[styles.row, isMobile && styles.rowMobile]}>
       <View style={styles.rowMain}>
@@ -246,8 +211,6 @@ export default function VatPanel({ token }: { token: string | null }) {
           {item.updated_by ? `  •  by ${item.updated_by}` : ""}
         </Text>
       </View>
-
-      {/* Actions: right on desktop/tablet, below on mobile (like WithholdingPanel) */}
       {isMobile ? (
         <View style={styles.rowActionsMobile}>
           <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -273,21 +236,16 @@ export default function VatPanel({ token }: { token: string | null }) {
       )}
     </View>
   );
-
-  /* ---------- UI (FlatList is the ONLY scroller) ---------- */
   return (
     <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
-          {/* Header */}
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>VAT Codes</Text>
             <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
               <Text style={styles.btnText}>+ New</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Toolbar: Search + Filters beside each other */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -299,14 +257,11 @@ export default function VatPanel({ token }: { token: string | null }) {
                 style={styles.search}
               />
             </View>
-
             <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
               <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
-
-          {/* List (FlatList is the vertical scroller) */}
           {busy ? (
             <View style={styles.loader}><ActivityIndicator /></View>
           ) : (
@@ -327,14 +282,11 @@ export default function VatPanel({ token }: { token: string | null }) {
           )}
         </View>
       </View>
-
-      {/* Filters Modal (chips in modal — same as WithholdingPanel) */}
       {filtersVisible && (
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
             <View style={styles.modalDivider} />
-
             <Text style={styles.dropdownLabel}>Sort by</Text>
             <View style={styles.chipsRow}>
               <Chip label="Newest"  active={sortMode === "newest"}  onPress={() => setSortMode("newest")} />
@@ -348,13 +300,11 @@ export default function VatPanel({ token }: { token: string | null }) {
               <Chip label="L ↑"     active={sortMode === "lAsc"}    onPress={() => setSortMode("lAsc")} />
               <Chip label="L ↓"     active={sortMode === "lDesc"}   onPress={() => setSortMode("lDesc")} />
             </View>
-
             <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
             <View style={styles.chipsRow}>
               <Chip label="Only non-zero" active={onlyNonZero} onPress={() => setOnlyNonZero((v) => !v)} />
               <Chip label="Has any rate" active={hasAnyRate} onPress={() => setHasAnyRate((v) => !v)} />
             </View>
-
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btnGhostAlt]}
@@ -369,8 +319,6 @@ export default function VatPanel({ token }: { token: string | null }) {
           </View>
         </View>
       )}
-
-      {/* Create Modal (simple native modal look) */}
       {createVisible && (
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -402,7 +350,6 @@ export default function VatPanel({ token }: { token: string | null }) {
               </View>
               <Text style={styles.helpText}>Leave blank to save as <Text style={{ fontWeight: "700" }}>null</Text>.</Text>
             </View>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
                 <Text style={styles.btnGhostTextAlt}>Cancel</Text>
@@ -414,8 +361,6 @@ export default function VatPanel({ token }: { token: string | null }) {
           </View>
         </View>
       )}
-
-      {/* Edit Modal */}
       {editVisible && (
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -445,14 +390,12 @@ export default function VatPanel({ token }: { token: string | null }) {
                   <TextInput style={styles.input} keyboardType="numeric" value={e_l} onChangeText={setE_l} placeholder="e.g., 0" placeholderTextColor="#9aa5b1" />
                 </View>
               </View>
-
               {editRow?.last_updated ? (
                 <Text style={styles.helpText}>
                   Last updated: {fmtDate(editRow.last_updated)} {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
                 </Text>
               ) : null}
             </View>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
                 <Text style={styles.btnGhostTextAlt}>Close</Text>
@@ -467,10 +410,7 @@ export default function VatPanel({ token }: { token: string | null }) {
     </KeyboardAvoidingView>
   );
 }
-
-/* ---------- Styles (polished + scroll-safe) ---------- */
 const styles = StyleSheet.create({
-  // Page layout: FlatList must have a bounded, flexible parent
   page: {
     flex: 1,
     minHeight: 0,
@@ -481,8 +421,6 @@ const styles = StyleSheet.create({
     gap: 14,
     minHeight: 0,
   },
-
-  // Card (plain View styled like a card)
   card: {
     flex: 1,
     minHeight: 0,
@@ -494,8 +432,6 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
-
-  // Header + toolbar
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -507,7 +443,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0f172a",
   },
-
   btn: {
     backgroundColor: "#2563eb",
     paddingVertical: 10,
@@ -516,7 +451,6 @@ const styles = StyleSheet.create({
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -550,16 +484,13 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
   loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
-
-  // Row layout mirrors WithholdingPanel
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
     borderRadius: 12,
     padding: 12,
-    backgroundColor: "#ffffff", // use "card" surface
+    backgroundColor: "#ffffff", 
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -577,10 +508,8 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 2 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
   rowActions: { width: 200, flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 8 },
   rowActionsMobile: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "center", justifyContent: "flex-start" },
-
   actionBtn: {
     height: 36,
     paddingHorizontal: 12,
@@ -594,14 +523,10 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
-
-  // Empty
   emptyPad: { paddingVertical: 30 },
   empty: { paddingVertical: 24, gap: 10, alignItems: "center", justifyContent: "center" },
   emptyTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
   emptySub: { color: "#94a3b8", textAlign: "center" },
-
-  // Filter modal shell
   promptOverlay: {
     position: "absolute",
     left: 0, right: 0, top: 0, bottom: 0,
@@ -638,8 +563,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
-
-  // Form fields
   inputRow: { marginBottom: 10 },
   inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
   input: {
@@ -653,7 +576,6 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
   helpText: { color: "#94a3b8", fontSize: 12, lineHeight: 16, marginTop: 2 },
-
   grid3: {
     gap: 10,
     ...(Platform.OS === "web"
@@ -666,8 +588,6 @@ const styles = StyleSheet.create({
       : {}),
   },
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8 },
-
-  // Modal wrapper for create/edit (simple approach without external libs)
   modalWrap: {
     position: "absolute",
     left: 0, right: 0, top: 0, bottom: 0,
@@ -687,8 +607,6 @@ const styles = StyleSheet.create({
       default: { elevation: 3 },
     }) as any),
   },
-
-  // Chips
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 4 },
   chip: {
     borderWidth: 1,

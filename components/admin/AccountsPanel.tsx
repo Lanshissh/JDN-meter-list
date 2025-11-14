@@ -1,4 +1,3 @@
-// components/admin/AccountsPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -20,37 +19,30 @@ import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-
-/** Types — normalized for UI */
 type Role = "admin" | "operator" | "biller" | "reader";
 type Util = "electric" | "water" | "lpg";
-
 type UserRow = {
   user_id: string;
   user_fullname: string;
-  user_roles: Role[];      // backend shape
-  building_ids: string[];  // backend shape
-  utility_role: Util[];    // backend shape
+  user_roles: Role[];      
+  building_ids: string[];  
+  utility_role: Util[];    
   last_updated?: string;
   updated_by?: string;
 };
-
 type User = {
   user_id: string;
   user_fullname: string;
-  role: Role;              // primary role for display
-  buildings: string[];     // normalized list
+  role: Role;              
+  buildings: string[];     
   utilities: Util[];
   last_updated?: string;
   updated_by?: string;
 };
-
 type Building = {
   building_id: string;
   building_name: string;
 };
-
-/** Helpers (copied pattern from StallsPanel) */
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).alert) {
     (window as any).alert(message ? `${title}\n\n${message}` : title);
@@ -69,41 +61,30 @@ function errorText(err: any, fallback = "Server error.") {
 const cmp = (a: string | number, b: string | number) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
 const dateOf = (s?: string) => (s ? Date.parse(s) || 0 : 0);
-
-/** Chip — identical styling/structure to StallsPanel */
 const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
-
 export default function AccountsPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [users, setUsers] = useState<User[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-
-  // search + filters + sort (same control set as StallsPanel, but “status” becomes “role”)
   const [query, setQuery] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [roleFilter, setRoleFilter] = useState<"" | Role>("");
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
-
-  // create modal
   const [createVisible, setCreateVisible] = useState(false);
   const [c_fullname, setC_fullname] = useState("");
   const [c_password, setC_password] = useState("");
   const [c_role, setC_role] = useState<Role>("operator");
   const [c_buildingId, setC_buildingId] = useState("");
   const [c_utils, setC_utils] = useState<Util[]>([]);
-
-  // edit modal
   const [editVisible, setEditVisible] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [e_fullname, setE_fullname] = useState("");
@@ -111,11 +92,8 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   const [e_role, setE_role] = useState<Role>("operator");
   const [e_buildingId, setE_buildingId] = useState("");
   const [e_utils, setE_utils] = useState<Util[]>([]);
-
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
-
-  /** Load (users + buildings) */
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage accounts."); return; }
     try {
@@ -124,7 +102,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         api.get<UserRow[]>("/users"),
         api.get<Building[]>("/buildings"),
       ]);
-
       const normalized: User[] = (uRes.data || []).map((u) => {
         const role = (Array.isArray(u.user_roles) && u.user_roles.length ? u.user_roles[0] : "operator") as Role;
         const buildings = Array.isArray(u.building_ids) ? u.building_ids.map(String) : [];
@@ -139,7 +116,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           updated_by: u.updated_by,
         };
       });
-
       setUsers(normalized);
       setBuildings(bRes.data || []);
       if (!c_buildingId && (bRes.data?.length ?? 0) > 0) setC_buildingId(bRes.data[0].building_id);
@@ -148,12 +124,9 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     } finally { setBusy(false); }
   };
   useEffect(() => { loadAll(); }, [token]);
-
-  /** Derived list => filter then sort (same flow as StallsPanel) */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = users;
-
     if (buildingFilter) {
       list = list.filter((u) => u.buildings.includes(buildingFilter));
     }
@@ -169,7 +142,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     }
     return list;
   }, [users, query, buildingFilter, roleFilter]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
@@ -181,15 +153,12 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     }
     return arr;
   }, [filtered, sortMode]);
-
-  /** CRUD */
   const onCreate = async () => {
     const fullname = c_fullname.trim();
     if (!fullname || !c_password) { notify("Missing info", "Please enter Full name and Password."); return; }
     if (c_role !== "admin" && !c_buildingId) { notify("Missing building", "Select a Building for non-admin roles."); return; }
     try {
       setSubmitting(true);
-      // Match backend routes/users.js: user_password, user_fullname, user_roles, building_ids, utility_role
       const body: any = {
         user_fullname: fullname,
         user_password: c_password,
@@ -206,7 +175,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       notify("Create failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const openEdit = (u: User) => {
     setEditUser(u);
     setE_fullname(u.user_fullname);
@@ -216,7 +184,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     setE_utils(u.utilities || []);
     setEditVisible(true);
   };
-
   const onUpdate = async () => {
     if (!editUser) return;
     if (e_role !== "admin" && !e_buildingId) { notify("Missing building", "Select a Building for non-admin roles."); return; }
@@ -237,7 +204,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       notify("Update failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const onDelete = async (u: User) => {
     if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).confirm) {
       const ok = (window as any).confirm(`Delete ${u.user_fullname} (${u.user_id})?`);
@@ -250,7 +216,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       return Alert.alert("Delete account?", `${u.user_fullname} (${u.user_id})`, buttons);
     }
     await doDelete();
-
     async function doDelete() {
       try {
         setSubmitting(true);
@@ -262,21 +227,16 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       } finally { setSubmitting(false); }
     }
   };
-
-  /** UI — structure, spacings, and components mirror StallsPanel.tsx */
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
-          {/* Header */}
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Manage Accounts</Text>
             <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
               <Text style={styles.btnText}>+ Create Account</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Toolbar: Search + Filters */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -288,19 +248,15 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 style={styles.search}
               />
             </View>
-
             <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
               <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Building filter chips — same placement and behavior */}
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
-
             {isMobile ? (
               <ScrollView
                 horizontal
@@ -331,8 +287,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               </View>
             )}
           </View>
-
-          {/* List — same row/card anatomy */}
           {busy ? (
             <View style={styles.loader}><ActivityIndicator /></View>
           ) : (
@@ -350,7 +304,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
-                  {/* Main details */}
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
                       {item.user_fullname} <Text style={styles.rowSub}>({item.user_id})</Text>
@@ -366,8 +319,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       </Text>
                     ) : null}
                   </View>
-
-                  {/* Actions — identical look */}
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -396,14 +347,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             />
           )}
         </View>
-
-        {/* Filters Modal — same structure; “Status” section renamed to Role */}
         <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
           <View style={styles.promptOverlay}>
             <View style={styles.promptCard}>
               <Text style={styles.modalTitle}>Filters & Sort</Text>
               <View style={styles.modalDivider} />
-
               <Text style={styles.dropdownLabel}>Role</Text>
               <View style={styles.chipsRow}>
                 {[{ label: "All", value: "" }, "admin", "operator", "biller", "reader"].map((opt) =>
@@ -424,7 +372,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   )
                 )}
               </View>
-
               <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Sort by</Text>
               <View style={styles.chipsRow}>
                 <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
@@ -432,7 +379,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 <Chip label="ID ↑" active={sortMode === "idAsc"} onPress={() => setSortMode("idAsc")} />
                 <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
               </View>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btn]} onPress={() => setFiltersVisible(false)}>
                   <Text style={styles.btnText}>Done</Text>
@@ -441,8 +387,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             </View>
           </View>
         </Modal>
-
-        {/* Create Modal — same shell, Picker controls to match StallsPanel */}
         <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
             <View style={styles.modalCard}>
@@ -459,7 +403,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     style={styles.input}
                   />
                 </View>
-
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Password</Text>
                   <TextInput
@@ -471,7 +414,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     secureTextEntry
                   />
                 </View>
-
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Role</Text>
                   <View style={styles.pickerWrapper}>
@@ -483,7 +425,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     </Picker>
                   </View>
                 </View>
-
                 {c_role !== "admin" && (
                   <>
                     <View style={styles.inputRow}>
@@ -496,7 +437,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
-
                     <Text style={styles.sectionTitle}>Utilities</Text>
                     <View style={styles.chipsRow}>
                       {(["electric", "water", "lpg"] as Util[]).map((u) => {
@@ -516,7 +456,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   </>
                 )}
               </ScrollView>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
@@ -528,8 +467,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             </View>
           </KeyboardAvoidingView>
         </Modal>
-
-        {/* Edit Modal — same shell */}
         <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
             <View style={styles.modalCard}>
@@ -548,7 +485,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         style={styles.input}
                       />
                     </View>
-
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>New password (optional)</Text>
                       <TextInput
@@ -560,7 +496,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         secureTextEntry
                       />
                     </View>
-
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Role</Text>
                       <View style={styles.pickerWrapper}>
@@ -572,7 +507,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
-
                     {e_role !== "admin" && (
                       <>
                         <View style={styles.inputRow}>
@@ -589,7 +523,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                             </Picker>
                           </View>
                         </View>
-
                         <Text style={styles.sectionTitle}>Utilities</Text>
                         <View style={styles.chipsRow}>
                           {(["electric", "water", "lpg"] as Util[]).map((u) => {
@@ -611,7 +544,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   </>
                 )}
               </ScrollView>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
@@ -627,11 +559,8 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     </View>
   );
 }
-
-/** Styles — copied from StallsPanel to ensure identical visual rhythm */
 const W = Dimensions.get("window").width;
 const styles = StyleSheet.create({
-  // Page + grid + card
   page: { flex: 1, minHeight: 0 },
   grid: { flex: 1, padding: 14, gap: 14, minHeight: 0 },
   card: {
@@ -645,7 +574,6 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
-
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -656,8 +584,6 @@ const styles = StyleSheet.create({
   btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-
-  // Toolbar
   filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
   searchWrap: {
     flexDirection: "row",
@@ -681,10 +607,7 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
   loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
-
-  // Row (identical)
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -701,8 +624,6 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
-  // Actions (identical)
   rowActions: { width: 200, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 },
   rowActionsMobile: { flexDirection: "row", gap: 8, marginTop: 10, justifyContent: "flex-start", alignItems: "center" },
   actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 },
@@ -711,17 +632,11 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
-
-  // Empty state (identical)
   emptyPad: { paddingVertical: 30 },
   empty: { alignItems: "center", gap: 6 },
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
-
-  // Building filter header row (identical)
   buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-
-  // Chips (identical)
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8 },
   chip: {
@@ -737,8 +652,6 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
-  // Modals (identical shells)
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
@@ -769,7 +682,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
-
   inputRow: { marginBottom: 10 },
   inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
   input: {
@@ -782,11 +694,8 @@ const styles = StyleSheet.create({
     color: "#0f172a",
   },
   sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
-
   pickerWrapper: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, overflow: "hidden" },
   picker: { height: 40 },
-
-  // Filter modal shell (identical)
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",

@@ -1,26 +1,19 @@
-// app/(tabs)/_layout.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Platform, Modal, Text, TouchableOpacity } from "react-native";
 import { Slot, useRouter, Tabs } from "expo-router";
 import SideNav, { TabKey } from "../../components/SideNav";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../contexts/AuthContext";
-
-/** Inactivity timeout settings */
 const IDLE_LIMIT_MS = 60 * 60 * 1000;
 const WARN_BEFORE_MS = 2 * 60 * 1000;
-
 function IdleSessionGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { logout } = useAuth();
-
   const [warnVisible, setWarnVisible] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(Math.round(WARN_BEFORE_MS / 1000));
-
   const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const clearAll = () => {
     if (warnTimerRef.current) clearTimeout(warnTimerRef.current);
     if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
@@ -29,22 +22,16 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
     logoutTimerRef.current = null;
     tickerRef.current = null;
   };
-
   const scheduleAll = () => {
     clearAll();
-
-    // schedule warning
     const msToWarn = Math.max(0, IDLE_LIMIT_MS - WARN_BEFORE_MS);
     warnTimerRef.current = setTimeout(() => {
       setSecondsLeft(Math.round(WARN_BEFORE_MS / 1000));
       setWarnVisible(true);
-      // start countdown ticker
       tickerRef.current = setInterval(() => {
         setSecondsLeft((s) => (s > 0 ? s - 1 : 0));
       }, 1000);
     }, msToWarn);
-
-    // schedule final logout
     logoutTimerRef.current = setTimeout(async () => {
       clearAll();
       setWarnVisible(false);
@@ -55,17 +42,12 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
       }
     }, IDLE_LIMIT_MS);
   };
-
   const onActivity = () => {
-    // user interacted → reset the idle window and hide the prompt
     setWarnVisible(false);
     scheduleAll();
   };
-
-  // Initialize + add global listeners on web
   useEffect(() => {
     scheduleAll();
-
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const handleActivity = () => onActivity();
       const onVisible = () => {
@@ -73,8 +55,6 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
           onActivity();
         }
       };
-
-      // Window events (typed via WindowEventMap)
       const winEvents: (keyof WindowEventMap)[] = [
         "mousemove",
         "mousedown",
@@ -84,34 +64,24 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
         "focus",
       ];
       winEvents.forEach((ev) => window.addEventListener(ev, handleActivity as EventListener, { passive: true } as any));
-
-      // Document visibility (NOT part of WindowEventMap)
       document.addEventListener("visibilitychange", onVisible);
-
       return () => {
         clearAll();
         winEvents.forEach((ev) => window.removeEventListener(ev, handleActivity as EventListener));
         document.removeEventListener("visibilitychange", onVisible);
       };
     }
-
     return () => clearAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-
   useEffect(() => {
     if (!warnVisible && tickerRef.current) {
       clearInterval(tickerRef.current);
       tickerRef.current = null;
     }
   }, [warnVisible]);
-
   return (
     <View style={{ flex: 1 }} onTouchStart={onActivity}>
       {children}
-
-      {/* Idle warning prompt */}
       <Modal visible={warnVisible} animationType="fade" transparent>
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
@@ -120,7 +90,6 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
               Your session will expire in {secondsLeft} second{secondsLeft === 1 ? "" : "s"} due to inactivity!
               {"\n"}Do you want to break the timeout?
             </Text>
-
             <View style={styles.promptActions}>
               <TouchableOpacity
                 onPress={() => setWarnVisible(false)}
@@ -128,7 +97,6 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
               >
                 <Text style={styles.promptBtnGhostText}>Cancel</Text>
               </TouchableOpacity>
-
               <TouchableOpacity onPress={onActivity} style={styles.promptBtn}>
                 <Text style={styles.promptBtnText}>OK</Text>
               </TouchableOpacity>
@@ -139,12 +107,10 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
     </View>
   );
 }
-
 export default function TabLayout() {
   const [activeTab, setActiveTab] = useState<TabKey>("admin");
   const router = useRouter();
   const { logout } = useAuth();
-
   const handleSelectTab = async (tab: TabKey) => {
     setActiveTab(tab);
     if (tab === "logout") {
@@ -154,8 +120,6 @@ export default function TabLayout() {
       router.replace(`/(tabs)/${tab}` as any);
     }
   };
-
-  // Web: side navigation + content area
   if (Platform.OS === "web") {
     return (
       <IdleSessionGuard>
@@ -168,8 +132,6 @@ export default function TabLayout() {
       </IdleSessionGuard>
     );
   }
-
-  // Mobile: bottom tabs
   return (
     <IdleSessionGuard>
       <Tabs
@@ -211,20 +173,25 @@ export default function TabLayout() {
             ),
           }}
         />
+        <Tabs.Screen
+          name="dashboard"
+          options={{
+            title: "Dashboard",
+            tabBarIcon: ({ color, focused }) => (
+              <TabBarIcon name={focused ? "grid" : "grid-outline"} color={color} />
+            ),
+          }}
+        />
       </Tabs>
     </IdleSessionGuard>
   );
 }
-
 function TabBarIcon({ name, color }: { name: string; color: string }) {
   return <Ionicons name={name as any} size={24} color={color} />;
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1, flexDirection: "row", backgroundColor: "#f9f9f9" },
   content: { flex: 1 },
-
-  /* Prompt styles */
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -238,8 +205,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 10,
     padding: 16,
-
-    // cross-platform shadow
     shadowColor: "#000",
     shadowOpacity: 0.15,
     shadowRadius: 16,
@@ -267,7 +232,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 6,
-    marginLeft: 10, // spacing between buttons
+    marginLeft: 10, 
   },
   promptBtnText: {
     color: "#fff",

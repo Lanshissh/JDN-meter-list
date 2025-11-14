@@ -1,4 +1,3 @@
-// components/admin/TenantsPanel.tsx (updated to match new tenants.js backend)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -22,8 +21,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 import { useAuth } from "../../contexts/AuthContext";
 import { Card, Button, Input, ModalSheet, tokens } from "../ui/ProUI";
-
-/** ------------ Types ------------- */
 type Tenant = {
   tenant_id: string;
   tenant_sn: string;
@@ -36,9 +33,7 @@ type Tenant = {
   last_updated?: string;
   updated_by?: string;
 };
-
 type Building = { building_id: string; building_name: string };
-
 type BuildingBaseRates = {
   building_id: string;
   erate_perKwH: number | null;
@@ -49,7 +44,6 @@ type BuildingBaseRates = {
   last_updated?: string;
   updated_by?: string;
 };
-
 type Stall = {
   stall_id: string;
   stall_sn: string;
@@ -59,15 +53,10 @@ type Stall = {
   last_updated?: string;
   updated_by?: string;
 };
-
 type VatRow = { tax_id: string | number; vat_code: string; vat_description?: string | null };
-
 type WtRow = { wt_id: string; wt_code: string; wt_description?: string | null };
-
-/** ------------ Utils ------------- */
 const cmp = (a: string | number, b: string | number) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
-
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
   try {
@@ -102,7 +91,6 @@ function decodeJwtPayload(token: string | null): any | null {
     return null;
   }
 }
-
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert)
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -128,15 +116,11 @@ const fmt = (n: number | null | undefined, unit?: string) => {
   }).format(Number(n));
   return unit ? `${out} ${unit}` : out;
 };
-
-/** Heights for modal sheet inner scrollers */
 const H = Dimensions.get("window").height;
 const FOOTER_H = 68,
   HEADER_H = 56,
   V_MARGIN = 24;
 const MOBILE_MODAL_MAX_HEIGHT = Math.round(H - (FOOTER_H + HEADER_H + V_MARGIN));
-
-/** Local Chip (matches StallsPanel look) */
 const Chip = ({
   label,
   active,
@@ -150,8 +134,6 @@ const Chip = ({
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
-
-/** Styled Picker for sheets */
 function PickerField({
   label,
   value,
@@ -189,8 +171,6 @@ function PickerField({
     </View>
   );
 }
-
-/** ------------ Component ------------- */
 export default function TenantsPanel({ token }: { token: string | null }) {
   const { token: ctxToken } = useAuth();
   const mergedToken = token || ctxToken || null;
@@ -199,8 +179,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const userBuildingId = String(jwt?.building_id || "");
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
-  // build Authorization header safely
   const headerToken =
     mergedToken && /^Bearer\s/i.test(mergedToken.trim())
       ? mergedToken.trim()
@@ -209,32 +187,24 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       : "";
   const authHeader = useMemo(() => (headerToken ? { Authorization: headerToken } : {}), [headerToken]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
-
-  // data
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [vatCodes, setVatCodes] = useState<VatRow[]>([]);
   const [wtCodes, setWtCodes] = useState<WtRow[]>([]);
-
-  // list filters
   const [query, setQuery] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
-
-  // Quick Edit modal sheet
   const [detailsVisible, setDetailsVisible] = useState(false);
   const [detailsTenant, setDetailsTenant] = useState<Tenant | null>(null);
   const [tenantDraft, setTenantDraft] = useState<Tenant | null>(null);
   const [bRates, setBRates] = useState<BuildingBaseRates | null>(null);
   const [tenantStalls, setTenantStalls] = useState<Stall[]>([]);
   const [stallsBusy, setStallsBusy] = useState(false);
-
-  // Create Tenant sheet
   const [createVisible, setCreateVisible] = useState(false);
   const [cBuildingId, setCBuildingId] = useState<string>("");
   const [cTenantSn, setCTenantSn] = useState<string>("");
@@ -243,13 +213,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [cPenalty, setCPenalty] = useState<boolean>(false);
   const [cVat, setCVat] = useState<string>("");
   const [cWt, setCWt] = useState<string>("");
-
-  /** load data */
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergedToken, statusFilter, isAdmin, buildingFilter]);
-
   const loadAll = async () => {
     if (!mergedToken) {
       setBusy(false);
@@ -258,13 +224,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     }
     try {
       setBusy(true);
-
       const params: any = {};
-      if (statusFilter) params.status = statusFilter; // backend: exact match
-      // optionally let admin server-filter by building to reduce payload
+      if (statusFilter) params.status = statusFilter; 
       if (isAdmin && buildingFilter) params.building_id = buildingFilter;
       if (query.trim()) params.q = query.trim();
-
       const tRes = await api.get<Tenant[]>("/tenants", { params });
       const tRows = (tRes.data || []).map((t: any) => ({
         ...t,
@@ -273,18 +236,14 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         for_penalty: !!t.for_penalty,
       }));
       setTenants(tRows);
-
       try {
         const bRes = await api.get<Building[]>("/buildings");
         setBuildings(bRes.data || []);
       } catch {
         setBuildings([]);
       }
-
-      // Prefill filters and create form defaults
       setBuildingFilter((prev) => prev || userBuildingId || "");
       setCBuildingId((prev) => prev || userBuildingId || "");
-
       if (!userBuildingId && tRows.length > 0) {
         const fb = String(tRows[0].building_id || "");
         if (fb) {
@@ -292,7 +251,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           setCBuildingId((prev) => prev || fb);
         }
       }
-
       try {
         const [vRes, wRes] = await Promise.all([api.get<VatRow[]>("/vat"), api.get<WtRow[]>("/wt")]);
         setVatCodes(vRes.data || []);
@@ -307,8 +265,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       setBusy(false);
     }
   };
-
-  /** derived list (client-side search + sort still apply) */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = tenants;
@@ -321,7 +277,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         .some((v) => v.includes(q))
     );
   }, [tenants, query, buildingFilter, statusFilter]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     const dateOf = (t: Tenant) => Date.parse(t.last_updated || "") || 0;
@@ -338,28 +293,22 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         return arr;
     }
   }, [filtered, sortMode]);
-
-  /** helpers */
   const buildingName = (id: string) => {
     const b = buildings.find((x) => x.building_id === id);
     return b ? `${b.building_name} (${b.building_id})` : id || "—";
   };
-
-  /** quick-edit open / save / delete */
   const openDetails = async (row: Tenant) => {
     setDetailsTenant(row);
     setTenantDraft({ ...row });
     setBRates(null);
     setTenantStalls([]);
     setDetailsVisible(true);
-
     try {
       const bRes = await api.get<BuildingBaseRates>(`/buildings/${encodeURIComponent(row.building_id)}/base-rates`);
       setBRates(bRes.data);
     } catch {
       setBRates(null);
     }
-
     try {
       setStallsBusy(true);
       const sRes = await api.get<Stall[]>(`/stalls`);
@@ -370,7 +319,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       setStallsBusy(false);
     }
   };
-
   const saveTenant = async () => {
     if (!tenantDraft) return;
     try {
@@ -379,7 +327,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         tenant_sn: tenantDraft.tenant_sn,
         tenant_name: tenantDraft.tenant_name,
         tenant_status: tenantDraft.tenant_status,
-        building_id: tenantDraft.building_id, // backend allows change but will forbid for non-admin
+        building_id: tenantDraft.building_id, 
         vat_code: tenantDraft.vat_code ?? null,
         wt_code: tenantDraft.wt_code ?? null,
         for_penalty: !!tenantDraft.for_penalty,
@@ -393,7 +341,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
-
   const deleteTenant = async (t: Tenant) => {
     const go = async () => {
       try {
@@ -408,7 +355,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         setSubmitting(false);
       }
     };
-
     if (Platform.OS === "web" && typeof window !== "undefined") {
       if (window.confirm(`Delete ${t.tenant_name} (${t.tenant_id})?`)) go();
     } else {
@@ -418,7 +364,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       ]);
     }
   };
-
   const saveStall = async (s: Stall) => {
     try {
       setSubmitting(true);
@@ -453,13 +398,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
-
-  /** ---------- UI ---------- */
   return (
     <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
-          {/* Header */}
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Tenants</Text>
             <TouchableOpacity
@@ -471,7 +413,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     const bRes = await api.get<Building[]>("/buildings");
                     setBuildings(bRes.data || []);
                   } catch {
-                    /* fallback input will show */
                   }
                 }
               }}
@@ -479,8 +420,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               <Text style={styles.btnText}>+ Create Tenant</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Toolbar */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -492,19 +431,15 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 style={styles.search}
               />
             </View>
-
             <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
               <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Building filter chips */}
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
-
             <View style={styles.chipsRow}>
               <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
               {buildings
@@ -520,8 +455,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 ))}
             </View>
           </View>
-
-          {/* LIST */}
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />
@@ -545,7 +478,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                       Penalty: {item.for_penalty ? "Yes" : "No"}
                     </Text>
                   </View>
-
                   <View style={styles.rowActions}>
                     <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openDetails(item)}>
                       <Ionicons name="create-outline" size={16} color="#1f2937" />
@@ -562,8 +494,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           )}
         </View>
       </View>
-
-      {/* FILTERS modal */}
       <ModalSheet
         visible={filtersVisible}
         title="Filters & Sort"
@@ -590,7 +520,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           <Chip label="Active" active={statusFilter === "active"} onPress={() => setStatusFilter("active")} />
           <Chip label="Inactive" active={statusFilter === "inactive"} onPress={() => setStatusFilter("inactive")} />
         </View>
-
         <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
         <View style={styles.chipsRow}>
           <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
@@ -599,8 +528,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
         </View>
       </ModalSheet>
-
-      {/* QUICK EDIT SHEET (Building editable; backend enforces role rules) */}
       <ModalSheet
         visible={detailsVisible}
         title={detailsTenant ? `Quick Edit • ${detailsTenant.tenant_name}` : "Quick Edit"}
@@ -635,7 +562,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               showsVerticalScrollIndicator
             >
               <View style={styles.quickGrid}>
-                {/* LEFT: Tenant & Taxes */}
                 <View style={styles.quickCol}>
                   <Card title="Tenant">
                     <View style={{ gap: 10 }}>
@@ -647,7 +573,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           onChangeText={(v) => setTenantDraft((t) => (t ? { ...t, tenant_sn: v } : t))}
                         />
                       </View>
-
                       <View>
                         <Text style={styles.fieldLabel}>Tenant Name</Text>
                         <Input
@@ -656,7 +581,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           onChangeText={(v) => setTenantDraft((t) => (t ? { ...t, tenant_name: v } : t))}
                         />
                       </View>
-
                       <View style={styles.rowInline}>
                         <View style={[styles.flex1, { marginRight: 8 }]}>
                           <PickerField
@@ -670,7 +594,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                             <Picker.Item label="Inactive" value="inactive" />
                           </PickerField>
                         </View>
-
                         <View style={[styles.flex1, { marginLeft: 8 }]}>
                           <Text style={styles.fieldLabel}>Penalty</Text>
                           <Button
@@ -682,8 +605,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           </Button>
                         </View>
                       </View>
-
-                      {/* EDITABLE BUILDING */}
                       {buildings.length > 0 ? (
                         <PickerField
                           label="Building"
@@ -712,7 +633,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                       )}
                     </View>
                   </Card>
-
                   <Card title="Taxes" style={{ marginTop: 12 }}>
                     <View style={{ gap: 10 }}>
                       <PickerField
@@ -729,7 +649,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           />
                         ))}
                       </PickerField>
-
                       <PickerField
                         label="Withholding Code"
                         value={tenantDraft?.wt_code ?? ""}
@@ -747,8 +666,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     </View>
                   </Card>
                 </View>
-
-                {/* RIGHT: Building info & Stalls */}
                 <View style={styles.quickCol}>
                   <Card title="Base Rates (Read-only)">
                     <Text style={styles.kv}>
@@ -770,7 +687,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                       <Text style={styles.kvKey}>LPG Rate:</Text> {fmt(bRates?.lrate_perKg, "per kg")}
                     </Text>
                   </Card>
-
                   <Card title="Stalls" right={stallsBusy ? <ActivityIndicator /> : undefined} style={{ marginTop: 12 }}>
                     {stallsBusy ? null : tenantStalls.length === 0 ? (
                       <Text style={styles.empty}>No stalls assigned.</Text>
@@ -783,7 +699,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                             </Text>
                             <Text style={styles.rowMetaSmall}>Status: {String(s.stall_status).toUpperCase()}</Text>
                           </View>
-
                           <Button variant="ghost" onPress={() => unassignStall(s)}>
                             Unassign
                           </Button>
@@ -798,8 +713,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
           </View>
         </SafeAreaView>
       </ModalSheet>
-
-      {/* CREATE TENANT SHEET (auto-generated tenant_id on backend) */}
       <ModalSheet
         visible={createVisible}
         title="Create Tenant"
@@ -821,7 +734,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                   notify("Missing name", "Please enter tenant name.");
                   return;
                 }
-
                 try {
                   setSubmitting(true);
                   await api.post("/tenants", {
@@ -872,7 +784,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 <Text style={styles.helpText}>No building list available — using manual input.</Text>
               </View>
             )}
-
             <View style={[styles.flex1, { marginLeft: 8 }]}>
               <PickerField label="Status" value={cStatus} onChange={(v) => setCStatus(v as any)}>
                 <Picker.Item label="Active" value="active" />
@@ -880,7 +791,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               </PickerField>
             </View>
           </View>
-
           <View style={styles.rowInline}>
             <View style={[styles.flex1, { marginRight: 8 }]}>
               <Text style={styles.fieldLabel}>Tenant SN</Text>
@@ -891,7 +801,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               <Input placeholder="Tenant name" value={cTenantName} onChangeText={setCTenantName} />
             </View>
           </View>
-
           <View style={styles.rowInline}>
             <View style={[styles.flex1, { marginRight: 8 }]}>
               <PickerField label="VAT Code" value={cVat} onChange={setCVat} placeholder="— None —">
@@ -916,22 +825,18 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               </PickerField>
             </View>
           </View>
-
           <View style={{ marginTop: 6 }}>
             <Text style={styles.fieldLabel}>Penalty</Text>
             <Button variant="ghost" icon={(cPenalty ? "checkbox" : "square-outline") as any} onPress={() => setCPenalty((v) => !v)}>
               {cPenalty ? "For penalty" : "No penalty"}
             </Button>
           </View>
-
           <Text style={styles.helpText}>Tenant IDs are auto-generated on create (e.g., TNT-#). Assign stalls from the Stalls/Assign panel after creating the tenant.</Text>
         </View>
       </ModalSheet>
     </KeyboardAvoidingView>
   );
 }
-
-/** ------------ Styles ------------- */
 const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 0 },
   grid: { flex: 1, padding: 14, gap: 14, minHeight: 0 },
@@ -946,13 +851,10 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
-
   cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-
   btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   btnText: { color: "#fff", fontWeight: "700" },
-
   filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
   searchWrap: {
     flexDirection: "row",
@@ -976,9 +878,7 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
   buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { borderWidth: 1, borderColor: "#cbd5e1", backgroundColor: "#f8fafc", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
@@ -986,7 +886,6 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
   row: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 12, padding: 12, marginBottom: 10, backgroundColor: "#fff", flexDirection: "row", alignItems: "center" },
   rowMobile: { flexDirection: "column", alignItems: "stretch" },
   rowMain: { flex: 1, paddingRight: 10 },
@@ -994,7 +893,6 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
   rowActions: { width: 200, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 },
   actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 },
   actionEdit: { backgroundColor: "#e2e8f0" },
@@ -1002,15 +900,12 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
-
   loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
   emptyPad: { paddingVertical: 30 },
   empty: { paddingVertical: 12, textAlign: "center", color: "#64748b" },
-
   fieldLabel: { fontSize: 12, color: tokens.color.inkSubtle, marginBottom: 6, fontWeight: "700" },
   rowInline: { flexDirection: "row", alignItems: "center" },
   flex1: { flex: 1 },
-
   readonlyBox: {
     height: 42,
     borderRadius: 10,
@@ -1021,7 +916,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   readonlyText: { color: tokens.color.ink, fontWeight: "700" },
-
   pickerShell: {
     position: "relative",
     borderWidth: 1,
@@ -1033,14 +927,11 @@ const styles = StyleSheet.create({
   pickerNative: { width: "100%", height: 44, paddingLeft: 8, color: tokens.color.ink, fontSize: 14 },
   pickerItemIOS: { fontSize: 16, color: tokens.color.ink },
   pickerIcon: { position: "absolute", right: 10, top: 14, opacity: 0.8 },
-
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8 },
-
   kv: { fontSize: 13, color: tokens.color.ink, marginTop: 6 },
   kvKey: { color: tokens.color.inkSubtle, fontWeight: "700" },
   stallRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: tokens.color.line, gap: 8 },
   helpText: { color: tokens.color.inkMuted, fontSize: 12, lineHeight: 16, marginTop: 2 },
-
   quickGrid: {
     gap: 12,
     ...(Platform.OS === "web"
@@ -1050,7 +941,6 @@ const styles = StyleSheet.create({
   quickCol: {
     ...(Platform.OS === "web" ? {} : { flexGrow: 1, flexBasis: "48%", minWidth: 280 }),
   },
-
   sheetBody: { maxHeight: MOBILE_MODAL_MAX_HEIGHT, flexShrink: 1, width: "100%" },
   sheetScroll: { maxHeight: MOBILE_MODAL_MAX_HEIGHT },
   sheetContent: { paddingVertical: 12, gap: 12, paddingBottom: 96 },

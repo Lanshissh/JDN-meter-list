@@ -1,4 +1,3 @@
-// components/admin/StallsPanel.tsx (updated to match backend stalls.js and full CRUD)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -20,8 +19,6 @@ import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-
-/** Types */
 type Stall = {
   stall_id: string;
   stall_sn: string;
@@ -31,19 +28,15 @@ type Stall = {
   last_updated?: string;
   updated_by?: string;
 };
-
 type Building = {
   building_id: string;
   building_name: string;
 };
-
 type Tenant = {
   tenant_id: string;
   tenant_name: string;
   building_id: string;
 };
-
-/** Helpers (match BuildingPanel style + behavior) */
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).alert) {
     (window as any).alert(message ? `${title}\n\n${message}` : title);
@@ -62,47 +55,34 @@ function errorText(err: any, fallback = "Server error.") {
 const cmp = (a: string | number, b: string | number) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
 const dateOf = (s?: string) => (s ? Date.parse(s) || 0 : 0);
-
-/** Chip */
 const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
-
 export default function StallsPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
-
-  // search + filters + sort
   const [query, setQuery] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"" | Stall["stall_status"]>("");
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
-
-  // create modal
   const [createVisible, setCreateVisible] = useState(false);
   const [c_stallSn, setC_stallSn] = useState("");
   const [c_buildingId, setC_buildingId] = useState("");
   const [c_status, setC_status] = useState<Stall["stall_status"]>("available");
   const [c_tenantId, setC_tenantId] = useState("");
-
-  // edit modal
   const [editVisible, setEditVisible] = useState(false);
   const [editStall, setEditStall] = useState<Stall | null>(null);
-
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
-
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage stalls."); return; }
     try {
@@ -121,8 +101,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
     } finally { setBusy(false); }
   };
   useEffect(() => { loadAll(); }, [token]);
-
-  /** Derived list */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = stalls;
@@ -137,7 +115,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
     }
     return list;
   }, [stalls, query, buildingFilter, statusFilter]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
@@ -149,8 +126,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
     }
     return arr;
   }, [filtered, sortMode]);
-
-  /** CRUD */
   const onCreate = async () => {
     const stall_sn = c_stallSn.trim();
     if (!stall_sn || !c_buildingId || !c_status) { notify("Missing info", "Please enter Stall SN, select a Building, and choose a Status."); return; }
@@ -172,12 +147,10 @@ export default function StallsPanel({ token }: { token: string | null }) {
       notify("Create failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const openEdit = (s: Stall) => {
     setEditStall({ ...s });
     setEditVisible(true);
   };
-
   const onUpdate = async () => {
     if (!editStall) return;
     try {
@@ -195,7 +168,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
       notify("Update failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const onDelete = async (s: Stall) => {
     if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).confirm) {
       const ok = (window as any).confirm(`Delete ${s.stall_sn} (${s.stall_id})?`);
@@ -208,7 +180,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
       return Alert.alert("Delete stall?", `${s.stall_sn} (${s.stall_id})`, buttons);
     }
     await doDelete();
-
     async function doDelete() {
       try {
         setSubmitting(true);
@@ -220,8 +191,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
       } finally { setSubmitting(false); }
     }
   };
-
-  /** UI — FlatList is the ONLY vertical scroller (no nested ScrollView around it) */
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
@@ -232,8 +201,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
               <Text style={styles.btnText}>+ Create Stall</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Toolbar: Search + Filters beside each other (wraps on small widths) */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -245,19 +212,15 @@ export default function StallsPanel({ token }: { token: string | null }) {
                 style={styles.search}
               />
             </View>
-
             <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
               <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Building filter chips */}
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
-
             {isMobile ? (
               <ScrollView
                 horizontal
@@ -288,8 +251,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
               </View>
             )}
           </View>
-
-          {/* List */}
           {busy ? (
             <View style={styles.loader}><ActivityIndicator /></View>
           ) : (
@@ -307,7 +268,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
-                  {/* Main details */}
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
                       {item.stall_sn} <Text style={styles.rowSub}>({item.stall_id})</Text>
@@ -321,9 +281,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         Updated {new Date(item.last_updated).toLocaleString()} {item.updated_by ? `• by ${item.updated_by}` : ""}
                       </Text>
                     ) : null}
-                  </View>
-
-                  {/* Actions */}
+                  </View>                
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -352,14 +310,11 @@ export default function StallsPanel({ token }: { token: string | null }) {
             />
           )}
         </View>
-
-        {/* Filters Modal (Status + Sort only; building chips live below search) */}
         <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
           <View style={styles.promptOverlay}>
             <View style={styles.promptCard}>
               <Text style={styles.modalTitle}>Filters & Sort</Text>
               <View style={styles.modalDivider} />
-
               <Text style={styles.dropdownLabel}>Status</Text>
               <View style={styles.chipsRow}>
                 {[
@@ -376,7 +331,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   />
                 ))}
               </View>
-
               <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Sort by</Text>
               <View style={styles.chipsRow}>
                 <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
@@ -384,7 +338,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                 <Chip label="ID ↑" active={sortMode === "idAsc"} onPress={() => setSortMode("idAsc")} />
                 <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
               </View>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btn]} onPress={() => setFiltersVisible(false)}>
                   <Text style={styles.btnText}>Done</Text>
@@ -393,8 +346,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
             </View>
           </View>
         </Modal>
-
-        {/* Create Modal */}
         <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
             <View style={styles.modalCard}>
@@ -411,7 +362,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     </Picker>
                   </View>
                 </View>
-
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Stall SN</Text>
                   <TextInput
@@ -422,7 +372,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     style={styles.input}
                   />
                 </View>
-
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Status</Text>
                   <View style={styles.pickerWrapper}>
@@ -433,7 +382,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     </Picker>
                   </View>
                 </View>
-
                 {c_status !== "available" && (
                   <View style={styles.inputRow}>
                     <Text style={styles.inputLabel}>Tenant</Text>
@@ -450,7 +398,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   </View>
                 )}
               </ScrollView>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
@@ -462,8 +409,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
             </View>
           </KeyboardAvoidingView>
         </Modal>
-
-        {/* Edit Modal */}
         <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
             <View style={styles.modalCard}>
@@ -486,7 +431,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
-
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Stall SN</Text>
                       <TextInput
@@ -497,7 +441,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         style={styles.input}
                       />
                     </View>
-
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Status</Text>
                       <View style={styles.pickerWrapper}>
@@ -512,7 +455,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
-
                     {editStall.stall_status !== "available" && (
                       <View style={styles.inputRow}>
                         <Text style={styles.inputLabel}>Tenant</Text>
@@ -535,7 +477,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   </>
                 )}
               </ScrollView>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
@@ -551,11 +492,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
     </View>
   );
 }
-
-/** Styles — unified with BuildingPanel and optimized for mobile filter UX */
 const W = Dimensions.get("window").width;
 const styles = StyleSheet.create({
-  // Page + grid + card flex containers so FlatList can occupy and scroll
   page: {
     flex: 1,
     minHeight: 0,
@@ -577,7 +515,6 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
-
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -597,8 +534,6 @@ const styles = StyleSheet.create({
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-
-  // Toolbar
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -632,10 +567,7 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
   loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
-
-  // Row (responsive like BuildingPanel)
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -658,8 +590,6 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
-  // Actions
   rowActions: {
     width: 200,
     flexDirection: "row",
@@ -687,22 +617,16 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
-
-  // Empty state
   emptyPad: { paddingVertical: 30 },
   empty: { alignItems: "center", gap: 6 },
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
-
-  // Building filter header row
   buildingHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 6,
   },
-
-  // Chips
   chipsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -725,8 +649,6 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
-  // Modals
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
@@ -762,7 +684,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
-
   inputRow: { marginBottom: 10 },
   inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
   input: {
@@ -775,7 +696,6 @@ const styles = StyleSheet.create({
     color: "#0f172a",
   },
   sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
-
   pickerWrapper: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -783,8 +703,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   picker: { height: 40 },
-
-  // Filter modal shell
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",

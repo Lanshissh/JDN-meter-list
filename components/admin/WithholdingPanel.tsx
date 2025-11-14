@@ -1,4 +1,3 @@
-// components/admin/WithholdingPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -14,17 +13,12 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   useWindowDimensions,
-  LogBox, // ← optional, only if you want to silence warnings
+  LogBox, 
 } from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-
-// (optional) hide the redbox warning message if it appears elsewhere in app
-// LogBox.ignoreLogs(['VirtualizedLists should never be nested']);
-
 type Props = { token: string | null };
-
 type WtCode = {
   wt_id: string;
   wt_code: string;
@@ -35,10 +29,7 @@ type WtCode = {
   last_updated?: string;
   updated_by?: string;
 };
-
 type SortMode = "newest" | "oldest" | "codeAsc" | "codeDesc";
-
-/* helpers */
 const fmtDate = (iso?: string) => {
   if (!iso) return "";
   const t = Date.parse(iso);
@@ -65,39 +56,28 @@ function errorText(err: any, fallback = "Server error.") {
   if (err?.message) return String(err.message);
   try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
-
-/* tiny UI atom for modal chips */
 const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
-
 export default function WithholdingPanel({ token }: Props) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [rows, setRows] = useState<WtCode[]>([]);
   const [query, setQuery] = useState("");
-
-  // filters (no "Tax kind"; chips below search removed)
   const [onlyNonZero, setOnlyNonZero] = useState(false);
   const [hasAnyRate, setHasAnyRate] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
-
-  // create modal
   const [createVisible, setCreateVisible] = useState(false);
   const [c_code, setC_code] = useState("");
   const [c_desc, setC_desc] = useState("");
   const [c_e, setC_e] = useState("");
   const [c_w, setC_w] = useState("");
   const [c_l, setC_l] = useState("");
-
-  // edit modal
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<WtCode | null>(null);
   const [e_code, setE_code] = useState("");
@@ -105,13 +85,9 @@ export default function WithholdingPanel({ token }: Props) {
   const [e_e, setE_e] = useState("");
   const [e_w, setE_w] = useState("");
   const [e_l, setE_l] = useState("");
-
-  // axios
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
   const basePath = "/wt";
-
-  /* load */
   useEffect(() => { loadAll(); }, [token]);
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage withholding codes."); return; }
@@ -125,12 +101,9 @@ export default function WithholdingPanel({ token }: Props) {
       setBusy(false);
     }
   };
-
-  /* search + filter + sort */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const nz = (v: number | null) => (v == null ? false : (onlyNonZero ? Number(v) > 0 : true));
-
     return rows.filter((r) => {
       const textOk = !q
         ? true
@@ -140,7 +113,6 @@ export default function WithholdingPanel({ token }: Props) {
       return textOk && rateOk;
     });
   }, [rows, query, onlyNonZero, hasAnyRate]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
@@ -151,8 +123,6 @@ export default function WithholdingPanel({ token }: Props) {
       default:         return arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
     }
   }, [filtered, sortMode]);
-
-  /* CRUD (unchanged) */
   const onCreate = async () => {
     if (!c_code.trim()) { notify("Missing info", "Please enter a withholding code."); return; }
     try {
@@ -172,7 +142,6 @@ export default function WithholdingPanel({ token }: Props) {
       notify("Create failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const openEdit = (row: WtCode) => {
     setEditRow(row);
     setE_code(row.wt_code || "");
@@ -182,7 +151,6 @@ export default function WithholdingPanel({ token }: Props) {
     setE_l(row.l_wt != null ? String(row.l_wt) : "");
     setEditVisible(true);
   };
-
   const onUpdate = async () => {
     if (!editRow) return;
     try {
@@ -201,7 +169,6 @@ export default function WithholdingPanel({ token }: Props) {
       notify("Update failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const onDelete = (row: WtCode) => {
     const go = async () => {
       try {
@@ -222,21 +189,16 @@ export default function WithholdingPanel({ token }: Props) {
       ]);
     }
   };
-
-  /* UI — FlatList is the ONLY vertical scroller (no ScrollView wrapper) */
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
-          {/* Header */}
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Withholding Codes</Text>
             <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
               <Text style={styles.btnText}>+ New</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Toolbar */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -248,14 +210,11 @@ export default function WithholdingPanel({ token }: Props) {
                 style={styles.search}
               />
             </View>
-
             <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
               <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
-
-          {/* List (fills remaining height; page scrolls via this FlatList) */}
           {busy ? (
             <View style={styles.loader}><ActivityIndicator /></View>
           ) : (
@@ -273,7 +232,6 @@ export default function WithholdingPanel({ token }: Props) {
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
-                  {/* Main details */}
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
                       {item.wt_code} <Text style={styles.rowSub}>({item.wt_id})</Text>
@@ -288,8 +246,6 @@ export default function WithholdingPanel({ token }: Props) {
                       </Text>
                     ) : null}
                   </View>
-
-                  {/* Actions */}
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -319,14 +275,11 @@ export default function WithholdingPanel({ token }: Props) {
           )}
         </View>
       </View>
-
-      {/* Filters Modal (only modal has chips) */}
       <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
             <View style={styles.modalDivider} />
-
             <Text style={styles.dropdownLabel}>Sort by</Text>
             <View style={styles.chipsRow}>
               <Chip label="Newest"  active={sortMode === "newest"}  onPress={() => setSortMode("newest")} />
@@ -334,13 +287,11 @@ export default function WithholdingPanel({ token }: Props) {
               <Chip label="Code ↑"  active={sortMode === "codeAsc"} onPress={() => setSortMode("codeAsc")} />
               <Chip label="Code ↓"  active={sortMode === "codeDesc"} onPress={() => setSortMode("codeDesc")} />
             </View>
-
             <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
             <View style={styles.chipsRow}>
               <Chip label="Only non-zero" active={onlyNonZero} onPress={() => setOnlyNonZero((v) => !v)} />
               <Chip label="Has any rate" active={hasAnyRate} onPress={() => setHasAnyRate((v) => !v)} />
             </View>
-
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btnGhostAlt]}
@@ -355,8 +306,6 @@ export default function WithholdingPanel({ token }: Props) {
           </View>
         </View>
       </Modal>
-
-      {/* Create Modal */}
       <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -367,12 +316,10 @@ export default function WithholdingPanel({ token }: Props) {
                 <Text style={styles.inputLabel}>Code</Text>
                 <TextInput placeholder="e.g., WH-01" value={c_code} onChangeText={setC_code} style={styles.input} placeholderTextColor="#9aa5b1" />
               </View>
-
               <View style={styles.inputRow}>
                 <Text style={styles.inputLabel}>Description</Text>
                 <TextInput placeholder="Description" value={c_desc} onChangeText={setC_desc} style={styles.input} placeholderTextColor="#9aa5b1" />
               </View>
-
               <Text style={styles.sectionTitle}>Rates (%)</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}>
@@ -390,7 +337,6 @@ export default function WithholdingPanel({ token }: Props) {
               </View>
               <Text style={styles.helpText}>Leave blank to save as <Text style={{ fontWeight: "700" }}>null</Text>.</Text>
             </ScrollView>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
                 <Text style={styles.btnGhostTextAlt}>Cancel</Text>
@@ -402,8 +348,6 @@ export default function WithholdingPanel({ token }: Props) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-
-      {/* Edit Modal */}
       <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -414,12 +358,10 @@ export default function WithholdingPanel({ token }: Props) {
                 <Text style={styles.inputLabel}>Code</Text>
                 <TextInput placeholder="e.g., WH-01" value={e_code} onChangeText={setE_code} style={styles.input} placeholderTextColor="#9aa5b1" />
               </View>
-
               <View style={styles.inputRow}>
                 <Text style={styles.inputLabel}>Description</Text>
                 <TextInput placeholder="Description" value={e_desc} onChangeText={setE_desc} style={styles.input} placeholderTextColor="#9aa5b1" />
               </View>
-
               <Text style={styles.sectionTitle}>Rates (%)</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}>
@@ -435,14 +377,12 @@ export default function WithholdingPanel({ token }: Props) {
                   <TextInput keyboardType="numeric" value={e_l} onChangeText={setE_l} style={styles.input} placeholderTextColor="#9aa5b1" />
                 </View>
               </View>
-
               {editRow?.last_updated ? (
                 <Text style={styles.helpText}>
                   Last updated: {fmtDate(editRow.last_updated)} {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
                 </Text>
               ) : null}
             </ScrollView>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
                 <Text style={styles.btnGhostTextAlt}>Close</Text>
@@ -457,23 +397,19 @@ export default function WithholdingPanel({ token }: Props) {
     </View>
   );
 }
-
-/* styles */
 const styles = StyleSheet.create({
   page: {
-    flex: 1,            // allow FlatList to size properly
-    minHeight: 0,       // avoid flexbox overflow issues on web
+    flex: 1,            
+    minHeight: 0,       
   },
-
   grid: {
     flex: 1,
     padding: 14,
     gap: 14,
     minHeight: 0,
   },
-
   card: {
-    flex: 1,            // give FlatList a bounded height to scroll within
+    flex: 1,            
     minHeight: 0,
     backgroundColor: "#fff",
     borderRadius: 14,
@@ -483,7 +419,6 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
-
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -495,8 +430,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0f172a",
   },
-
-  // Buttons
   btn: {
     backgroundColor: "#2563eb",
     paddingVertical: 10,
@@ -505,8 +438,6 @@ const styles = StyleSheet.create({
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-
-  // Toolbar
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -540,10 +471,7 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
   loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
-
-  // Row
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -566,8 +494,6 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
-  // Actions
   rowActions: {
     width: 200,
     flexDirection: "row",
@@ -595,14 +521,10 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
-
-  // Empty
   emptyPad: { paddingVertical: 30 },
   empty: { alignItems: "center", gap: 6 },
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
-
-  // Modal shell
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
@@ -638,8 +560,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
-
-  // Form
   inputRow: { marginBottom: 10 },
   inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
   input: {
@@ -653,8 +573,6 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
   helpText: { color: "#94a3b8", fontSize: 12, lineHeight: 16, marginTop: 2 },
-
-  // Grid inputs
   grid3: {
     gap: 10,
     ...(Platform.OS === "web"
@@ -666,8 +584,6 @@ const styles = StyleSheet.create({
         } as any)
       : {}),
   },
-
-  // Filter modal
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",

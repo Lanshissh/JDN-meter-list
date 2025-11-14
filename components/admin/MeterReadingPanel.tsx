@@ -255,7 +255,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const rolesRaw = String(jwt?.user_level ?? jwt?.user_roles ?? "").toLowerCase();
   const isAdmin = rolesRaw.includes("admin");
   const isOperator = rolesRaw.includes("operator");
-  const canWrite = isAdmin || isOperator; // <-- typo corrected below
+  const canWrite = isAdmin || isOperator;
   const userBuildingId = String(jwt?.building_id || "");
 
   const headerToken =
@@ -616,6 +616,35 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     setScannerKey((k) => k + 1);
     setScanVisible(true);
     Keyboard.dismiss();
+  };
+
+  // Test function for image endpoint
+  const testImageEndpoint = async () => {
+    if (!readings.length) {
+      notify("No readings available", "Please load some readings first.");
+      return;
+    }
+
+    const testReading = readings[0];
+    console.log('🧪 Testing image endpoint for:', testReading.reading_id);
+    
+    try {
+      const response = await api.get(`${readingBase}/${testReading.reading_id}/image`, {
+        responseType: 'arraybuffer',
+      });
+      
+      console.log('🧪 Test response status:', response.status);
+      console.log('🧪 Test data length:', response.data.byteLength);
+      
+      if (response.data.byteLength > 0) {
+        notify("Backend OK", `Image endpoint working. Received ${response.data.byteLength} bytes.`);
+      } else {
+        notify("Backend Warning", "Image endpoint returned empty data.");
+      }
+    } catch (err: any) {
+      console.error('🧪 Test failed:', err);
+      notify("Backend Error", errorText(err, "Image endpoint not accessible."));
+    }
   };
 
   /* ---------- UI ---------- */
@@ -1000,7 +1029,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         openEdit={openEdit}
         busy={busy}
         readingBase={readingBase}
-        api={api} // <-- pass axios instance for authenticated image fetch
+        api={api}
       />
 
       {/* EDIT modal */}
@@ -1302,6 +1331,7 @@ function DatePickerField({ label, value, onChange }: { label: string; value: str
     </View>
   );
 }
+
 function ReadingsModal({
   visible,
   onClose,
@@ -1330,67 +1360,203 @@ function ReadingsModal({
   const start = (safePage - 1) * 30;
   const pageData = readingsForSelected.slice(start, start + 30);
 
-  // ---- Image viewer state (new) ----
-  const [imgVisible, setImgVisible] = useState(false);
-  const [imgUri, setImgUri] = useState<string | null>(null);
-  const [imgLoading, setImgLoading] = useState(false);
-  const [imgErr, setImgErr] = useState<string | null>(null);
+  // ---- Print Proof state ----
+  const [printProofVisible, setPrintProofVisible] = useState(false);
+  const [printData, setPrintData] = useState<{
+    reading: Reading | null;
+    imageUri: string | null;
+    previousReading: Reading | null;
+  }>({
+    reading: null,
+    imageUri: null,
+    previousReading: null,
+  });
+  const [printLoading, setPrintLoading] = useState(false);
 
-  function bytesToBase64(bytes: Uint8Array) {
-    let binary = "";
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
-    // @ts-ignore
-    if (typeof globalThis.btoa === "function") return globalThis.btoa(binary);
-    // @ts-ignore
-    if (typeof Buffer !== "undefined") return Buffer.from(binary, "binary").toString("base64");
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let output = "";
-    for (let i = 0; i < binary.length; i += 3) {
-      const c1 = binary.charCodeAt(i);
-      const c2 = binary.charCodeAt(i + 1);
-      const c3 = binary.charCodeAt(i + 2);
-      const n = (c1 << 16) | ((c2 || 0) << 8) | (c3 || 0);
-      output += chars[(n >> 18) & 63] + chars[(n >> 12) & 63] +
-        (isNaN(c2) ? "=" : chars[(n >> 6) & 63]) +
-        (isNaN(c3) ? "=" : chars[n & 63]);
-    }
-    return output;
-  }
-
-  const openImage = async (id: string) => {
-    setImgVisible(true);
-    setImgLoading(true);
-    setImgErr(null);
-    setImgUri(null);
+  const openPrintProof = async (reading: Reading) => {
+    setPrintLoading(true);
+    setPrintProofVisible(true);
+    
     try {
-      const res = await api.get(`${readingBase}/${encodeURIComponent(id)}/image`, {
-        responseType: Platform.OS === "web" ? "blob" : "arraybuffer",
+      // Get image data
+      const endpoint = `${readingBase}/${encodeURIComponent(reading.reading_id)}/image`;
+      const response = await api.get(endpoint, {
+        responseType: 'arraybuffer' // Important for binary data
       });
-
-      if (Platform.OS === "web") {
-        const blob: Blob = res.data as Blob;
-        const url = URL.createObjectURL(blob);
-        setImgUri(url);
-      } else {
-        const bytes = new Uint8Array(res.data as ArrayBuffer);
-        const b64 = bytesToBase64(bytes);
-        setImgUri(`data:image/jpeg;base64,${b64}`);
+      
+      let imageUri = null;
+      
+      // Convert the binary data to base64
+      if (response.data && response.data.byteLength > 0) {
+        // For arraybuffer response, convert to base64
+        const base64 = btoa(
+          new Uint8Array(response.data).reduce(
+            (data, byte) => data + String.fromCharCode(byte),
+            ''
+          )
+        );
+        imageUri = `data:image/jpeg;base64,${base64}`;
       }
+
+      // Get previous reading for this meter
+      const allReadingsForMeter = readingsForSelected
+        .filter((r: Reading) => r.meter_id === reading.meter_id)
+        .sort((a: Reading, b: Reading) => ts(b.lastread_date) - ts(a.lastread_date));
+      
+      const currentIndex = allReadingsForMeter.findIndex((r: Reading) => r.reading_id === reading.reading_id);
+      const previousReading = currentIndex < allReadingsForMeter.length - 1 ? allReadingsForMeter[currentIndex + 1] : null;
+
+      setPrintData({
+        reading,
+        imageUri,
+        previousReading,
+      });
     } catch (err: any) {
-      setImgErr(errorText(err, "Failed to load image."));
+      console.error('Error loading print data:', err);
+      notify("Error", "Failed to load data for printing");
     } finally {
-      setImgLoading(false);
+      setPrintLoading(false);
     }
   };
 
-  const closeImage = () => {
-    if (Platform.OS === "web" && imgUri && imgUri.startsWith("blob:")) {
-      try { URL.revokeObjectURL(imgUri); } catch {}
+  const handlePrint = () => {
+    if (Platform.OS === "web") {
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        const meter = metersById.get(printData.reading?.meter_id || '');
+        const meterType = meter?.meter_type || 'Unknown';
+        
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Meter Reading Proof - ${printData.reading?.reading_id}</title>
+            <style>
+              body { 
+                font-family: Arial, sans-serif; 
+                margin: 20px; 
+                line-height: 1.4;
+              }
+              .header { 
+                text-align: center; 
+                border-bottom: 2px solid #333; 
+                padding-bottom: 10px; 
+                margin-bottom: 20px;
+              }
+              .content { 
+                display: flex; 
+                flex-direction: column; 
+                gap: 20px;
+              }
+              .reading-info { 
+                background: #f5f5f5; 
+                padding: 15px; 
+                border-radius: 5px;
+              }
+              .image-section { 
+                text-align: center;
+              }
+              .image-section img { 
+                max-width: 100%; 
+                max-height: 400px; 
+                border: 1px solid #ddd;
+              }
+              .comparison { 
+                display: grid; 
+                grid-template-columns: 1fr 1fr; 
+                gap: 20px; 
+                margin-top: 20px;
+              }
+              .reading-card { 
+                border: 1px solid #ddd; 
+                padding: 15px; 
+                border-radius: 5px;
+              }
+              .current { background: #e8f5e8; }
+              .previous { background: #f0f0f0; }
+              .footer { 
+                text-align: center; 
+                margin-top: 30px; 
+                color: #666; 
+                font-size: 12px;
+              }
+              @media print {
+                body { margin: 0; }
+                .no-print { display: none; }
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Meter Reading Proof</h1>
+              <p>Generated on: ${new Date().toLocaleString()}</p>
+            </div>
+            
+            <div class="content">
+              <div class="reading-info">
+                <h2>Reading Details</h2>
+                <p><strong>Reading ID:</strong> ${printData.reading?.reading_id}</p>
+                <p><strong>Meter ID:</strong> ${printData.reading?.meter_id}</p>
+                <p><strong>Meter Type:</strong> ${meterType.toUpperCase()}</p>
+                <p><strong>Date Read:</strong> ${printData.reading?.lastread_date}</p>
+                <p><strong>Read By:</strong> ${printData.reading?.read_by}</p>
+                ${printData.reading?.remarks ? `<p><strong>Remarks:</strong> ${printData.reading.remarks}</p>` : ''}
+              </div>
+
+              <div class="comparison">
+                <div class="reading-card current">
+                  <h3>Current Reading</h3>
+                  <p><strong>Value:</strong> ${fmtValue(printData.reading?.reading_value)}</p>
+                  <p><strong>Date:</strong> ${printData.reading?.lastread_date}</p>
+                </div>
+                
+                <div class="reading-card previous">
+                  <h3>Previous Reading</h3>
+                  ${
+                    printData.previousReading 
+                      ? `<p><strong>Value:</strong> ${fmtValue(printData.previousReading.reading_value)}</p>
+                         <p><strong>Date:</strong> ${printData.previousReading.lastread_date}</p>`
+                      : '<p>No previous reading available</p>'
+                  }
+                </div>
+              </div>
+
+              ${printData.imageUri ? `
+                <div class="image-section">
+                  <h3>Meter Image</h3>
+                  <img src="${printData.imageUri}" alt="Meter Reading Image" />
+                </div>
+              ` : '<p>No image available for this reading</p>'}
+            </div>
+
+            <div class="footer">
+              <p>This is an official meter reading record. Generated automatically by the system.</p>
+            </div>
+
+            <div class="no-print" style="margin-top: 20px; text-align: center;">
+              <button onclick="window.print()" style="padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                Print This Page
+              </button>
+              <button onclick="window.close()" style="padding: 10px 20px; font-size: 16px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; margin-left: 10px;">
+                Close
+              </button>
+            </div>
+
+            <script>
+              // Auto-print and close for better UX
+              setTimeout(() => {
+                window.print();
+              }, 500);
+            </script>
+          </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+    } else {
+      // For native platforms, show a message
+      notify("Print", "Print functionality is available on web platform. On mobile, you can take a screenshot of this proof.");
     }
-    setImgVisible(false);
-    setImgUri(null);
-    setImgErr(null);
   };
 
   return (
@@ -1431,8 +1597,8 @@ function ReadingsModal({
                 <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openEdit(item)}>
                   <Text style={styles.actionBtnGhostText}>Update</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openImage(item.reading_id)}>
-                  <Text style={styles.actionBtnGhostText}>View Image</Text>
+                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openPrintProof(item)}>
+                  <Text style={styles.actionBtnGhostText}>Print Proof</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDanger]} onPress={() => onDelete(item)}>
                   {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>Delete</Text>}
@@ -1501,40 +1667,140 @@ function ReadingsModal({
             }
           />
 
-          {/* ---- Image Viewer Modal (inside ReadingsModal) ---- */}
-          <Modal visible={imgVisible} transparent animationType="fade" onRequestClose={closeImage}>
+          {/* ---- Print Proof Modal ---- */}
+          <Modal visible={printProofVisible} transparent animationType="slide" onRequestClose={() => setPrintProofVisible(false)}>
             <View style={styles.modalWrap}>
-              <View style={[styles.modalCard, { maxWidth: 960 }]}>
-                <Text style={styles.modalTitle}>Reading image</Text>
-                {imgLoading ? (
-                  <View style={{ paddingVertical: 24, alignItems: "center" }}>
-                    <ActivityIndicator />
-                    <Text style={{ marginTop: 8, color: "#64748b" }}>Loading…</Text>
-                  </View>
-                ) : imgErr ? (
-                  <Text style={{ color: "#b91c1c" }}>{imgErr}</Text>
-                ) : imgUri ? (
-                  <View style={{ alignItems: "center", marginTop: 8 }}>
-                    <RNImage
-                      source={{ uri: imgUri }}
-                      style={{ width: Math.min(800, Dimensions.get("window").width - 80), height: undefined, aspectRatio: 4/3, borderRadius: 12, backgroundColor: "#f8fafc" }}
-                      resizeMode="contain"
-                      accessibilityLabel="Meter reading photo"
-                    />
-                  </View>
-                ) : (
-                  <Text style={{ color: "#64748b" }}>No image.</Text>
-                )}
+              <View style={[styles.modalCard, { maxWidth: 800, maxHeight: '90%' }]}>
+                <View style={styles.modalHeaderRow}>
+                  <Text style={styles.modalTitle}>Print Reading Proof</Text>
+                  <TouchableOpacity onPress={() => setPrintProofVisible(false)}>
+                    <Ionicons name="close" size={24} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
+                
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+                  {printLoading ? (
+                    <View style={{ padding: 40, alignItems: "center" }}>
+                      <ActivityIndicator size="large" color="#2563eb" />
+                      <Text style={{ marginTop: 16, color: "#64748b" }}>Loading print data...</Text>
+                    </View>
+                  ) : printData.reading ? (
+                    <View style={styles.printProofContent}>
+                      {/* Header */}
+                      <View style={styles.printHeader}>
+                        <Text style={styles.printTitle}>Meter Reading Proof</Text>
+                        <Text style={styles.printSubtitle}>Generated on: {new Date().toLocaleString()}</Text>
+                      </View>
+
+                      {/* Reading Details */}
+                      <View style={styles.printSection}>
+                        <Text style={styles.sectionTitle}>Reading Details</Text>
+                        <View style={styles.detailsGrid}>
+                          <View style={styles.detailItem}>
+                            <Text style={styles.detailLabel}>Reading ID:</Text>
+                            <Text style={styles.detailValue}>{printData.reading.reading_id}</Text>
+                          </View>
+                          <View style={styles.detailItem}>
+                            <Text style={styles.detailLabel}>Meter ID:</Text>
+                            <Text style={styles.detailValue}>{printData.reading.meter_id}</Text>
+                          </View>
+                          <View style={styles.detailItem}>
+                            <Text style={styles.detailLabel}>Meter Type:</Text>
+                            <Text style={styles.detailValue}>
+                              {metersById.get(printData.reading.meter_id)?.meter_type.toUpperCase() || 'Unknown'}
+                            </Text>
+                          </View>
+                          <View style={styles.detailItem}>
+                            <Text style={styles.detailLabel}>Date Read:</Text>
+                            <Text style={styles.detailValue}>{printData.reading.lastread_date}</Text>
+                          </View>
+                          <View style={styles.detailItem}>
+                            <Text style={styles.detailLabel}>Read By:</Text>
+                            <Text style={styles.detailValue}>{printData.reading.read_by}</Text>
+                          </View>
+                          {printData.reading.remarks && (
+                            <View style={styles.detailItem}>
+                              <Text style={styles.detailLabel}>Remarks:</Text>
+                              <Text style={styles.detailValue}>{printData.reading.remarks}</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Reading Comparison */}
+                      <View style={styles.printSection}>
+                        <Text style={styles.sectionTitle}>Reading Comparison</Text>
+                        <View style={styles.comparisonGrid}>
+                          <View style={[styles.readingCard, styles.currentReading]}>
+                            <Text style={styles.cardTitle}>Current Reading</Text>
+                            <Text style={styles.readingValue}>
+                              {fmtValue(printData.reading.reading_value)}
+                            </Text>
+                            <Text style={styles.readingDate}>
+                              Date: {printData.reading.lastread_date}
+                            </Text>
+                          </View>
+                          
+                          <View style={[styles.readingCard, styles.previousReading]}>
+                            <Text style={styles.cardTitle}>Previous Reading</Text>
+                            {printData.previousReading ? (
+                              <>
+                                <Text style={styles.readingValue}>
+                                  {fmtValue(printData.previousReading.reading_value)}
+                                </Text>
+                                <Text style={styles.readingDate}>
+                                  Date: {printData.previousReading.lastread_date}
+                                </Text>
+                              </>
+                            ) : (
+                              <Text style={styles.noData}>No previous reading available</Text>
+                            )}
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Meter Image */}
+                      <View style={styles.printSection}>
+                        <Text style={styles.sectionTitle}>Meter Image</Text>
+                        {printData.imageUri ? (
+                          <View style={styles.imageContainer}>
+                            <RNImage
+                              source={{ uri: printData.imageUri }}
+                              style={styles.proofImage}
+                              resizeMode="contain"
+                            />
+                          </View>
+                        ) : (
+                          <Text style={styles.noData}>No image available for this reading</Text>
+                        )}
+                      </View>
+
+                      {/* Footer */}
+                      <View style={styles.printFooter}>
+                        <Text style={styles.footerText}>
+                          This is an official meter reading record. Generated automatically by the system.
+                        </Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={styles.noData}>No reading data available</Text>
+                  )}
+                </ScrollView>
 
                 <View style={styles.modalActions}>
-                  <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={closeImage}>
+                  <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setPrintProofVisible(false)}>
                     <Text style={styles.btnGhostText}>Close</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.btn} onPress={handlePrint}>
+                    <Text style={styles.btnText}>
+                      {Platform.OS === "web" ? "Print" : "Save as PDF"}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
           </Modal>
-          {/* ---- end Image Viewer ---- */}
+          {/* ---- end Print Proof Modal ---- */}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -2071,5 +2337,111 @@ const styles = StyleSheet.create({
       web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" } as any,
       default: { elevation: 4 },
     }) as any),
+  },
+
+  // Print Proof Styles
+  printProofContent: {
+    flex: 1,
+    gap: 16,
+  },
+  printHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: '#333',
+    paddingBottom: 10,
+    marginBottom: 10,
+  },
+  printTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  printSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  printSection: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  detailsGrid: {
+    backgroundColor: '#f5f5f5',
+    padding: 15,
+    borderRadius: 5,
+    gap: 8,
+  },
+  detailItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  detailLabel: {
+    fontWeight: 'bold',
+    color: '#333',
+    flex: 1,
+  },
+  detailValue: {
+    color: '#666',
+    flex: 2,
+  },
+  comparisonGrid: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  readingCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    padding: 15,
+    borderRadius: 5,
+  },
+  currentReading: {
+    backgroundColor: '#e8f5e8',
+  },
+  previousReading: {
+    backgroundColor: '#f0f0f0',
+  },
+  readingValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2563eb',
+    marginBottom: 4,
+  },
+  readingDate: {
+    fontSize: 14,
+    color: '#666',
+  },
+  imageContainer: {
+    alignItems: 'center',
+  },
+  proofImage: {
+    width: '100%',
+    height: 300,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+  },
+  printFooter: {
+    marginTop: 20,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#ddd',
+    alignItems: 'center',
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+  },
+  noData: {
+    color: '#999',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    padding: 20,
   },
 });

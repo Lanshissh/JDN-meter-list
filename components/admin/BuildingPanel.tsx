@@ -1,4 +1,3 @@
-// components/admin/BuildingPanel.tsx (updated to visually match WithholdingPanel.tsx 1:1)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
@@ -18,10 +17,7 @@ import {
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-
-/* Types */
 type Props = { token: string | null };
-
 type Building = {
   building_id: string;
   building_name: string;
@@ -34,10 +30,7 @@ type Building = {
   last_updated?: string | null;
   updated_by?: string | null;
 };
-
 type SortMode = "newest" | "oldest" | "nameAsc" | "nameDesc" | "idAsc" | "idDesc";
-
-/* helpers (mirrors WithholdingPanel) */
 const fmtDate = (iso?: string | null) => {
   if (!iso) return "";
   const t = Date.parse(iso);
@@ -52,7 +45,6 @@ const toNumOrNull = (s: string): number | null => {
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}
-
 ${message}` : title);
   } else {
     Alert.alert(title, message);
@@ -66,31 +58,22 @@ function errorText(err: any, fallback = "Server error.") {
   if (err?.message) return String(err.message);
   try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
-
-/* tiny UI atom for modal chips (same look as WithholdingPanel) */
 const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
-
 export default function BuildingPanel({ token }: Props) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [rows, setRows] = useState<Building[]>([]);
   const [query, setQuery] = useState("");
-
-  // filters to mirror WithholdingPanel UX
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [hasAnyRate, setHasAnyRate] = useState(false);
   const [onlyNonZero, setOnlyNonZero] = useState(false);
-
-  // create modal fields
   const [createVisible, setCreateVisible] = useState(false);
   const [c_name, setC_name] = useState("");
   const [c_eRate, setC_eRate] = useState("");
@@ -99,8 +82,6 @@ export default function BuildingPanel({ token }: Props) {
   const [c_wMin, setC_wMin] = useState("");
   const [c_lRate, setC_lRate] = useState("");
   const [c_markup, setC_markup] = useState("");
-
-  // edit modal fields
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<Building | null>(null);
   const [e_name, setE_name] = useState("");
@@ -110,13 +91,9 @@ export default function BuildingPanel({ token }: Props) {
   const [e_wMin, setE_wMin] = useState("");
   const [e_lRate, setE_lRate] = useState("");
   const [e_markup, setE_markup] = useState("");
-
-  // axios
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
   const basePath = "/buildings";
-
-  /* Load */
   useEffect(() => { loadAll(); }, [token]);
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage buildings."); return; }
@@ -128,8 +105,6 @@ export default function BuildingPanel({ token }: Props) {
       notify("Load failed", errorText(err, "Could not load buildings."));
     } finally { setBusy(false); }
   };
-
-  /* Search + Filter + Sort */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const nz = (v: number | null | undefined) => (v == null ? false : (onlyNonZero ? Number(v) > 0 : true));
@@ -142,7 +117,6 @@ export default function BuildingPanel({ token }: Props) {
       return textOk && rateOk;
     });
   }, [rows, query, hasAnyRate, onlyNonZero]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
@@ -155,8 +129,6 @@ export default function BuildingPanel({ token }: Props) {
       default:          return arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
     }
   }, [filtered, sortMode]);
-
-  /* CRUD */
   const onCreate = async () => {
     const building_name = c_name.trim();
     if (!building_name) { notify("Missing info", "Please enter a building name."); return; }
@@ -179,7 +151,6 @@ export default function BuildingPanel({ token }: Props) {
       notify("Create failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const openEdit = (row: Building) => {
     setEditRow(row);
     setE_name(row.building_name || "");
@@ -191,7 +162,6 @@ export default function BuildingPanel({ token }: Props) {
     setE_markup(row.markup_rate != null ? String(row.markup_rate) : "");
     setEditVisible(true);
   };
-
   const onUpdate = async () => {
     if (!editRow) return;
     const building_name = e_name.trim();
@@ -214,7 +184,6 @@ export default function BuildingPanel({ token }: Props) {
       notify("Update failed", errorText(err));
     } finally { setSubmitting(false); }
   };
-
   const onDelete = (row: Building) => {
     const go = async () => {
       try {
@@ -235,21 +204,16 @@ export default function BuildingPanel({ token }: Props) {
       ]);
     }
   };
-
-  /* UI — identical structure to WithholdingPanel */
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
-          {/* Header */}
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Buildings</Text>
             <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
               <Text style={styles.btnText}>+ New</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Toolbar */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -261,14 +225,11 @@ export default function BuildingPanel({ token }: Props) {
                 style={styles.search}
               />
             </View>
-
             <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
               <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
-
-          {/* List */}
           {busy ? (
             <View style={styles.loader}><ActivityIndicator /></View>
           ) : (
@@ -286,7 +247,6 @@ export default function BuildingPanel({ token }: Props) {
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
-                  {/* Main details */}
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
                       {item.building_name || "(No name)"} <Text style={styles.rowSub}>({item.building_id})</Text>
@@ -306,8 +266,6 @@ export default function BuildingPanel({ token }: Props) {
                       </Text>
                     ) : null}
                   </View>
-
-                  {/* Actions */}
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -337,14 +295,11 @@ export default function BuildingPanel({ token }: Props) {
           )}
         </View>
       </View>
-
-      {/* Filters Modal */}
       <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
             <View style={styles.modalDivider} />
-
             <Text style={styles.dropdownLabel}>Sort by</Text>
             <View style={styles.chipsRow}>
               <Chip label="Newest"  active={sortMode === "newest"}  onPress={() => setSortMode("newest")} />
@@ -354,13 +309,11 @@ export default function BuildingPanel({ token }: Props) {
               <Chip label="ID ↑"    active={sortMode === "idAsc"}   onPress={() => setSortMode("idAsc")} />
               <Chip label="ID ↓"    active={sortMode === "idDesc"}   onPress={() => setSortMode("idDesc")} />
             </View>
-
             <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
             <View style={styles.chipsRow}>
               <Chip label="Only non-zero" active={onlyNonZero} onPress={() => setOnlyNonZero((v) => !v)} />
               <Chip label="Has any rate" active={hasAnyRate} onPress={() => setHasAnyRate((v) => !v)} />
             </View>
-
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btnGhostAlt]}
@@ -375,8 +328,6 @@ export default function BuildingPanel({ token }: Props) {
           </View>
         </View>
       </Modal>
-
-      {/* Create Modal */}
       <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -386,7 +337,6 @@ export default function BuildingPanel({ token }: Props) {
               <View style={styles.inputRow}><Text style={styles.inputLabel}>Name</Text>
                 <TextInput placeholder="e.g., BLDG-1" value={c_name} onChangeText={setC_name} style={styles.input} placeholderTextColor="#9aa5b1" />
               </View>
-
               <Text style={styles.sectionTitle}>Electric</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/kWh</Text>
@@ -396,7 +346,6 @@ export default function BuildingPanel({ token }: Props) {
                   <TextInput keyboardType="numeric" value={c_eMin} onChangeText={setC_eMin} style={styles.input} placeholderTextColor="#9aa5b1" />
                 </View>
               </View>
-
               <Text style={styles.sectionTitle}>Water</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/m³</Text>
@@ -406,7 +355,6 @@ export default function BuildingPanel({ token }: Props) {
                   <TextInput keyboardType="numeric" value={c_wMin} onChangeText={setC_wMin} style={styles.input} placeholderTextColor="#9aa5b1" />
                 </View>
               </View>
-
               <Text style={styles.sectionTitle}>LPG & Markup</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}><Text style={styles.inputLabel}>LPG ₱/kg</Text>
@@ -418,7 +366,6 @@ export default function BuildingPanel({ token }: Props) {
               </View>
               <Text style={styles.helpText}>Leave blank to save as <Text style={{ fontWeight: "700" }}>null</Text>.</Text>
             </ScrollView>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
                 <Text style={styles.btnGhostTextAlt}>Cancel</Text>
@@ -430,8 +377,6 @@ export default function BuildingPanel({ token }: Props) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-
-      {/* Edit Modal */}
       <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -441,7 +386,6 @@ export default function BuildingPanel({ token }: Props) {
               <View style={styles.inputRow}><Text style={styles.inputLabel}>Name</Text>
                 <TextInput placeholder="e.g., BLDG-1" value={e_name} onChangeText={setE_name} style={styles.input} placeholderTextColor="#9aa5b1" />
               </View>
-
               <Text style={styles.sectionTitle}>Electric</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/kWh</Text>
@@ -451,7 +395,6 @@ export default function BuildingPanel({ token }: Props) {
                   <TextInput keyboardType="numeric" value={e_eMin} onChangeText={setE_eMin} style={styles.input} placeholderTextColor="#9aa5b1" />
                 </View>
               </View>
-
               <Text style={styles.sectionTitle}>Water</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}><Text style={styles.inputLabel}>Rate ₱/m³</Text>
@@ -461,7 +404,6 @@ export default function BuildingPanel({ token }: Props) {
                   <TextInput keyboardType="numeric" value={e_wMin} onChangeText={setE_wMin} style={styles.input} placeholderTextColor="#9aa5b1" />
                 </View>
               </View>
-
               <Text style={styles.sectionTitle}>LPG & Markup</Text>
               <View style={styles.grid3}>
                 <View style={styles.inputRow}><Text style={styles.inputLabel}>LPG ₱/kg</Text>
@@ -471,14 +413,12 @@ export default function BuildingPanel({ token }: Props) {
                   <TextInput keyboardType="numeric" value={e_markup} onChangeText={setE_markup} style={styles.input} placeholderTextColor="#9aa5b1" />
                 </View>
               </View>
-
               {editRow?.last_updated ? (
                 <Text style={styles.helpText}>
                   Last updated: {fmtDate(editRow.last_updated)} {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
                 </Text>
               ) : null}
             </ScrollView>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
                 <Text style={styles.btnGhostTextAlt}>Close</Text>
@@ -493,8 +433,6 @@ export default function BuildingPanel({ token }: Props) {
     </View>
   );
 }
-
-/* styles — copied from WithholdingPanel for 1:1 visual parity */
 const styles = StyleSheet.create({
   page: {
     flex: 1,
@@ -524,8 +462,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-
-  // Buttons
   btn: {
     backgroundColor: "#2563eb",
     paddingVertical: 10,
@@ -534,8 +470,6 @@ const styles = StyleSheet.create({
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-
-  // Toolbar
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -569,10 +503,7 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
   loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
-
-  // Row
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -589,8 +520,6 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
-  // Actions
   rowActions: {
     width: 200,
     flexDirection: "row",
@@ -605,14 +534,10 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
-
-  // Empty
   emptyPad: { paddingVertical: 30 },
   empty: { alignItems: "center", gap: 6 },
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
-
-  // Modal shell
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
@@ -643,8 +568,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
-
-  // Form
   inputRow: { marginBottom: 10 },
   inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
   input: {
@@ -658,16 +581,12 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
   helpText: { color: "#94a3b8", fontSize: 12, lineHeight: 16, marginTop: 2 },
-
-  // Grid inputs
   grid3: {
     gap: 10,
     ...(Platform.OS === "web"
       ? ({ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", columnGap: 10, rowGap: 10 } as any)
       : {}),
   },
-
-  // Filter modal
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",

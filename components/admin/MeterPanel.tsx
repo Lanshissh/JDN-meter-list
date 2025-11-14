@@ -1,4 +1,3 @@
-// components/admin/MeterPanel.tsx (updated, full file)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
@@ -20,8 +19,6 @@ import { Picker } from "@react-native-picker/picker";
 import QRCode from "react-native-qrcode-svg";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-
-/* ========== Alert Helpers ========== */
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).alert) {
     (window as any).alert(message ? `${title}\n\n${message}` : title);
@@ -48,8 +45,6 @@ function confirm(title: string, message: string): Promise<boolean> {
     ]);
   });
 }
-
-/* ========== Types ========== */
 export type Meter = {
   meter_id: string;
   meter_type: "electric" | "water" | "lpg";
@@ -62,8 +57,6 @@ export type Meter = {
 };
 export type Stall = { stall_id: string; stall_sn: string; building_id?: string };
 type Building = { building_id: string; building_name: string };
-
-/* ========== JWT decode (lightweight) ========== */
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
   try {
@@ -90,59 +83,41 @@ function decodeJwtPayload(token: string | null): any | null {
     return JSON.parse(json);
   } catch { return null; }
 }
-
-/* ========== Component ========== */
 export default function MeterPanel({ token }: { token: string | null }) {
   const jwt = useMemo(() => decodeJwtPayload(token), [token]);
   const isAdmin = String(jwt?.user_level || "").toLowerCase() === "admin";
   const userBuildingId = String(jwt?.building_id || "");
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
-  // data
   const [meters, setMeters] = useState<Meter[]>([]);
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-
-  // search + filters
   const [query, setQuery] = useState("");
   const [filterType, setFilterType] = useState<"all" | "electric" | "water" | "lpg">("all");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   type SortMode = "id_asc" | "id_desc" | "type" | "stall" | "status";
   const [sortBy, setSortBy] = useState<SortMode>("id_asc");
-
-  // modals
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   const [editVisible, setEditVisible] = useState(false);
   const [qrVisible, setQrVisible] = useState(false);
-
-  // create form
   const [type, setType] = useState<Meter["meter_type"]>("electric");
   const [sn, setSn] = useState("");
   const [mult, setMult] = useState("");
   const [stallId, setStallId] = useState("");
   const [status, setStatus] = useState<Meter["meter_status"]>("inactive");
-
-  // edit form
   const [editRow, setEditRow] = useState<Meter | null>(null);
   const [editType, setEditType] = useState<Meter["meter_type"]>("electric");
   const [editSn, setEditSn] = useState("");
   const [editMult, setEditMult] = useState("");
   const [editStallId, setEditStallId] = useState("");
   const [editStatus, setEditStatus] = useState<Meter["meter_status"]>("inactive");
-
-  // QR
   const [qrMeterId, setQrMeterId] = useState("");
   const qrCodeRef = useRef<any>(null);
-
-  // api
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
-
   useEffect(() => { loadAll(); }, [token]);
   const loadAll = async () => {
     if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage meters."); return; }
@@ -154,24 +129,20 @@ export default function MeterPanel({ token }: { token: string | null }) {
       ]);
       setMeters(metersRes.data || []);
       setStalls(stallsRes.data || []);
-
       if (isAdmin) {
         try { const bRes = await api.get<Building[]>("/buildings"); setBuildings(bRes.data || []); } catch { setBuildings([]); }
       } else { setBuildings([]); }
-
       if (!isAdmin && userBuildingId) setBuildingFilter((prev) => prev || userBuildingId);
     } catch (err: any) {
       notify("Load failed", errorText(err, "Could not load meters/stalls."));
     } finally { setBusy(false); }
   };
-
   const mtrNum = (id: string) => { const m = /^MTR-(\d+)/i.exec(id || ""); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; };
   const stallToBuilding = useMemo(() => {
     const m = new Map<string, string>();
     stalls.forEach((s) => { if (s?.stall_id && s?.building_id) m.set(s.stall_id, s.building_id); });
     return m;
   }, [stalls]);
-
   const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
       return [{ label: "All", value: "" }].concat(
@@ -189,7 +160,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
     if (arr.length) return base.concat(arr.sort().map((id) => ({ label: id, value: id })));
     return base;
   }, [isAdmin, buildings, stalls, userBuildingId]);
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = meters;
@@ -198,7 +168,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
     if (!q) return list;
     return list.filter((m) => [m.meter_id, m.meter_sn, m.meter_type, m.stall_id, m.meter_status].some((v) => String(v).toLowerCase().includes(q)));
   }, [meters, query, filterType, buildingFilter, stallToBuilding]);
-
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortBy) {
@@ -210,11 +179,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
       default:         return arr.sort((a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id));
     }
   }, [filtered, sortBy]);
-
-  // ---------- CRUD ----------
   const onCreate = async () => {
     if (!sn.trim() || !stallId.trim()) { notify("Missing info", "Serial number and Stall are required."); return; }
-
     const payload: any = {
       meter_type: type,
       meter_sn: sn.trim(),
@@ -226,7 +192,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       if (!Number.isFinite(asNum)) { notify("Invalid multiplier", "Enter a numeric multiplier (e.g., 1 or 93). "); return; }
       payload.meter_mult = asNum;
     }
-
     try {
       setSubmitting(true);
       await api.post("/meters", payload);
@@ -240,7 +205,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       else notify("Create failed", msg);
     } finally { setSubmitting(false); }
   };
-
   const openEdit = (m: Meter) => {
     setEditRow(m);
     setEditType(m.meter_type);
@@ -250,7 +214,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
     setEditStatus(m.meter_status);
     setEditVisible(true);
   };
-
   const onUpdate = async () => {
     if (!editRow) return;
     const body: any = {
@@ -264,7 +227,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       if (!Number.isFinite(asNum)) { notify("Invalid multiplier", "Enter a numeric multiplier (e.g., 1 or 93). "); return; }
       body.meter_mult = asNum;
     }
-
     try {
       setSubmitting(true);
       await api.put(`/meters/${encodeURIComponent(editRow.meter_id)}`, body);
@@ -277,7 +239,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       else notify("Update failed", msg);
     } finally { setSubmitting(false); }
   };
-
   const onDelete = async (m: Meter) => {
     const ok = await confirm("Delete meter", `Are you sure you want to delete ${m.meter_id}?`);
     if (!ok) return;
@@ -292,8 +253,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       else notify("Delete failed", msg);
     } finally { setSubmitting(false); }
   };
-
-  // QR helpers
   const openQr = (meter_id: string) => { setQrMeterId(meter_id); setQrVisible(true); };
   const downloadQr = () => {
     if (!qrCodeRef.current) return;
@@ -315,8 +274,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       notify("Download failed", "Could not generate QR image.");
     }
   };
-
-  /* ---------- UI ---------- */
   if (busy) {
     return (
       <View style={[styles.screen, { justifyContent: "center", alignItems: "center" }]}>
@@ -324,19 +281,15 @@ export default function MeterPanel({ token }: { token: string | null }) {
       </View>
     );
   }
-
   return (
     <View style={styles.screen}>
       <View style={styles.card}>
-        {/* Header */}
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Meters</Text>
           <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
             <Text style={styles.btnText}>+ Create Meter</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Toolbar: Search + Filters button */}
         <View style={styles.filtersBar}>
           <View style={[styles.searchWrap, { flex: 1 }]}> 
             <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -349,19 +302,15 @@ export default function MeterPanel({ token }: { token: string | null }) {
               returnKeyType="search"
             />
           </View>
-
           <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
             <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
             <Text style={styles.btnGhostText}>Filters</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Building chips */}
         <View style={{ marginTop: 6, marginBottom: 12 }}>
           <View style={styles.buildingHeaderRow}>
             <Text style={styles.dropdownLabel}>Building</Text>
           </View>
-
           {isMobile ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRowHorizontal}>
               {buildingChipOptions.map((opt) => (
@@ -376,8 +325,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
             </View>
           )}
         </View>
-
-        {/* LIST */}
         {sorted.length === 0 ? (
           <View style={styles.emptyWrap}>
             <Ionicons name="archive-outline" size={22} color="#94a3b8" />
@@ -400,7 +347,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   </Text>
                   <Text style={styles.rowMetaSmall}>Status: {item.meter_status.toUpperCase()}</Text>
                 </View>
-
                 {isMobile ? (
                   <View style={styles.rowActionsMobile}>
                     <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
@@ -437,21 +383,17 @@ export default function MeterPanel({ token }: { token: string | null }) {
           />
         )}
       </View>
-
-      {/* FILTERS modal (Type + Sort) */}
       <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
             <View style={styles.modalDivider} />
-
             <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Type</Text>
             <View style={styles.chipsRow}>
               {["all", "electric", "water", "lpg"].map((t) => (
                 <Chip key={t} label={t.toUpperCase()} active={filterType === (t as any)} onPress={() => setFilterType(t as any)} />
               ))}
             </View>
-
             <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
             <View style={styles.chipsRow}>
               {[
@@ -464,7 +406,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 <Chip key={val} label={label} active={sortBy === (val as SortMode)} onPress={() => setSortBy(val as SortMode)} />
               ))}
             </View>
-
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
@@ -482,8 +423,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
           </View>
         </View>
       </Modal>
-
-      {/* CREATE MODAL */}
       <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -497,15 +436,11 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   <Picker.Item label="LPG (Gas)" value="lpg" />
                 </Picker>
               </View>
-
               <Text style={styles.dropdownLabel}>Serial Number</Text>
               <TextInput value={sn} onChangeText={setSn} placeholder="e.g. UGF-E-000111" style={styles.input} />
-
               <Text style={styles.dropdownLabel}>Multiplier <Text style={{ color: "#64748b", fontWeight: "400" }}>(leave blank to auto)</Text></Text>
               <TextInput value={mult} onChangeText={setMult} keyboardType="numeric" placeholder="e.g. 1 or 93" style={styles.input} />
-
               <Text style={styles.help}>Water defaults to 93.00; Electric/LPG default to 1.00 when left blank.</Text>
-
               <Text style={styles.dropdownLabel}>Stall</Text>
               <View style={styles.pickerWrapper}>
                 <Picker selectedValue={stallId} onValueChange={(v) => setStallId(v)} style={styles.picker}>
@@ -515,7 +450,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   ))}
                 </Picker>
               </View>
-
               <Text style={styles.dropdownLabel}>Status</Text>
               <View style={styles.pickerWrapper}>
                 <Picker selectedValue={status} onValueChange={(v) => setStatus(v)} style={styles.picker}>
@@ -524,7 +458,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 </Picker>
               </View>
             </ScrollView>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
                 <Text style={styles.btnGhostText}>Cancel</Text>
@@ -536,8 +469,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-
-      {/* EDIT MODAL */}
       <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -551,13 +482,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   <Picker.Item label="LPG (Gas)" value="lpg" />
                 </Picker>
               </View>
-
               <Text style={styles.dropdownLabel}>Serial Number</Text>
               <TextInput value={editSn} onChangeText={setEditSn} style={styles.input} />
-
               <Text style={styles.dropdownLabel}>Multiplier <Text style={{ color: "#64748b", fontWeight: "400" }}>(leave blank to keep or auto if type changed)</Text></Text>
               <TextInput value={editMult} onChangeText={setEditMult} keyboardType="numeric" style={styles.input} />
-
               <Text style={styles.dropdownLabel}>Stall</Text>
               <View style={styles.pickerWrapper}>
                 <Picker selectedValue={editStallId} onValueChange={(v) => setEditStallId(v)} style={styles.picker}>
@@ -566,7 +494,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   ))}
                 </Picker>
               </View>
-
               <Text style={styles.dropdownLabel}>Status</Text>
               <View style={styles.pickerWrapper}>
                 <Picker selectedValue={editStatus} onValueChange={(v) => setEditStatus(v)} style={styles.picker}>
@@ -575,7 +502,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 </Picker>
               </View>
             </ScrollView>
-
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
                 <Text style={styles.btnGhostText}>Cancel</Text>
@@ -587,8 +513,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-
-      {/* QR MODAL */}
       <Modal visible={qrVisible} animationType="fade" transparent onRequestClose={() => setQrVisible(false)}>
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -610,8 +534,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
     </View>
   );
 }
-
-/* Small Chip */
 function Chip({ label, active, onPress }: { label: string; active?: boolean; onPress?: () => void }) {
   return (
     <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
@@ -619,8 +541,6 @@ function Chip({ label, active, onPress }: { label: string; active?: boolean; onP
     </TouchableOpacity>
   );
 }
-
-/* ========== Styles ========== */
 const styles = StyleSheet.create({
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
   card: {
@@ -638,13 +558,11 @@ const styles = StyleSheet.create({
   btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-
   filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 10, paddingHorizontal: 10, height: 40, borderWidth: 1, borderColor: "#e2e8f0" },
   search: { flex: 1, height: 40, color: "#0f172a" },
   btnGhost: { flexDirection: "row", alignItems: "center", backgroundColor: "#e2e8f0", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: "#cbd5e1" },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
   buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8, alignItems: "center" },
@@ -654,7 +572,6 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
   row: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 12, padding: 12, marginBottom: 10, backgroundColor: "#fff", flexDirection: "row", alignItems: "center" },
   rowMobile: { flexDirection: "column", alignItems: "stretch" },
   rowMain: { flex: 1, paddingRight: 10 },
@@ -662,7 +579,6 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
   rowActions: { width: 260, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 },
   rowActionsMobile: { flexDirection: "row", gap: 8, marginTop: 10, justifyContent: "flex-start", alignItems: "center" },
   actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 },
@@ -673,22 +589,18 @@ const styles = StyleSheet.create({
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
   actionGhostText: { color: "#1d4ed8" },
-
   emptyWrap: { alignItems: "center", paddingVertical: 24, gap: 6 },
   empty: { color: "#64748b" },
-
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
   pickerWrapper: { borderWidth: 1, borderColor: "#dbe2ea", borderRadius: 8, overflow: "hidden" },
   picker: { height: 40 },
   input: { backgroundColor: "#f8fafc", borderWidth: 1, borderColor: "#e7ecf3", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, color: "#0f172a" },
   help: { color: "#64748b", fontSize: 12, marginTop: 4, marginBottom: 8 },
-
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", alignItems: "center", justifyContent: "center", padding: 12 },
   modalCard: { backgroundColor: "#fff", borderRadius: 16, padding: 14, borderWidth: 1, borderColor: "#eef2f7", ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" as any }, default: { elevation: 4 } }) as any), width: "100%", maxWidth: 560 },
   modalTitle: { fontSize: 16, fontWeight: "900", color: "#0b2447" },
   modalDivider: { height: 1, backgroundColor: "#e5e7eb", marginVertical: 10 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 12 },
-
   promptOverlay: { flex: 1, backgroundColor: "rgba(16,42,67,0.25)", justifyContent: "center", alignItems: "center", padding: 16 },
   promptCard: { backgroundColor: "#fff", width: "100%", maxWidth: 520, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: "#eef2f7", ...(Platform.select({ web: { boxShadow: "0 8px 24px rgba(16,42,67,0.08)" as any }, default: { elevation: 3 } }) as any) },
 });

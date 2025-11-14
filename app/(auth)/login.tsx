@@ -1,4 +1,3 @@
-// app/(auth)/login.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,18 +18,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../contexts/AuthContext";
 import { BASE_API as BASE_API_CONST } from "../../constants/api";
-
-/** ---------- Frontend-only safety helpers (no backend changes) ---------- */
-// If you're on Android emulator, localhost doesn't work. Prefer 10.0.2.2.
 const resolveBaseApiForDevice = (base: string) => {
   if (!base) return base;
   try {
     const url = new URL(base);
     const isHttp = url.protocol === "http:" || url.protocol === "https:";
     if (!isHttp) return base;
-
     const host = url.hostname;
-    // Android emulator fix
     if (Platform.OS === "android" && (host === "localhost" || host === "127.0.0.1")) {
       url.hostname = "10.0.2.2";
       return url.toString().replace(/\/$/, "");
@@ -40,24 +34,18 @@ const resolveBaseApiForDevice = (base: string) => {
     return base;
   }
 };
-
 const BASE_API = resolveBaseApiForDevice(BASE_API_CONST);
 const API_URL = `${BASE_API}/auth/login`;
-
 export default function LoginScreen() {
   const { login } = useAuth();
-
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
   const usernameLabelAnim = useRef(new Animated.Value(0)).current;
   const passwordLabelAnim = useRef(new Animated.Value(0)).current;
-
-  // Axios instance scoped to this screen for clearer logs and timeouts
   const api = useMemo(() => {
     const instance = axios.create({
       baseURL: BASE_API,
@@ -66,45 +54,33 @@ export default function LoginScreen() {
     });
     return instance;
   }, []);
-
   const canSubmit = useMemo(
     () => username.trim().length > 0 && password.length > 0 && !loading,
     [username, password, loading]
   );
-
   const submit = async () => {
     const user_id = username.trim();
     const user_password = password;
-
     if (!user_id || !user_password) {
       setError("Please enter your username and password.");
       return;
     }
-
     setLoading(true);
     setError("");
     Keyboard.dismiss();
-
     try {
-      // Send exactly what your backend expects; no backend changes needed
       const res = await api.post("/auth/login", { user_id, user_password });
-
-      // Accept the strict shape { token } but gracefully handle if backend wraps it
       const token =
         res?.data?.token ??
         res?.data?.data?.token ??
         null;
-
       if (!token) {
-        // If server returned 200 without token, show raw payload for debugging
         console.log("LOGIN OK but missing token. Response data:", res?.data);
         throw new Error("Logged in but no token returned by server.");
       }
-
       await login(token);
       router.replace("/(tabs)/dashboard");
     } catch (err: any) {
-      // Show precise diagnostics in console to prove this is frontend or backend
       console.log("LOGIN ERROR →", {
         url: API_URL,
         base: BASE_API,
@@ -113,8 +89,6 @@ export default function LoginScreen() {
         data: err?.response?.data,
         message: err?.message,
       });
-
-      // Prefer backend-provided messages (no backend change required)
       const msg =
         err?.response?.data?.error ||
         err?.response?.data?.message ||
@@ -125,17 +99,9 @@ export default function LoginScreen() {
       setLoading(false);
     }
   };
-
-  /* ---------- optional: quick connectivity ping (frontend only) ---------- */
   useEffect(() => {
     console.log("Auth Login Screen mounted. BASE_API →", BASE_API, "API_URL →", API_URL);
-    // Uncomment while diagnosing connectivity; does not change backend.
-    // api.get("/health")
-    //   .then(r => console.log("HEALTH OK", r.data))
-    //   .catch(e => console.log("HEALTH ERR", e?.message, e?.response?.data));
   }, []);
-
-  /* ------- floating label helpers ------- */
   const onFocus = (field: "username" | "password") => {
     setFocusedInput(field);
     Animated.timing(field === "username" ? usernameLabelAnim : passwordLabelAnim, {
@@ -155,7 +121,6 @@ export default function LoginScreen() {
       }).start();
     }
   };
-
   const usernameLabelStyle = {
     top: usernameLabelAnim.interpolate({ inputRange: [0, 1], outputRange: [18, -10] }),
     fontSize: usernameLabelAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 12] }),
@@ -164,7 +129,6 @@ export default function LoginScreen() {
     top: passwordLabelAnim.interpolate({ inputRange: [0, 1], outputRange: [18, -10] }),
     fontSize: passwordLabelAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 12] }),
   };
-
   return (
     <View style={styles.container}>
       <LinearGradient colors={["#fbfbfdff", "#c3cce2ff", "#a7b1c9ff"]} style={styles.backgroundGradient} />
@@ -172,25 +136,21 @@ export default function LoginScreen() {
       <View style={styles.shape2} />
       <View style={styles.shape3} />
       <View style={styles.grainOverlay} />
-
       <KeyboardAvoidingView style={styles.keyboardView} behavior={Platform.select({ ios: "padding", android: undefined })}>
         <View style={styles.content}>
           <View style={styles.cardContainer}>
             <View style={styles.ambientShadow} />
             <View style={styles.card}>
               <View style={styles.goldBar} />
-
               <View style={styles.logoContainer}>
                 <View style={styles.logoFrame}>
                   <Image source={require("../../assets/images/logo.png")} style={styles.logo} resizeMode="contain" />
                 </View>
               </View>
-
               <Text style={styles.title}>Welcome</Text>
               <Text style={styles.subtitle}>Please sign in to your account</Text>
-
               <View style={styles.formContainer}>
-                {/* Username */}
+                {}
                 <View style={styles.inputContainer}>
                   <Animated.Text
                     style={[
@@ -222,13 +182,12 @@ export default function LoginScreen() {
                       autoCapitalize="none"
                       autoCorrect={false}
                       returnKeyType="next"
-                      onSubmitEditing={() => {/* hook up ref to password if you want auto-focus */}}
+                      onSubmitEditing={() => {}}
                     />
                   </View>
                   <View style={[styles.inputUnderline, focusedInput === "username" && styles.inputUnderlineFocused]} />
                 </View>
-
-                {/* Password */}
+                {}
                 <View style={styles.inputContainer}>
                   <Animated.Text
                     style={[
@@ -272,16 +231,14 @@ export default function LoginScreen() {
                   <View style={[styles.inputUnderline, focusedInput === "password" && styles.inputUnderlineFocused]} />
                 </View>
               </View>
-
-              {/* Error box */}
+              {}
               {error ? (
                 <View style={styles.errorBox}>
                   <Ionicons name="information-circle" size={18} color="#d32f2f" />
                   <Text style={styles.errorText}>{error}</Text>
                 </View>
               ) : null}
-
-              {/* Submit */}
+              {}
               <TouchableOpacity
                 style={[styles.button, (!canSubmit || loading) && styles.buttonDisabled]}
                 onPress={submit}
@@ -300,15 +257,13 @@ export default function LoginScreen() {
                   )}
                 </LinearGradient>
               </TouchableOpacity>
-
-              {/* Divider */}
+              {}
               <View style={styles.dividerContainer}>
                 <View style={styles.dividerLine} />
                 <Text style={styles.dividerText}>SECURE</Text>
                 <View style={styles.dividerLine} />
               </View>
-
-              {/* Footer */}
+              {}
               <View style={styles.footer}>
                 <View style={styles.securityBadge}>
                   <Ionicons name="shield" size={16} color="#474d8bff" />
@@ -317,15 +272,13 @@ export default function LoginScreen() {
               </View>
             </View>
           </View>
-
-          {/* Decorative element */}
+          {}
           <View style={styles.decorativeCircle} />
         </View>
       </KeyboardAvoidingView>
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fdfcfb" },
   backgroundGradient: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
