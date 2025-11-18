@@ -1651,7 +1651,7 @@ const openPrintProof = async (reading: Reading) => {
           binary += String.fromCharCode(uint8Array[i]);
         }
         const base64 = btoa(binary);
-        imageUri = `data:image/jpeg;base64,${base64}`;
+        imageUri = asDataUrl(base64); // uses your helper to build data:image/jpeg;base64,...
         console.log('🖼️ Image converted to data URL successfully');
       } catch (convertError) {
         console.error('❌ Error converting image to base64:', convertError);
