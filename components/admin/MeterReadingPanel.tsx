@@ -263,6 +263,11 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const authHeader = useMemo(() => (headerToken ? { Authorization: headerToken } : {}), [headerToken]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
 
+  // Load lock headers once auth header changes (root-level)
+  useEffect(() => {
+    reloadBillingHeaders();
+  }, [authHeader]);
+
   // device
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
@@ -334,6 +339,96 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   // ---------- AUTO-DETECT READING ENDPOINT ----------
   const READING_ENDPOINTS = ["/meter_reading", "/readings", "/meter-readings", "/meterreadings"];
   const [readingBase, setReadingBase] = useState<string>(READING_ENDPOINTS[0]);
+  /* ===== Billing lock detection (optional) ===== */
+type BillingHeader = {
+  building_id: string;
+  period: { start: string; end: string };
+  // optional status if you later add a locked flag in the DB
+  status?: string;
+};
+
+const BILLING_HEADERS_ENDPOINTS = [
+  "/billing/headers",
+  "/billings/headers",
+  "/billings/buildings", // 👈 your real endpoint
+  "/billing",
+  "/billings",
+];
+
+const [billingHeadersBase, setBillingHeadersBase] = useState<string | null>(null);
+const [billingHeaders, setBillingHeaders] = useState<BillingHeader[]>([]);
+
+async function detectBillingHeadersEndpoint() {
+  for (const p of BILLING_HEADERS_ENDPOINTS) {
+    try {
+      const res = await api.get(p, { validateStatus: () => true });
+      const ok =
+        res.status >= 200 &&
+        res.status < 400 &&
+        (
+          Array.isArray(res.data) ||
+          (res.data && typeof res.data === "object" && !Array.isArray(res.data))
+        );
+
+      if (ok) {
+        setBillingHeadersBase(p);
+        return p;
+      }
+    } catch {
+      // ignore and try next
+    }
+  }
+  return null;
+}
+
+const reloadBillingHeaders = async () => {
+  try {
+    const base = billingHeadersBase ?? (await detectBillingHeadersEndpoint());
+    if (!base) return;
+
+    const res = await api.get(base, { validateStatus: () => true });
+    const data = res.data;
+
+    let headers: BillingHeader[] = [];
+
+    // Case 1: backend returns an array of headers
+    if (Array.isArray(data)) {
+      headers = data as BillingHeader[];
+    }
+    // Case 2: backend returns grouped object like /billings/buildings
+    else if (data && typeof data === "object") {
+      headers = Object.values(data as Record<string, any>).map((item) => ({
+        building_id: item.building_id,
+        period: item.period ?? {
+          start: item.period_start,
+          end: item.period_end,
+        },
+        status:
+          item.status ??
+          item.lock_status ??
+          (typeof item.is_locked !== "undefined"
+            ? String(item.is_locked)
+            : undefined),
+      }));
+    }
+
+    // keep only valid ones
+    headers = headers.filter(
+      (h) =>
+        h &&
+        h.building_id &&
+        h.period &&
+        typeof h.period.start === "string" &&
+        typeof h.period.end === "string"
+    );
+
+    setBillingHeaders(headers);
+  } catch (e) {
+    if (Platform.OS === "web") {
+      console.error("Billing header load failed:", e);
+    }
+  }
+};
 
   async function detectReadingEndpoint() {
     for (const p of READING_ENDPOINTS) {
@@ -368,33 +463,39 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
       notify("Not logged in", "Please log in to manage meter readings.");
       return;
     }
-    try {
-      setBusy(true);
-      const base = await detectReadingEndpoint();
-      const [rRes, mRes, sRes] = await Promise.all([
-        api.get<Reading[]>(base),
-        api.get<Meter[]>("/meters"),
-        api.get<Stall[]>("/stalls"),
-      ]);
-      setReadings(Array.isArray(rRes.data) ? rRes.data : (rRes.data as any)?.items ?? []);
-      setMeters(mRes.data || []);
-      setStalls(sRes.data || []);
-      if (!formMeterId && mRes.data?.length) setFormMeterId(mRes.data[0].meter_id);
-      if (isAdmin) {
-        try {
-          const bRes = await api.get<Building[]>("/buildings");
-          setBuildings(bRes.data || []);
-        } catch {
-          setBuildings([]);
-        }
+  try {
+    setBusy(true);
+    const base = await detectReadingEndpoint();
+    const [rRes, mRes, sRes] = await Promise.all([
+      api.get<Reading[]>(base),
+      api.get<Meter[]>("/meters"),
+      api.get<Stall[]>("/stalls"),
+    ]);
+    setReadings(Array.isArray(rRes.data) ? rRes.data : (rRes.data as any)?.items ?? []);
+    setMeters(mRes.data || []);
+    setStalls(sRes.data || []);
+    if (!formMeterId && mRes.data?.length) setFormMeterId(mRes.data[0].meter_id);
+    if (isAdmin) {
+      try {
+        const bRes = await api.get<Building[]>("/buildings");
+        setBuildings(bRes.data || []);
+      } catch {
+        setBuildings([]);
       }
-      if (!isAdmin && userBuildingId) setBuildingFilter((prev) => prev || userBuildingId);
-    } catch (err: any) {
-      notify("Load failed", errorText(err, "Please check your connection and permissions."));
-      if (Platform.OS === "web") console.error("LOAD ERROR", err?.response ?? err);
-    } finally {
-      setBusy(false);
     }
+    if (!isAdmin && userBuildingId) {
+      setBuildingFilter((prev) => prev || userBuildingId);
+    }
+
+    // 🔒 also fetch stored billings headers for lock detection
+    await reloadBillingHeaders();
+  } catch (err: any) {
+    notify("Load failed", errorText(err, "Please check your connection and permissions."));
+    if (Platform.OS === "web") console.error("LOAD ERROR", err?.response ?? err);
+  } finally {
+    setBusy(false);
+  }
+
   };
   useEffect(() => {
     if (selectedMeterId) setFormMeterId(selectedMeterId);
@@ -413,7 +514,124 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     return m;
   }, [stalls]);
 
-  const buildingChipOptions = useMemo(() => {
+  
+// Helper to map meter → building
+const buildingIdForMeter = (
+  meterId: string | null | undefined
+): string | null => {
+  if (!meterId) return null;
+  const m = metersById.get(meterId);
+  if (!m) return null;
+
+  const stallId =
+    (m as any).stall_id ||
+    (m as any).stall_no ||
+    (m as any).stall_sn ||
+    null;
+
+  if (stallId && stallToBuilding.has(String(stallId))) {
+    return stallToBuilding.get(String(stallId)) || null;
+  }
+
+  return (m as any).building_id || null;
+};
+
+const ymd = (d: string) =>
+  typeof d === "string" ? d.split("T")[0] : d;
+
+const isBetween = (d: string, s: string, e: string) => {
+  const x = ymd(d);
+  return x >= ymd(s) && x <= ymd(e);
+};
+
+const isLockedHeader = (h: BillingHeader): boolean => {
+  const status = (h.status ?? "").toString().toLowerCase();
+  if (!status) {
+    // no status column → treat any stored billing as locked
+    return true;
+  }
+  return ["locked", "lock", "closed", "finalized", "1", "true"].includes(
+    status
+  );
+};
+
+const isDateLockedFor = (buildingId: string | null, dateYmd: string): boolean => {
+    if (!buildingId) return false;
+    if (!billingHeaders?.length) return false;
+    return billingHeaders.some((h) => h.building_id === buildingId && isBetween(dateYmd, h.period.start, h.period.end));
+  };
+
+// Existing simple flag helper (if you already have one, keep yours)
+const isReadingLocked = (row?: Reading | null): boolean => {
+  return getReadingLockInfo(row).locked;
+};
+
+// NEW: rich lock info (flag + billing header)
+const getReadingLockInfo = (
+  row?: Reading | null
+): { locked: boolean; header?: BillingHeader } => {
+  if (!row) return { locked: false };
+
+  const buildingId = buildingIdForMeter(row.meter_id);
+  if (!buildingId) return { locked: false };
+
+  const dateStr = ymd(row.lastread_date);
+  if (!billingHeaders || billingHeaders.length === 0) {
+    return { locked: false };
+  }
+
+  const header = billingHeaders.find(
+    (h) =>
+      h.building_id === buildingId &&
+      isLockedHeader(h) &&
+      isBetween(dateStr, h.period.start, h.period.end)
+  );
+
+  return { locked: !!header, header };
+};
+
+  // numeric sort helper for meter ids
+  const mtrNum = (id: string) => {
+    const n = (id || "").replace(/\D+/g, "");
+    return n ? parseInt(n, 10) : 0;
+  };
+
+  // Filtered/sorted meter list used by the picker
+  const filteredMeters = useMemo(() => {
+    let arr = meters.slice();
+
+    if (typeFilter) {
+      const t = String(typeFilter).toLowerCase();
+      arr = arr.filter((m) => String((m as any).meter_type || "").toLowerCase() === t);
+    }
+
+    if (buildingFilter) {
+      const b = buildingFilter;
+      arr = arr.filter((m) => {
+        const direct = (m as any).building_id || null;
+        const stallId = (m as any).stall_id || (m as any).stall_no || (m as any).stall_sn || null;
+        const viaStall = stallId ? stallToBuilding.get(String(stallId)) : null;
+        return direct === b || viaStall === b;
+      });
+    }
+
+    if (meterQuery && meterQuery.trim()) {
+      const q = meterQuery.trim().toLowerCase();
+      arr = arr.filter(
+        (m) =>
+          String((m as any).meter_no || "").toLowerCase().includes(q) ||
+          String(m.meter_id || "").toLowerCase().includes(q)
+      );
+    }
+
+    return arr.sort(
+      (a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id)
+    );
+  }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
+
+  const buildingChipOptionsDeps = 0;
+
+const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
       return [{ label: "All", value: "" }].concat(
         buildings
@@ -428,26 +646,42 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     return base.concat(ids.map((id) => ({ label: id, value: id })));
   }, [isAdmin, buildings, stalls, userBuildingId]);
 
+  
   const metersVisible = useMemo(() => {
-    let list = meters;
-    if (typeFilter) list = list.filter((m) => (m.meter_type || "").toLowerCase() === typeFilter);
-    if (buildingFilter) list = list.filter((m) => stallToBuilding.get(m.stall_id || "") === buildingFilter);
-    const q = meterQuery.trim().toLowerCase();
-    if (q)
-      list = list.filter((m) =>
-        [m.meter_id, m.meter_sn, m.stall_id, m.meter_status, m.meter_type]
+    let arr = meters.slice();
+
+    if (typeFilter) {
+      const t = String(typeFilter).toLowerCase();
+      arr = arr.filter((m) => String((m.meter_type || "")).toLowerCase() === t);
+    }
+
+    if (buildingFilter) {
+      const b = buildingFilter;
+      arr = arr.filter((m) => {
+        const direct = (m as any).building_id || null;
+        const stallId = (m as any).stall_id || (m as any).stall_no || (m as any).stall_sn || null;
+        const viaStall = stallId ? stallToBuilding.get(String(stallId)) : null;
+        return direct === b || viaStall === b;
+      });
+    }
+
+    const q = (meterQuery || "").trim().toLowerCase();
+    if (q) {
+      arr = arr.filter((m) =>
+        [m.meter_id, (m as any).meter_sn, (m as any).stall_id, (m as any).meter_status, (m as any).meter_type]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(q))
       );
-    const mtrNum = (id: string) => {
-      const m = /^MTR-(\d+)/i.exec(id || "");
-      return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
-    };
-    return [...list].sort((a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id));
-  }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
+    }
 
-  /* ---------- CRUD ---------- */
+    return arr.sort(
+      (a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id)
+    );
+  }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
+/* ---------- CRUD ---------- */
   const onCreate = async () => {
+    const b = buildingIdForMeter(formMeterId);
+    if (b && isDateLockedFor(b, formDate)) { notify('Locked by billing', 'That date is inside a locked billing period for this building.'); return; }
     if (!canWrite) {
       notify("Not allowed", "Only admin/operator can create readings.");
       return;
@@ -521,6 +755,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   };
 
   const openEdit = (row: Reading) => {
+    if (isReadingLocked(row)) { notify('Locked by billing', 'This reading falls within a locked billing period and cannot be edited.'); return; }
     setEditRow(row);
     setEditMeterId(row.meter_id);
     setEditValue(String(row.reading_value));
@@ -532,6 +767,7 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   };
 
   const onUpdate = async () => {
+    if (editRow && isReadingLocked(editRow)) { notify('Locked by billing', 'This reading falls within a locked billing period and cannot be updated.'); return; }
     if (!canWrite || !editRow) return;
 
     if (editWarn) {
@@ -631,10 +867,14 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
     try {
       const response = await api.get(`${readingBase}/${testReading.reading_id}/image`, {
         responseType: 'arraybuffer',
+        headers: {
+          'Accept': 'image/*',
+        }
       });
       
       console.log('🧪 Test response status:', response.status);
       console.log('🧪 Test data length:', response.data.byteLength);
+      console.log('🧪 Response headers:', response.headers);
       
       if (response.data.byteLength > 0) {
         notify("Backend OK", `Image endpoint working. Received ${response.data.byteLength} bytes.`);
@@ -970,8 +1210,8 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                 <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
                   <Text style={styles.btnGhostText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>{online ? "Save Reading" : "Save Offline"}</Text>}
+                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting || (!!buildingIdForMeter(formMeterId) && isDateLockedFor(buildingIdForMeter(formMeterId)!, formDate))}>
+                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>{(() => { const b = buildingIdForMeter(formMeterId); return b && isDateLockedFor(b, formDate) ? 'Locked' : (online ? 'Save Reading' : 'Save Offline'); })()}</Text>}
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -979,21 +1219,20 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* READINGS modal */}
-      <ReadingsModal
-        visible={readingsModalVisible}
-        onClose={() => {
-          setReadingsModalVisible(false);
-          setSelectedMeterId("");
-          setQuery("");
-          setPage(1);
-        }}
-        selectedMeterId={selectedMeterId}
-        query={query}
-        setQuery={setQuery}
-        sortBy={sortBy}
-        setSortBy={setSortBy}
-        readingsForSelected={(() => {
+<ReadingsModal
+  visible={readingsModalVisible}
+  onClose={() => {
+    setReadingsModalVisible(false);
+    setSelectedMeterId("");
+    setQuery("");
+    setPage(1);
+  }}
+  selectedMeterId={selectedMeterId}
+  query={query}
+  setQuery={setQuery}
+  sortBy={sortBy}
+  setSortBy={setSortBy}
+  readingsForSelected={(() => {
           if (!selectedMeterId) return [];
           const typed = readings.filter((r) => r.meter_id === selectedMeterId);
           const searched = query.trim()
@@ -1021,16 +1260,21 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
           }
           return arr;
         })()}
-        page={page}
-        setPage={setPage}
-        metersById={metersById}
-        submitting={submitting}
-        onDelete={onDelete}
-        openEdit={openEdit}
-        busy={busy}
-        readingBase={readingBase}
-        api={api}
-      />
+  page={page}
+  setPage={setPage}
+  metersById={metersById}
+  submitting={submitting}
+  onDelete={onDelete}
+  openEdit={openEdit}
+  busy={busy}
+  readingBase={readingBase}
+  api={api}
+  testImageEndpoint={testImageEndpoint} // Add this line
+  readings={readings}
+  isReadingLockedFn={isReadingLocked}
+  getReadingLockInfoFn={getReadingLockInfo} // Add this line
+
+/>
 
       {/* EDIT modal */}
       <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
@@ -1134,8 +1378,8 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
                 <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
                   <Text style={styles.btnGhostText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Save changes</Text>}
+                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting || (!!editRow && isReadingLocked(editRow))}>
+                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>{isReadingLocked(editRow!) ? 'Locked' : 'Save changes'}</Text>}
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1260,7 +1504,7 @@ function DatePickerField({ label, value, onChange }: { label: string; value: str
   const [year, setYear] = useState(y || new Date().getFullYear());
   const [month, setMonth] = useState((m || new Date().getMonth() + 1) as number);
   const [day, setDay] = useState(d || new Date().getDate());
-  useEffect(() => {
+useEffect(() => {
     const [py, pm, pd] = (value || todayStr()).split("-").map((n: string) => parseInt(n, 10));
     if (py && pm && pd) {
       setYear(py);
@@ -1350,6 +1594,9 @@ function ReadingsModal({
   busy,
   readingBase,
   api,
+  isReadingLockedFn,
+  getReadingLockInfoFn, // Add this prop
+
 }: any) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
@@ -1373,51 +1620,79 @@ function ReadingsModal({
   });
   const [printLoading, setPrintLoading] = useState(false);
 
-  const openPrintProof = async (reading: Reading) => {
-    setPrintLoading(true);
-    setPrintProofVisible(true);
+const openPrintProof = async (reading: Reading) => {
+  setPrintLoading(true);
+  setPrintProofVisible(true);
+  
+  try {
+    const endpoint = `${readingBase}/${encodeURIComponent(reading.reading_id)}/image`;
+    console.log('🖼️ Fetching image from:', endpoint);
     
-    try {
-      // Get image data
-      const endpoint = `${readingBase}/${encodeURIComponent(reading.reading_id)}/image`;
-      const response = await api.get(endpoint, {
-        responseType: 'arraybuffer' // Important for binary data
-      });
-      
-      let imageUri = null;
-      
-      // Convert the binary data to base64
-      if (response.data && response.data.byteLength > 0) {
-        // For arraybuffer response, convert to base64
-        const base64 = btoa(
-          new Uint8Array(response.data).reduce(
-            (data, byte) => data + String.fromCharCode(byte),
-            ''
-          )
-        );
+    const response = await api.get(endpoint, {
+      responseType: 'arraybuffer',
+      headers: {
+        'Accept': 'image/*',
+      },
+      timeout: 10000,
+      validateStatus: (status: number) => status < 500, // Add type annotation here
+    });
+    
+    console.log('🖼️ Image response status:', response.status);
+    console.log('🖼️ Image data length:', response.data?.byteLength || 0);
+    
+    let imageUri = null;
+    
+    if (response.status === 200 && response.data && response.data.byteLength > 0) {
+      try {
+        // Convert ArrayBuffer to base64 safely
+        const uint8Array = new Uint8Array(response.data);
+        let binary = '';
+        for (let i = 0; i < uint8Array.length; i++) {
+          binary += String.fromCharCode(uint8Array[i]);
+        }
+        const base64 = btoa(binary);
         imageUri = `data:image/jpeg;base64,${base64}`;
+        console.log('🖼️ Image converted to data URL successfully');
+      } catch (convertError) {
+        console.error('❌ Error converting image to base64:', convertError);
       }
-
-      // Get previous reading for this meter
-      const allReadingsForMeter = readingsForSelected
-        .filter((r: Reading) => r.meter_id === reading.meter_id)
-        .sort((a: Reading, b: Reading) => ts(b.lastread_date) - ts(a.lastread_date));
-      
-      const currentIndex = allReadingsForMeter.findIndex((r: Reading) => r.reading_id === reading.reading_id);
-      const previousReading = currentIndex < allReadingsForMeter.length - 1 ? allReadingsForMeter[currentIndex + 1] : null;
-
-      setPrintData({
-        reading,
-        imageUri,
-        previousReading,
-      });
-    } catch (err: any) {
-      console.error('Error loading print data:', err);
-      notify("Error", "Failed to load data for printing");
-    } finally {
-      setPrintLoading(false);
+    } else if (response.status === 404) {
+      console.warn('🖼️ Image not found (404) for reading:', reading.reading_id);
+    } else {
+      console.warn('🖼️ No image data received or empty response');
     }
-  };
+
+    // Get previous reading for comparison
+    const allReadingsForMeter = readingsForSelected
+      .filter((r: Reading) => r.meter_id === reading.meter_id)
+      .sort((a: Reading, b: Reading) => ts(b.lastread_date) - ts(a.lastread_date));
+    
+    const currentIndex = allReadingsForMeter.findIndex((r: Reading) => r.reading_id === reading.reading_id);
+    const previousReading = currentIndex < allReadingsForMeter.length - 1 ? allReadingsForMeter[currentIndex + 1] : null;
+
+    setPrintData({
+      reading,
+      imageUri,
+      previousReading,
+    });
+  } catch (err: any) {
+    console.error('❌ Error loading print data:', err);
+    console.error('❌ Error details:', errorText(err));
+    
+    // Set data without image on error
+    setPrintData({
+      reading,
+      imageUri: null,
+      previousReading: null,
+    });
+    
+    if (err.response?.status !== 404) {
+      notify("Warning", "Image not available for this reading. Other data loaded successfully.");
+    }
+  } finally {
+    setPrintLoading(false);
+  }
+};
 
   const handlePrint = () => {
     if (Platform.OS === "web") {
@@ -1573,38 +1848,77 @@ function ReadingsModal({
             keyExtractor={(item) => item.reading_id}
             contentContainerStyle={{ paddingBottom: 12 }}
             ListEmptyComponent={<Text style={styles.empty}>No readings for this meter.</Text>}
-            renderItem={({ item }) => (
-              <View style={[styles.listRow, isMobile && styles.listRowMobile]}>
-                <View style={{ flex: 1 }}>
-                  {isMobile ? (
-                    <>
-                      <Text style={styles.rowTitle}>
-                        <Text style={styles.meterLink}>{item.reading_id}</Text> • <Text>{item.lastread_date}</Text>
-                      </Text>
-                      <Text style={styles.rowSub}>Value: {fmtValue(item.reading_value)}</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.rowTitle}>{item.reading_id}</Text>
-                      <Text style={styles.rowSub}>
-                        {item.lastread_date} • Value: {fmtValue(item.reading_value)}
-                      </Text>
-                    </>
-                  )}
-                  <Text style={styles.rowSubSmall}>Updated {formatDateTime(item.last_updated)} by {item.updated_by}</Text>
-                </View>
+renderItem={({ item }) => {
+    const { locked, header } = getReadingLockInfoFn(item);
 
-                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openEdit(item)}>
-                  <Text style={styles.actionBtnGhostText}>Update</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={() => openPrintProof(item)}>
-                  <Text style={styles.actionBtnGhostText}>Print Proof</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDanger]} onPress={() => onDelete(item)}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>Delete</Text>}
-                </TouchableOpacity>
-              </View>
-            )}
+    return (
+      <View style={[styles.listRow, isMobile && styles.listRowMobile]}>
+        <View style={{ flex: 1 }}>
+          {isMobile ? (
+            <>
+              <Text style={styles.rowTitle}>
+                <Text style={styles.meterLink}>{item.reading_id}</Text> •{" "}
+                <Text>{item.lastread_date}</Text>
+              </Text>
+              <Text style={styles.rowSub}>
+                Value: {fmtValue(item.reading_value)}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.rowTitle}>{item.reading_id}</Text>
+              <Text style={styles.rowSub}>
+                {item.lastread_date} • Value: {fmtValue(item.reading_value)}
+              </Text>
+            </>
+          )}
+
+          {/* 🔒 lock badge */}
+          {locked && (
+            <View style={styles.lockBadge}>
+              <Text style={styles.lockBadgeText}>
+                🔒 Locked (Billing{" "}
+                {header?.period?.start ?? "?"} → {header?.period?.end ?? "?"})
+              </Text>
+            </View>
+          )}
+
+          <Text style={styles.rowSubSmall}>
+            Updated {formatDateTime(item.last_updated)} by {item.updated_by}
+          </Text>
+        </View>
+
+        {/* Hide Update button when locked */}
+        {!locked && (
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.actionBtnGhost]}
+            onPress={() => openEdit(item)}
+          >
+            <Text style={styles.actionBtnGhostText}>Update</Text>
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionBtnGhost]}
+          onPress={() => openPrintProof(item)}
+        >
+          <Text style={styles.actionBtnGhostText}>Print Proof</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionBtnDanger]}
+          onPress={() => onDelete(item)}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.actionBtnText}>Delete</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  }}
+
             ListHeaderComponent={
               <>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -1759,21 +2073,33 @@ function ReadingsModal({
                         </View>
                       </View>
 
-                      {/* Meter Image */}
-                      <View style={styles.printSection}>
-                        <Text style={styles.sectionTitle}>Meter Image</Text>
-                        {printData.imageUri ? (
-                          <View style={styles.imageContainer}>
-                            <RNImage
-                              source={{ uri: printData.imageUri }}
-                              style={styles.proofImage}
-                              resizeMode="contain"
-                            />
-                          </View>
-                        ) : (
-                          <Text style={styles.noData}>No image available for this reading</Text>
-                        )}
-                      </View>
+{/* Meter Image */}
+<View style={styles.printSection}>
+  <Text style={styles.sectionTitle}>Meter Image</Text>
+  {printData.imageUri ? (
+    <View style={styles.imageContainer}>
+      <RNImage
+        source={{ uri: printData.imageUri }}
+        style={styles.proofImage}
+        resizeMode="contain"
+        onError={(error) => {
+          console.error('❌ Image loading error:', error.nativeEvent.error);
+          // Update state to remove broken image
+          setPrintData(prev => ({ ...prev, imageUri: null }));
+        }}
+        onLoad={() => console.log('✅ Image loaded successfully')}
+      />
+    </View>
+  ) : (
+    <View style={styles.noImageContainer}>
+      <Ionicons name="image-outline" size={48} color="#94a3b8" />
+      <Text style={styles.noData}>No image available for this reading</Text>
+      <Text style={[styles.noData, { fontSize: 12, marginTop: 8 }]}>
+        The image may not have been uploaded or the endpoint is not available.
+      </Text>
+    </View>
+  )}
+</View>
 
                       {/* Footer */}
                       <View style={styles.printFooter}>
@@ -2443,5 +2769,27 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     padding: 20,
+  },
+  noImageContainer: {
+  alignItems: 'center',
+  padding: 20,
+  backgroundColor: '#f8fafc',
+  borderRadius: 8,
+  borderWidth: 1,
+  borderColor: '#e2e8f0',
+  borderStyle: 'dashed',
+},
+  lockBadge: {
+    marginTop: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 9999,
+    backgroundColor: "#fee2e2", // light red
+  },
+  lockBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#b91c1c", // dark red
   },
 });

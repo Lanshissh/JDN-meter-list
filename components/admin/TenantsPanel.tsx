@@ -166,7 +166,6 @@ function PickerField({
           {placeholder ? <Picker.Item label={placeholder} value="" /> : null}
           {children}
         </Picker>
-        <Ionicons name="chevron-down" size={16} color={tokens.color.ink} style={styles.pickerIcon} />
       </View>
     </View>
   );
@@ -209,7 +208,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [cBuildingId, setCBuildingId] = useState<string>("");
   const [cTenantSn, setCTenantSn] = useState<string>("");
   const [cTenantName, setCTenantName] = useState<string>("");
-  const [cStatus, setCStatus] = useState<"active" | "inactive">("active");
   const [cPenalty, setCPenalty] = useState<boolean>(false);
   const [cVat, setCVat] = useState<string>("");
   const [cWt, setCWt] = useState<string>("");
@@ -566,7 +564,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                   <Card title="Tenant">
                     <View style={{ gap: 10 }}>
                       <View>
-                        <Text style={styles.fieldLabel}>Tenant SN</Text>
+                        <Text style={styles.fieldLabel}>Tenant ID</Text>
                         <Input
                           placeholder="e.g., SN-001"
                           value={tenantDraft?.tenant_sn || ""}
@@ -740,7 +738,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     tenant_sn: cTenantSn.trim() || null,
                     tenant_name: cTenantName.trim(),
                     building_id,
-                    tenant_status: cStatus,
+                    tenant_status: "active", // Always set to "active" for new tenants
                     vat_code: cVat || null,
                     wt_code: cWt || null,
                     for_penalty: !!cPenalty,
@@ -748,7 +746,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                   setCreateVisible(false);
                   setCTenantSn("");
                   setCTenantName("");
-                  setCStatus("active");
                   setCPenalty(false);
                   setCVat("");
                   setCWt("");
@@ -784,16 +781,21 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 <Text style={styles.helpText}>No building list available — using manual input.</Text>
               </View>
             )}
+            {/* Locked status field for create */}
             <View style={[styles.flex1, { marginLeft: 8 }]}>
-              <PickerField label="Status" value={cStatus} onChange={(v) => setCStatus(v as any)}>
-                <Picker.Item label="Active" value="active" />
-                <Picker.Item label="Inactive" value="inactive" />
-              </PickerField>
+              <Text style={styles.fieldLabel}>Status</Text>
+              <View style={[styles.pickerShell, styles.disabledField]}>
+                <View style={styles.lockedStatusContainer}>
+                  <Ionicons name="lock-closed" size={16} color="#64748b" style={styles.lockIcon} />
+                  <Text style={styles.lockedStatusText}>Active</Text>
+                </View>
+              </View>
+              <Text style={styles.helperText}>New tenants are always created as active</Text>
             </View>
           </View>
           <View style={styles.rowInline}>
             <View style={[styles.flex1, { marginRight: 8 }]}>
-              <Text style={styles.fieldLabel}>Tenant SN</Text>
+              <Text style={styles.fieldLabel}>Tenant ID</Text>
               <Input placeholder="e.g., SN-001" value={cTenantSn} onChangeText={setCTenantSn} />
             </View>
             <View style={[styles.flex1, { marginLeft: 8 }]}>
@@ -926,7 +928,6 @@ const styles = StyleSheet.create({
   },
   pickerNative: { width: "100%", height: 44, paddingLeft: 8, color: tokens.color.ink, fontSize: 14 },
   pickerItemIOS: { fontSize: 16, color: tokens.color.ink },
-  pickerIcon: { position: "absolute", right: 10, top: 14, opacity: 0.8 },
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8 },
   kv: { fontSize: 13, color: tokens.color.ink, marginTop: 6 },
   kvKey: { color: tokens.color.inkSubtle, fontWeight: "700" },
@@ -945,4 +946,29 @@ const styles = StyleSheet.create({
   sheetScroll: { maxHeight: MOBILE_MODAL_MAX_HEIGHT },
   sheetContent: { paddingVertical: 12, gap: 12, paddingBottom: 96 },
   sep: { height: 1, backgroundColor: tokens.color.line, marginVertical: 10 },
+  // New styles for locked status field
+  disabledField: {
+    backgroundColor: "#f1f5f9",
+    borderColor: "#cbd5e1",
+  },
+  lockedStatusContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    height: 44,
+    backgroundColor: "#f1f5f9",
+  },
+  lockIcon: {
+    marginRight: 8,
+  },
+  lockedStatusText: {
+    color: "#64748b",
+    fontWeight: "600",
+  },
+  helperText: {
+    color: "#64748b",
+    fontSize: 12,
+    marginTop: 4,
+    fontStyle: "italic",
+  },
 });

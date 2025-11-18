@@ -77,8 +77,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
   const [createVisible, setCreateVisible] = useState(false);
   const [c_stallSn, setC_stallSn] = useState("");
   const [c_buildingId, setC_buildingId] = useState("");
-  const [c_status, setC_status] = useState<Stall["stall_status"]>("available");
-  const [c_tenantId, setC_tenantId] = useState("");
   const [editVisible, setEditVisible] = useState(false);
   const [editStall, setEditStall] = useState<Stall | null>(null);
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
@@ -128,19 +126,17 @@ export default function StallsPanel({ token }: { token: string | null }) {
   }, [filtered, sortMode]);
   const onCreate = async () => {
     const stall_sn = c_stallSn.trim();
-    if (!stall_sn || !c_buildingId || !c_status) { notify("Missing info", "Please enter Stall SN, select a Building, and choose a Status."); return; }
+    if (!stall_sn || !c_buildingId) { notify("Missing info", "Please enter Stall SN and select a Building."); return; }
     try {
       setSubmitting(true);
       await api.post("/stalls", {
         stall_sn,
         building_id: c_buildingId,
-        stall_status: c_status,
-        tenant_id: c_status === "available" ? null : (c_tenantId || null),
+        stall_status: "available", // Always set to "available" for new stalls
+        tenant_id: null, // Always null for new stalls
       });
       setCreateVisible(false);
       setC_stallSn("");
-      setC_tenantId("");
-      setC_status("available");
       await loadAll();
       notify("Success", "Stall created.");
     } catch (err: any) {
@@ -363,7 +359,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   </View>
                 </View>
                 <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>Stall SN</Text>
+                  <Text style={styles.inputLabel}>Stall ID</Text>
                   <TextInput
                     value={c_stallSn}
                     onChangeText={setC_stallSn}
@@ -372,31 +368,17 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     style={styles.input}
                   />
                 </View>
+                {/* Show locked status field */}
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Status</Text>
-                  <View style={styles.pickerWrapper}>
-                    <Picker selectedValue={c_status} onValueChange={(v) => setC_status(String(v) as any)} style={styles.picker}>
-                      <Picker.Item label="Available" value="available" />
-                      <Picker.Item label="Occupied" value="occupied" />
-                      <Picker.Item label="Under Maintenance" value="under maintenance" />
-                    </Picker>
-                  </View>
-                </View>
-                {c_status !== "available" && (
-                  <View style={styles.inputRow}>
-                    <Text style={styles.inputLabel}>Tenant</Text>
-                    <View style={styles.pickerWrapper}>
-                      <Picker selectedValue={c_tenantId} onValueChange={(v) => setC_tenantId(String(v))} style={styles.picker}>
-                        <Picker.Item label="-- select tenant --" value="" />
-                        {tenants
-                          .filter((t) => t.building_id === c_buildingId)
-                          .map((t) => (
-                            <Picker.Item key={t.tenant_id} label={`${t.tenant_name} (${t.tenant_id})`} value={t.tenant_id} />
-                          ))}
-                      </Picker>
+                  <View style={[styles.pickerWrapper, styles.disabledField]}>
+                    <View style={styles.lockedStatusContainer}>
+                      <Ionicons name="lock-closed" size={16} color="#64748b" style={styles.lockIcon} />
+                      <Text style={styles.lockedStatusText}>Available</Text>
                     </View>
                   </View>
-                )}
+                  <Text style={styles.helperText}>New stalls are always created as available</Text>
+                </View>
               </ScrollView>
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
@@ -432,7 +414,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                       </View>
                     </View>
                     <View style={styles.inputRow}>
-                      <Text style={styles.inputLabel}>Stall SN</Text>
+                      <Text style={styles.inputLabel}>Stall ID</Text>
                       <TextInput
                         value={editStall.stall_sn}
                         onChangeText={(v) => setEditStall((s) => (s ? { ...s, stall_sn: v } : s))}
@@ -722,4 +704,29 @@ const styles = StyleSheet.create({
     }) as any),
   },
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
+  // New styles for locked status field
+  disabledField: {
+    backgroundColor: "#f1f5f9",
+    borderColor: "#cbd5e1",
+  },
+  lockedStatusContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    height: 40,
+    backgroundColor: "#f1f5f9",
+  },
+  lockIcon: {
+    marginRight: 8,
+  },
+  lockedStatusText: {
+    color: "#64748b",
+    fontWeight: "600",
+  },
+  helperText: {
+    color: "#64748b",
+    fontSize: 12,
+    marginTop: 4,
+    fontStyle: "italic",
+  },
 });
