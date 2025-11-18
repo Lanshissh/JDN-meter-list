@@ -1,5 +1,5 @@
 // app/(tabs)/billing.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
 import { useAuth } from "../../contexts/AuthContext";
 import { BASE_API } from "../../constants/api";
 import RateOfChangePanel from "../../components/billing/RateOfChangePanel";
@@ -83,6 +84,11 @@ type StoredBilling = {
   payload?: any;
 };
 
+type BuildingOption = {
+  building_id: string;
+  building_name: string | null;
+};
+
 /* ========================= Helpers ========================= */
 
 const notify = (title: string, message?: string) => {
@@ -109,31 +115,50 @@ const fmt = (v: number | string | null | undefined, d = 2) => {
     : String(v);
 };
 
-const formatCurrency = (amount: number | string | null | undefined) => {
-  if (amount == null || amount === "") amount = 0;
-  const n = typeof amount === "string" ? Number(amount) : Number(amount);
-  const safe = Number.isFinite(n) ? n : 0;
-  return new Intl.NumberFormat("en-PH", {
-    style: "currency",
-    currency: "PHP",
-    minimumFractionDigits: 2,
-  }).format(safe);
+const formatCurrency = (v: number | null | undefined) => {
+  if (v == null || isNaN(Number(v))) return "—";
+  try {
+    return new Intl.NumberFormat("en-PH", {
+      style: "currency",
+      currency: "PHP",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(v));
+  } catch {
+    return `₱${Number(v).toFixed(2)}`;
+  }
 };
 
-const formatDate = (value?: string | null) => {
-  if (!value) return "—";
-  const s = String(value).trim();
-  if (!s) return "—";
-
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (m) return m[1];
-
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? new Date(t).toLocaleDateString() : s;
+// Php10 and VAT helpers for CSV
+// Php10 and VAT helpers for CSV
+const php10For = (r: BillingRow): number | null => {
+  if (r.consumed_kwh == null || r.utility_rate == null) return null;
+  const base = Number(r.consumed_kwh) * Number(r.utility_rate);
+  return Number.isFinite(base) ? base : null;
 };
 
-// basic CSV saver (web)
-const saveCsv = (filename: string, csv: string) => {
+const vatFor = (r: BillingRow): number | null => {
+  if (r.vat_rate == null) return null;
+  const base = php10For(r);
+  if (base == null) return null;
+  const v = base * Number(r.vat_rate);
+  return Number.isFinite(v) ? v : null;
+};
+
+// WTAX helper for CSV
+const wtaxFor = (r: BillingRow): number | null => {
+  if (r.whtax_rate == null) return null;
+  const vat = vatFor(r);
+  if (vat == null) return null;
+  const wtax = vat * r.whtax_rate;
+  return Number.isFinite(wtax) ? wtax : null;
+};
+
+const pctFmt = (v: number | null | undefined) =>
+  v == null ? "" : `${v.toFixed(0)}%`;
+
+/** Make CSV and (on web) trigger a download */
+function saveCsv(filename: string, csv: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.URL) {
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -143,54 +168,19 @@ const saveCsv = (filename: string, csv: string) => {
     a.style.display = "none";
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
   } else {
-    notify("CSV created", filename);
+    // React Native (mobile) – just show a message for now
+    notify("CSV created", "Use Share/Downloads feature on your device.");
   }
-};
+}
 
-const confirmDelete = async (
-  question: string,
-  onConfirm: () => Promise<void> | void
-) => {
-  if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).confirm) {
-    const ok = (window as any).confirm(question);
-    if (ok) await onConfirm();
-  } else {
-    Alert.alert(
-      "Confirm Delete",
-      question,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            onConfirm();
-          },
-        },
-      ],
-      { cancelable: true }
-    );
-  }
-};
 
-// Build CSV contents from a full billing payload
-const buildCsvForBilling = (payload: BuildingBillingResponse) => {
-  const rateFor = (r: BillingRow) => r.system_rate ?? r.utility_rate ?? 0;
-  const php10For = (r: BillingRow) =>
-    Number(r.consumed_kwh || 0) * Number(rateFor(r) || 0);
-  const vatFor = (r: BillingRow) => php10For(r) * Number(r.vat_rate || 0);
-
-  const pctFmt = (v: number | null | undefined) => {
-    if (v == null || !isFinite(Number(v))) return "";
-    const n = Number(v);
-    const pct = Math.abs(n) <= 1 ? n * 100 : n;
-    const sign = pct < 0 ? "-" : "";
-    return `${sign}${Math.abs(pct).toFixed(0)}%`;
-  };
-
+/** Build CSV content from a building billing payload */
+const makeBillingCsv = (payload: BuildingBillingResponse) => {
   const headers = [
     "STALL NO.",
     "TENANTS / VENDORS",
@@ -199,8 +189,9 @@ const buildCsvForBilling = (payload: BuildingBillingResponse) => {
     "READING PREVIOUS",
     "READING PRESENT",
     "CONSUMED KwHr",
-    "VAT (0.12)",
-    "Php 10/kwh",
+    "Php/kwh",                // Php 10/kWh column
+    "WTAX",                   // WTAX amount
+    "VAT",                    // VAT amount
     "TOTAL",
     "CONSUMED KwHr (Last Month)",
     "Rate of change",
@@ -216,9 +207,14 @@ const buildCsvForBilling = (payload: BuildingBillingResponse) => {
   const lines: string[] = [headers.join(",")];
 
   for (const r of allRows) {
-    const tenantLabel = [r.tenant_sn, r.tenant_name].filter(Boolean).join(" ").trim();
+    const tenantLabel = [r.tenant_sn, r.tenant_name]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+
     const php10 = php10For(r);
     const vat = vatFor(r);
+    const wtax = wtaxFor(r);
 
     const row = [
       r.stall_sn ?? r.stall_no ?? "",
@@ -228,15 +224,16 @@ const buildCsvForBilling = (payload: BuildingBillingResponse) => {
       r.reading_previous ?? "",
       r.reading_present ?? "",
       r.consumed_kwh ?? "",
-      vat ? vat.toFixed(2) : "",
-      php10 ? php10.toFixed(2) : "",
+      php10 != null ? php10.toFixed(2) : "",
+      wtax != null ? wtax.toFixed(2) : "",   // WTAX amount
+      vat != null ? vat.toFixed(2) : "",
       r.total_amount ?? "",
       r.prev_consumed_kwh ?? "",
       pctFmt(r.rate_of_change_pct),
       r.tax_code ?? "",
       r.whtax_code ?? "",
       "",
-      r.for_penalty ? "YES" : "NO",
+      r.for_penalty ? "TRUE" : "FALSE",
     ];
 
     lines.push(
@@ -252,6 +249,7 @@ const buildCsvForBilling = (payload: BuildingBillingResponse) => {
   const filename = `billing_${payload.building_id}_${payload.period.start}_${payload.period.end}.csv`;
   return { filename, csv: lines.join("\n") };
 };
+
 
 /* ========================= Component ========================= */
 
@@ -278,6 +276,8 @@ export default function BillingScreen() {
   );
 
   const [buildingId, setBuildingId] = useState("");
+  const [buildings, setBuildings] = useState<BuildingOption[]>([]);
+
   const [startDate, setStartDate] = useState<string>(() => {
     const d = new Date();
     const y = d.getMonth() === 0 ? d.getFullYear() - 1 : d.getFullYear();
@@ -294,11 +294,29 @@ export default function BillingScreen() {
     {}
   );
   const [error, setError] = useState<string>("");
+
+  // old viewMode/actionMode no longer used in UI but kept for compatibility
   const [viewMode, setViewMode] = useState<"billing" | "roc">("billing");
   const [actionMode, setActionMode] = useState<"generate" | "stored">("generate");
 
   const canRun =
     !!buildingId && isYMD(startDate) && isYMD(endDate) && !!token && !busy;
+
+  /* ========== Load buildings for dropdown ========== */
+
+  useEffect(() => {
+    const loadBuildings = async () => {
+      if (!token) return;
+      try {
+        const res = await api.get<BuildingOption[]>("/buildings");
+        const list = Array.isArray(res.data) ? res.data : [];
+        setBuildings(list);
+      } catch (e) {
+        console.error("Fetch buildings for billing failed:", e);
+      }
+    };
+    loadBuildings();
+  }, [api, token]);
 
   /* ========== API calls ========== */
 
@@ -347,7 +365,7 @@ export default function BillingScreen() {
   const onCreateBilling = async () => {
     if (!token) return notify("Not logged in", "Please sign in first.");
     if (!buildingId.trim())
-      return notify("Missing building", "Enter building ID.");
+      return notify("Missing building", "Select a building.");
     if (!isYMD(startDate) || !isYMD(endDate))
       return notify("Invalid dates", "Use YYYY-MM-DD.");
 
@@ -375,115 +393,39 @@ export default function BillingScreen() {
     } catch (e: any) {
       console.error("Create billing error:", e);
       const msg =
-        e?.response?.data?.error ?? e?.message ?? "Unable to create billing.";
+        e?.response?.data?.error ??
+        e?.message ??
+        "Unable to create building billing.";
       setError(msg);
-
-      if (e?.response?.status === 409) {
-        notify("Billing Already Exists", e.response.data.error);
-        if (e.response.data.building_billing_id) {
-          fetchStoredBilling(e.response.data.building_billing_id);
-        }
-      } else {
-        notify("Creation failed", msg);
-      }
+      notify("Request failed", msg);
     } finally {
       setCreating(false);
     }
   };
 
-  const onDeleteBilling = async (buildingBillingId: string) => {
-    if (!token) {
-      notify("Error", "No authentication token found");
-      return;
-    }
-
-    await confirmDelete(
-      "Are you sure you want to delete this billing? This action cannot be undone.",
-      async () => {
-        setBusy(true);
-        try {
-          let response;
-          let endpointUsed: "primary" | "fallback" = "primary";
-
-          try {
-            console.log("Trying primary endpoint.");
-            response = await api.delete(`/billings/${buildingBillingId}`);
-          } catch (primaryError) {
-            console.log("Primary endpoint failed, trying fallback.");
-            endpointUsed = "fallback";
-            response = await api.delete(
-              `/billings/buildings/${buildingBillingId}`
-            );
-          }
-
-          console.log(
-            `✅ DELETE Success (${endpointUsed} endpoint):`,
-            response.status
-          );
-
-          if (response.status === 200) {
-            notify("Success", "Billing deleted successfully.");
-
-            if (payload?.building_billing_id === buildingBillingId) {
-              setPayload(null);
-            }
-
-            await fetchStoredBillings();
-          }
-        } catch (e: any) {
-          console.error("❌ All DELETE attempts failed:", e);
-          const msg =
-            e?.response?.data?.error ??
-            e?.message ??
-            "Unable to delete billing.";
-          notify("Delete failed", msg);
-        } finally {
-          setBusy(false);
-        }
-      }
-    );
-  };
-
   const onExportCurrentCsv = () => {
-    if (!payload)
-      return notify("Nothing to export", "Generate or open a billing first.");
-    const { filename, csv } = buildCsvForBilling(payload);
+    if (!payload) return;
+    const { filename, csv } = makeBillingCsv(payload);
     saveCsv(filename, csv);
   };
 
-  // 🔹 NEW: download report directly from Stored Billings list
-  const onExportStoredBillingCsv = async (buildingBillingId: string) => {
-    if (!token) {
-      notify("Error", "No authentication token found");
+  const onDownloadStoredCsv = async (billing: StoredBilling) => {
+    if (!token) return;
+    if (!billing.payload) {
+      // if payload not attached, fetch full billing then export
+      await fetchStoredBilling(billing.building_billing_id);
+      if (!payload) return;
+      const { filename, csv } = makeBillingCsv(payload);
+      saveCsv(filename, csv);
       return;
     }
-    setBusy(true);
+
     try {
-      let response;
-      let endpointUsed: "primary" | "fallback" = "primary";
-
-      try {
-        // Try primary: /billings/:building_billing_id
-        response = await api.get<BuildingBillingResponse>(
-          `/billings/${buildingBillingId}`
-        );
-      } catch (primaryError) {
-        // Fallback if backend uses a slightly different route
-        endpointUsed = "fallback";
-        response = await api.get<BuildingBillingResponse>(
-          `/billings/buildings/${buildingBillingId}`
-        );
-      }
-
-      console.log(
-        `✅ Download billing (${endpointUsed} endpoint) status:`,
-        response.status
-      );
-
-      const { filename, csv } = buildCsvForBilling(response.data);
+      setBusy(true);
+      const { filename, csv } = makeBillingCsv(billing.payload);
       saveCsv(filename, csv);
     } catch (e: any) {
-      console.error("❌ Download stored billing failed:", e);
+      console.error("Download billing CSV failed:", e);
       const msg =
         e?.response?.data?.error ??
         e?.message ??
@@ -610,8 +552,9 @@ export default function BillingScreen() {
                   </View>
 
                   <View style={styles.inputGrid}>
+                    {/* Building dropdown */}
                     <View style={styles.inputGroup}>
-                      <Text style={styles.inputLabel}>Building ID *</Text>
+                      <Text style={styles.inputLabel}>Building *</Text>
                       <View style={styles.inputWrapper}>
                         <Ionicons
                           name="business"
@@ -619,14 +562,45 @@ export default function BillingScreen() {
                           color="#64748B"
                           style={styles.inputIcon}
                         />
-                        <TextInput
-                          value={buildingId}
-                          onChangeText={setBuildingId}
-                          placeholder="BLDG-001"
-                          style={styles.textInput}
-                          autoCapitalize="characters"
-                          autoCorrect={false}
-                        />
+                        {buildings.length > 0 ? (
+                          <Picker
+                            selectedValue={buildingId}
+                            onValueChange={(value) =>
+                              setBuildingId(String(value))
+                            }
+                            style={styles.picker}
+                            mode={
+                              Platform.OS === "android"
+                                ? "dropdown"
+                                : undefined
+                            }
+                          >
+                            <Picker.Item
+                              label="Select building…"
+                              value=""
+                            />
+                            {buildings.map((b) => (
+                              <Picker.Item
+                                key={b.building_id}
+                                label={
+                                  b.building_name
+                                    ? `${b.building_name} (${b.building_id})`
+                                    : b.building_id
+                                }
+                                value={b.building_id}
+                              />
+                            ))}
+                          </Picker>
+                        ) : (
+                          <TextInput
+                            value={buildingId}
+                            onChangeText={setBuildingId}
+                            placeholder="BLDG-001"
+                            style={styles.textInput}
+                            autoCapitalize="characters"
+                            autoCorrect={false}
+                          />
+                        )}
                       </View>
                     </View>
 
@@ -744,6 +718,293 @@ export default function BillingScreen() {
                     </View>
                   ) : null}
                 </View>
+
+                {/* Billing output */}
+                {payload ? (
+                  <View style={styles.billingCard}>
+                    <View style={styles.cardHeader}>
+                      <Ionicons name="business" size={20} color="#2563EB" />
+                      <Text style={styles.cardTitle}>Billing Summary</Text>
+                      {payload.building_billing_id && (
+                        <Text style={styles.billingId}>
+                          ID: {payload.building_billing_id}
+                        </Text>
+                      )}
+                    </View>
+                    <View style={styles.summaryGrid}>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Building</Text>
+                        <Text style={styles.summaryValue}>
+                          {payload.building_id}
+                          {payload.building_name
+                            ? ` • ${payload.building_name}`
+                            : ""}
+                        </Text>
+                      </View>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Billing Period</Text>
+                        <Text style={styles.summaryValue}>
+                          {payload.period.start} → {payload.period.end}
+                        </Text>
+                      </View>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>
+                          Total Consumption
+                        </Text>
+                        <Text style={styles.summaryValue}>
+                          {fmt(payload.totals.total_consumed_kwh, 4)} kWh
+                        </Text>
+                      </View>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Total Amount</Text>
+                        <Text
+                          style={[styles.summaryValue, styles.amountValue]}
+                        >
+                          {formatCurrency(payload.totals.total_amount)}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.generatedAt}>
+                      Generated at{" "}
+                      {new Date(payload.generated_at).toLocaleString()}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.placeholderCard}>
+                    <Ionicons
+                      name="document-text"
+                      size={48}
+                      color="#CBD5E1"
+                    />
+                    <Text style={styles.placeholderTitle}>No Billing Data</Text>
+                    <Text style={styles.placeholderText}>
+                      Enter building details and create billing to see results
+                    </Text>
+                  </View>
+                )}
+
+                {payload && (
+                  <View style={{ marginTop: 16, gap: 16 }}>
+                    {payload.tenants.map((tenant, tenantIndex) => (
+                      <View
+                        key={tenant.tenant_id || `tenant-${tenantIndex}`}
+                        style={styles.tenantCard}
+                      >
+                        <View style={styles.tenantHeader}>
+                          <Ionicons name="person" size={18} color="#374151" />
+                          <View style={styles.tenantInfo}>
+                            <Text style={styles.tenantName}>
+                              {tenant.tenant_name ||
+                                tenant.tenant_id ||
+                                "Unassigned Tenant"}
+                            </Text>
+                            {tenant.tenant_sn && (
+                              <Text style={styles.tenantId}>
+                                {tenant.tenant_sn}
+                              </Text>
+                            )}
+                          </View>
+                        </View>
+
+                        <View style={styles.compactTable}>
+                          <View style={styles.compactTableHeader}>
+                            <View
+                              style={[
+                                styles.compactCell,
+                                styles.compactCellHeader,
+                                { flex: 2 },
+                              ]}
+                            >
+                              <Text style={styles.compactHeaderText}>
+                                Stall/Meter
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.compactCell,
+                                styles.compactCellHeader,
+                                { flex: 1.5 },
+                              ]}
+                            >
+                              <Text style={styles.compactHeaderText}>
+                                Readings
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.compactCell,
+                                styles.compactCellHeader,
+                                { flex: 1 },
+                              ]}
+                            >
+                              <Text style={styles.compactHeaderText}>
+                                Consumption
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.compactCell,
+                                styles.compactCellHeader,
+                                { flex: 1 },
+                              ]}
+                            >
+                              <Text style={styles.compactHeaderText}>ROC</Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.compactCell,
+                                styles.compactCellHeader,
+                                { flex: 1.5 },
+                              ]}
+                            >
+                              <Text style={styles.compactHeaderText}>
+                                Rates & Taxes
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.compactCell,
+                                styles.compactCellHeader,
+                                { flex: 1 },
+                              ]}
+                            >
+                              <Text style={styles.compactHeaderText}>
+                                Amount
+                              </Text>
+                            </View>
+                          </View>
+
+                          {tenant.rows.map((row, rowIndex) => (
+                            <View
+                              key={`${row.meter_id}-${rowIndex}`}
+                              style={[
+                                styles.compactTableRow,
+                                rowIndex % 2 === 0 &&
+                                  styles.compactTableRowEven,
+                              ]}
+                            >
+                              <View style={[styles.compactCell, { flex: 2 }]}>
+                                <Text style={styles.compactCellPrimary}>
+                                  {row.stall_sn || row.stall_no || "—"}
+                                </Text>
+                                <Text style={styles.compactCellSecondary}>
+                                  {row.meter_no || row.meter_id}
+                                </Text>
+                                <View style={styles.meterTypeBadge}>
+                                  <Text style={styles.meterTypeText}>
+                                    {(row.meter_type || "").toUpperCase()}
+                                  </Text>
+                                  <Text style={styles.multiplierText}>
+                                    ×{fmt(row.mult, 0)}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              <View style={[styles.compactCell, { flex: 1.5 }]}>
+                                <View style={styles.readingPair}>
+                                  <Text style={styles.readingLabel}>Prev:</Text>
+                                  <Text style={styles.readingValue}>
+                                    {fmt(row.reading_previous, 0)}
+                                  </Text>
+                                </View>
+                                <View style={styles.readingPair}>
+                                  <Text style={styles.readingLabel}>Curr:</Text>
+                                  <Text style={styles.readingValue}>
+                                    {fmt(row.reading_present, 0)}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              <View style={[styles.compactCell, { flex: 1 }]}>
+                                <Text style={styles.consumptionValue}>
+                                  {fmt(row.consumed_kwh, 0)} kWh
+                                </Text>
+                                {row.prev_consumed_kwh && (
+                                  <Text style={styles.previousConsumption}>
+                                    Prev: {fmt(row.prev_consumed_kwh, 0)}
+                                  </Text>
+                                )}
+                              </View>
+
+                              <View style={[styles.compactCell, { flex: 1 }]}>
+                                <Text
+                                  style={[
+                                    styles.rocValue,
+                                    row.rate_of_change_pct &&
+                                    row.rate_of_change_pct > 0
+                                      ? styles.rocPositive
+                                      : styles.rocNegative,
+                                  ]}
+                                >
+                                  {row.rate_of_change_pct == null
+                                    ? "—"
+                                    : `${fmt(row.rate_of_change_pct, 0)}%`}
+                                </Text>
+                              </View>
+
+                              <View style={[styles.compactCell, { flex: 1.5 }]}>
+                                <View style={styles.ratesContainer}>
+                                  <Text style={styles.rateText}>
+                                    System:{" "}
+                                    {row.system_rate == null
+                                      ? "—"
+                                      : fmt(row.system_rate, 4)}
+                                  </Text>
+                                  <Text style={styles.rateText}>
+                                    VAT:{" "}
+                                    {row.vat_rate == null
+                                      ? "—"
+                                      : `${fmt(
+                                          (row.vat_rate as number) * 100,
+                                          1
+                                        )}%`}
+                                  </Text>
+                                  {row.whtax_code && (
+                                    <Text style={styles.rateText}>
+                                      WHT: {row.whtax_code}
+                                    </Text>
+                                  )}
+                                  <Text
+                                    style={[
+                                      styles.penaltyBadge,
+                                      row.for_penalty
+                                        ? styles.penaltyYes
+                                        : styles.penaltyNo,
+                                    ]}
+                                  >
+                                    {row.for_penalty
+                                      ? "PENALTY"
+                                      : "NO PENALTY"}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              <View style={[styles.compactCell, { flex: 1 }]}>
+                                <Text style={styles.amountText}>
+                                  {formatCurrency(row.total_amount)}
+                                </Text>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+
+                        <View style={styles.tenantTotal}>
+                          <Text style={styles.tenantTotalLabel}>
+                            Tenant Total:
+                          </Text>
+                          <Text style={styles.tenantTotalAmount}>
+                            {formatCurrency(
+                              tenant.rows.reduce(
+                                (sum, row) => sum + row.total_amount,
+                                0
+                              )
+                            )}
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </>
             ) : (
               // STORED BILLINGS
@@ -797,359 +1058,36 @@ export default function BillingScreen() {
                               : ""}
                           </Text>
                           <Text style={styles.billingPeriod}>
-                            {formatDate(billing.period?.start)} →{" "}
-                            {formatDate(billing.period?.end)}
+                            {billing.period.start} → {billing.period.end}
+                          </Text>
+                          <Text style={styles.billingTotals}>
+                            {fmt(
+                              billing.totals.total_consumed_kwh,
+                              4
+                            )}{" "}
+                            kWh •{" "}
+                            {formatCurrency(billing.totals.total_amount)}
                           </Text>
                         </View>
                         <View style={styles.billingActions}>
-                          {/* NEW: Download button inside stored billings */}
                           <TouchableOpacity
                             style={styles.downloadButton}
-                            onPress={() =>
-                              onExportStoredBillingCsv(
-                                billing.building_billing_id
-                              )
-                            }
-                            disabled={busy}
-                          >
-                            {busy ? (
-                              <ActivityIndicator
-                                size="small"
-                                color="#2563EB"
-                              />
-                            ) : (
-                              <Ionicons
-                                name="download"
-                                size={16}
-                                color="#2563EB"
-                              />
-                            )}
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={styles.viewButton}
-                            onPress={() =>
-                              fetchStoredBilling(billing.building_billing_id)
-                            }
+                            onPress={() => onDownloadStoredCsv(billing)}
                           >
                             <Ionicons
-                              name="eye"
+                              name="download-outline"
                               size={16}
                               color="#2563EB"
                             />
-                            <Text style={styles.viewButtonText}>View</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={[
-                              styles.deleteButton,
-                              busy && styles.buttonDisabled,
-                            ]}
-                            onPress={() =>
-                              onDeleteBilling(billing.building_billing_id)
-                            }
-                            disabled={busy}
-                          >
-                            {busy ? (
-                              <ActivityIndicator
-                                size="small"
-                                color="#DC2626"
-                              />
-                            ) : (
-                              <Ionicons
-                                name="trash"
-                                size={16}
-                                color="#DC2626"
-                              />
-                            )}
+                            <Text style={styles.downloadButtonText}>
+                              CSV
+                            </Text>
                           </TouchableOpacity>
                         </View>
                       </TouchableOpacity>
                     ))}
                   </View>
                 )}
-              </View>
-            )}
-
-            {/* Billing details */}
-            {payload && (
-              <View style={styles.resultsSection}>
-                <View style={styles.summaryCard}>
-                  <View style={styles.cardHeader}>
-                    <Ionicons name="business" size={20} color="#2563EB" />
-                    <Text style={styles.cardTitle}>Billing Summary</Text>
-                    {payload.building_billing_id && (
-                      <Text style={styles.billingId}>
-                        ID: {payload.building_billing_id}
-                      </Text>
-                    )}
-                  </View>
-                  <View style={styles.summaryGrid}>
-                    <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>Building</Text>
-                      <Text style={styles.summaryValue}>
-                        {payload.building_id}
-                        {payload.building_name
-                          ? ` • ${payload.building_name}`
-                          : ""}
-                      </Text>
-                    </View>
-                    <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>Billing Period</Text>
-                      <Text style={styles.summaryValue}>
-                        {payload.period.start} → {payload.period.end}
-                      </Text>
-                    </View>
-                    <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>
-                        Total Consumption
-                      </Text>
-                      <Text style={styles.summaryValue}>
-                        {fmt(payload.totals.total_consumed_kwh, 4)} kWh
-                      </Text>
-                    </View>
-                    <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>Total Amount</Text>
-                      <Text
-                        style={[styles.summaryValue, styles.amountValue]}
-                      >
-                        {formatCurrency(payload.totals.total_amount)}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={styles.generatedAt}>
-                    Generated at{" "}
-                    {new Date(payload.generated_at).toLocaleString()}
-                  </Text>
-                </View>
-
-                {payload.tenants.map((tenant, tenantIndex) => (
-                  <View
-                    key={tenant.tenant_id || `tenant-${tenantIndex}`}
-                    style={styles.tenantCard}
-                  >
-                    <View style={styles.tenantHeader}>
-                      <Ionicons name="person" size={18} color="#374151" />
-                      <View style={styles.tenantInfo}>
-                        <Text style={styles.tenantName}>
-                          {tenant.tenant_name ||
-                            tenant.tenant_id ||
-                            "Unassigned Tenant"}
-                        </Text>
-                        {tenant.tenant_sn && (
-                          <Text style={styles.tenantId}>
-                            {tenant.tenant_sn}
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-
-                    <View style={styles.compactTable}>
-                      <View style={styles.compactTableHeader}>
-                        <View
-                          style={[
-                            styles.compactCell,
-                            styles.compactCellHeader,
-                            { flex: 2 },
-                          ]}
-                        >
-                          <Text style={styles.compactHeaderText}>
-                            Stall/Meter
-                          </Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.compactCell,
-                            styles.compactCellHeader,
-                            { flex: 1.5 },
-                          ]}
-                        >
-                          <Text style={styles.compactHeaderText}>
-                            Readings
-                          </Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.compactCell,
-                            styles.compactCellHeader,
-                            { flex: 1 },
-                          ]}
-                        >
-                          <Text style={styles.compactHeaderText}>
-                            Consumption
-                          </Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.compactCell,
-                            styles.compactCellHeader,
-                            { flex: 1 },
-                          ]}
-                        >
-                          <Text style={styles.compactHeaderText}>ROC</Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.compactCell,
-                            styles.compactCellHeader,
-                            { flex: 1.5 },
-                          ]}
-                        >
-                          <Text style={styles.compactHeaderText}>
-                            Rates & Taxes
-                          </Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.compactCell,
-                            styles.compactCellHeader,
-                            { flex: 1 },
-                          ]}
-                        >
-                          <Text style={styles.compactHeaderText}>Amount</Text>
-                        </View>
-                      </View>
-
-                      {tenant.rows.map((row, rowIndex) => (
-                        <View
-                          key={`${row.meter_id}-${rowIndex}`}
-                          style={[
-                            styles.compactTableRow,
-                            rowIndex % 2 === 0 && styles.compactTableRowEven,
-                          ]}
-                        >
-                          <View style={[styles.compactCell, { flex: 2 }]}>
-                            <Text style={styles.compactCellPrimary}>
-                              {row.stall_sn || row.stall_no || "—"}
-                            </Text>
-                            <Text style={styles.compactCellSecondary}>
-                              {row.meter_no || row.meter_id}
-                            </Text>
-                            <View style={styles.meterTypeBadge}>
-                              <Text style={styles.meterTypeText}>
-                                {(row.meter_type || "").toUpperCase()}
-                              </Text>
-                              <Text style={styles.multiplierText}>
-                                ×{fmt(row.mult, 0)}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <View style={[styles.compactCell, { flex: 1.5 }]}>
-                            <View style={styles.readingPair}>
-                              <Text style={styles.readingLabel}>Prev:</Text>
-                              <Text style={styles.readingValue}>
-                                {fmt(row.reading_previous, 0)}
-                              </Text>
-                            </View>
-                            <View style={styles.readingPair}>
-                              <Text style={styles.readingLabel}>Curr:</Text>
-                              <Text style={styles.readingValue}>
-                                {fmt(row.reading_present, 0)}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <View style={[styles.compactCell, { flex: 1 }]}>
-                            <Text style={styles.consumptionValue}>
-                              {fmt(row.consumed_kwh, 0)} kWh
-                            </Text>
-                            {row.prev_consumed_kwh && (
-                              <Text style={styles.previousConsumption}>
-                                Prev: {fmt(row.prev_consumed_kwh, 0)}
-                              </Text>
-                            )}
-                          </View>
-
-                          <View style={[styles.compactCell, { flex: 1 }]}>
-                            <Text
-                              style={[
-                                styles.rocValue,
-                                row.rate_of_change_pct &&
-                                row.rate_of_change_pct > 0
-                                  ? styles.rocPositive
-                                  : styles.rocNegative,
-                              ]}
-                            >
-                              {row.rate_of_change_pct == null
-                                ? "—"
-                                : `${fmt(row.rate_of_change_pct, 0)}%`}
-                            </Text>
-                          </View>
-
-                          <View style={[styles.compactCell, { flex: 1.5 }]}>
-                            <View style={styles.ratesContainer}>
-                              <Text style={styles.rateText}>
-                                System:{" "}
-                                {row.system_rate == null
-                                  ? "—"
-                                  : fmt(row.system_rate, 4)}
-                              </Text>
-                              <Text style={styles.rateText}>
-                                VAT:{" "}
-                                {row.vat_rate == null
-                                  ? "—"
-                                  : `${fmt(
-                                      (row.vat_rate as number) * 100,
-                                      1
-                                    )}%`}
-                              </Text>
-                              {row.whtax_code && (
-                                <Text style={styles.rateText}>
-                                  WHT: {row.whtax_code}
-                                </Text>
-                              )}
-                              <Text
-                                style={[
-                                  styles.penaltyBadge,
-                                  row.for_penalty
-                                    ? styles.penaltyYes
-                                    : styles.penaltyNo,
-                                ]}
-                              >
-                                {row.for_penalty
-                                  ? "PENALTY"
-                                  : "NO PENALTY"}
-                              </Text>
-                            </View>
-                          </View>
-
-                          <View style={[styles.compactCell, { flex: 1 }]}>
-                            <Text style={styles.amountText}>
-                              {formatCurrency(row.total_amount)}
-                            </Text>
-                          </View>
-                        </View>
-                      ))}
-                    </View>
-
-                    <View style={styles.tenantTotal}>
-                      <Text style={styles.tenantTotalLabel}>Tenant Total:</Text>
-                      <Text style={styles.tenantTotalAmount}>
-                        {formatCurrency(
-                          tenant.rows.reduce(
-                            (sum, row) => sum + row.total_amount,
-                            0
-                          )
-                        )}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            {!payload && modeTab === "generate" && (
-              <View style={styles.placeholderCard}>
-                <Ionicons
-                  name="document-text"
-                  size={48}
-                  color="#CBD5E1"
-                />
-                <Text style={styles.placeholderTitle}>No Billing Data</Text>
-                <Text style={styles.placeholderText}>
-                  Enter building details and create billing to see results
-                </Text>
               </View>
             )}
           </View>
@@ -1271,6 +1209,17 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 4,
   },
+  billingCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 24,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
+    elevation: 4,
+  },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1286,6 +1235,35 @@ const styles = StyleSheet.create({
     marginLeft: "auto",
     fontSize: 12,
     color: "#64748B",
+  },
+
+  summaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 16,
+    marginBottom: 12,
+  },
+  summaryItem: {
+    flexBasis: "48%",
+    flexGrow: 1,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748B",
+    marginBottom: 4,
+  },
+  summaryValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0F172A",
+  },
+  amountValue: {
+    color: "#16A34A",
+  },
+  generatedAt: {
+    fontSize: 12,
+    color: "#94A3B8",
   },
 
   inputGrid: {
@@ -1320,6 +1298,11 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     paddingVertical: 10,
+    color: "#0F172A",
+  },
+  picker: {
+    flex: 1,
+    height: 40,
     color: "#0F172A",
   },
 
@@ -1413,41 +1396,32 @@ const styles = StyleSheet.create({
     padding: 48,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 4,
+    marginTop: 16,
   },
   placeholderTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#64748B",
-    marginTop: 16,
-    marginBottom: 8,
+    color: "#0F172A",
+    marginTop: 12,
+    marginBottom: 4,
   },
   placeholderText: {
     fontSize: 14,
-    color: "#94A3B8",
+    color: "#64748B",
     textAlign: "center",
-    lineHeight: 20,
   },
 
   billingList: {
-    marginTop: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    overflow: "hidden",
+    marginTop: 12,
+    gap: 8,
   },
   billingItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#FFFFFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#F9FAFB",
   },
   billingInfo: {
     flex: 1,
@@ -1460,81 +1434,30 @@ const styles = StyleSheet.create({
   billingPeriod: {
     fontSize: 12,
     color: "#64748B",
+  },
+  billingTotals: {
+    fontSize: 12,
+    color: "#0F172A",
     marginTop: 2,
   },
   billingActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginLeft: 12,
+    marginLeft: 8,
   },
-  viewButton: {
+  downloadButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    paddingHorizontal: 10,
     paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+    borderColor: "#DBEAFE",
     backgroundColor: "#EFF6FF",
   },
-  viewButtonText: {
+  downloadButtonText: {
     fontSize: 12,
     fontWeight: "600",
     color: "#2563EB",
-  },
-  deleteButton: {
-    padding: 8,
-    borderRadius: 999,
-    backgroundColor: "#FEF2F2",
-  },
-  downloadButton: {
-    padding: 8,
-    borderRadius: 999,
-    backgroundColor: "#EFF6FF",
-  },
-
-  resultsSection: {
-    marginTop: 24,
-    gap: 16,
-  },
-  summaryCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 4,
-  },
-  summaryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 16,
-    marginTop: 8,
-  },
-  summaryItem: {
-    flexBasis: "45%",
-  },
-  summaryLabel: {
-    fontSize: 12,
-    color: "#64748B",
-    marginBottom: 2,
-  },
-  summaryValue: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#0F172A",
-  },
-  amountValue: {
-    color: "#059669",
-  },
-  generatedAt: {
-    marginTop: 12,
-    fontSize: 12,
-    color: "#94A3B8",
   },
 
   tenantCard: {
@@ -1617,107 +1540,96 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "600",
     color: "#FFFFFF",
-    backgroundColor: "#2563EB",
+    backgroundColor: "#4F46E5",
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 999,
   },
   multiplierText: {
-    fontSize: 10,
+    fontSize: 11,
     color: "#64748B",
-    fontWeight: "500",
   },
 
   readingPair: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 2,
   },
   readingLabel: {
     fontSize: 11,
-    color: "#64748B",
+    color: "#6B7280",
   },
   readingValue: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "600",
-    color: "#374151",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    color: "#111827",
   },
 
   consumptionValue: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "600",
-    color: "#059669",
-    marginBottom: 2,
+    color: "#111827",
   },
   previousConsumption: {
-    fontSize: 10,
-    color: "#64748B",
+    fontSize: 11,
+    color: "#6B7280",
   },
 
   rocValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
-    textAlign: "center",
   },
   rocPositive: {
-    color: "#DC2626",
+    color: "#16A34A",
   },
   rocNegative: {
-    color: "#059669",
+    color: "#DC2626",
   },
 
   ratesContainer: {
     gap: 2,
   },
   rateText: {
-    fontSize: 10,
-    color: "#374151",
-    lineHeight: 14,
+    fontSize: 11,
+    color: "#4B5563",
   },
-
   penaltyBadge: {
-    fontSize: 9,
+    marginTop: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    fontSize: 10,
     fontWeight: "700",
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 3,
-    marginTop: 2,
-    textAlign: "center",
   },
   penaltyYes: {
-    backgroundColor: "#FEF2F2",
+    backgroundColor: "#FEE2E2",
     color: "#DC2626",
   },
   penaltyNo: {
-    backgroundColor: "#F0FDF4",
-    color: "#059669",
+    backgroundColor: "#DCFCE7",
+    color: "#16A34A",
   },
 
   amountText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
-    color: "#059669",
-    textAlign: "center",
+    color: "#111827",
   },
 
   tenantTotal: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    padding: 16,
-    backgroundColor: "#F0FDF4",
-    borderTopWidth: 1,
-    borderTopColor: "#D1FAE5",
+    marginTop: 10,
   },
   tenantTotalLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
-    color: "#065F46",
+    color: "#4B5563",
   },
   tenantTotalAmount: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: "700",
-    color: "#065F46",
+    color: "#111827",
   },
 });

@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useRef, useState } from "react";
+import React, { memo, useMemo, useRef, useState, useEffect } from "react";
 import {
   Alert,
   Platform,
@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import axios, { AxiosInstance } from "axios";
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
 import { useAuth } from "../../contexts/AuthContext";
 import { BASE_API } from "../../constants/api";
 
@@ -180,6 +181,11 @@ type BuildingYearly = {
   };
 };
 
+type BuildingOption = {
+  building_id?: string;
+  building_name?: string | null;
+};
+
 type BusyKey =
   | null
   | "meter"
@@ -235,6 +241,23 @@ function RateOfChangePanel() {
   const [cmpMonthly, setCmpMonthly] = useState<BuildingMonthlyTotals | null>(null);
   const [cmpFour, setCmpFour] = useState<BuildingFourMonths | null>(null);
   const [cmpYearly, setCmpYearly] = useState<BuildingYearly | null>(null);
+
+  const [buildings, setBuildings] = useState<BuildingOption[]>([]);
+
+  // Load buildings for dropdown
+  useEffect(() => {
+    if (!token) return;
+    const loadBuildings = async () => {
+      try {
+        const res = await api.get<BuildingOption[]>("/buildings");
+        const list = Array.isArray(res.data) ? res.data : [];
+        setBuildings(list);
+      } catch (e) {
+        console.error("Fetch buildings for ROC failed:", e);
+      }
+    };
+    loadBuildings();
+  }, [api, token]);
 
   async function getWithAutoPrefix<T>(rawPath: string) {
     const tried: Array<{ prefix: string; status: number | "netfail" }> = [];
@@ -573,7 +596,7 @@ function RateOfChangePanel() {
         </Text>
       </View>
 
-      {}
+      {/* Tabs */}
       <View style={styles.tabContainer}>
         <TabButton
           icon="speedometer"
@@ -611,7 +634,7 @@ function RateOfChangePanel() {
         </View>
       )}
 
-      {}
+      {/* Parameters */}
       <View style={styles.inputCard}>
         <Text style={styles.sectionTitle}>Parameters</Text>
 
@@ -637,13 +660,47 @@ function RateOfChangePanel() {
           )}
 
           {(mode === "building" || mode === "comparison") && (
-            <InputField
-              label="Building ID"
-              value={buildingId}
-              onChangeText={setBuildingId}
-              placeholder="BLDG-001"
-              icon="business"
-            />
+            <View style={styles.inputField}>
+              <Text style={styles.inputLabel}>Building</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons
+                  name="business"
+                  size={16}
+                  color="#64748B"
+                  style={styles.inputIcon}
+                />
+                {buildings.length > 0 ? (
+                  <Picker
+                    selectedValue={buildingId}
+                    onValueChange={(value) => setBuildingId(String(value))}
+                    style={styles.picker}
+                    mode={Platform.OS === "android" ? "dropdown" : undefined}
+                  >
+                    <Picker.Item label="Select building…" value="" />
+                    {buildings.map((b) => (
+                      <Picker.Item
+                        key={b.building_id}
+                        label={
+                          b.building_name
+                            ? `${b.building_name} (${b.building_id})`
+                            : b.building_id ?? ""
+                        }
+                        value={b.building_id}
+                      />
+                    ))}
+                  </Picker>
+                ) : (
+                  <TextInput
+                    style={styles.textInput}
+                    value={buildingId}
+                    onChangeText={setBuildingId}
+                    placeholder="BLDG-001"
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="characters"
+                  />
+                )}
+              </View>
+            </View>
           )}
 
           <InputField
@@ -730,9 +787,9 @@ function RateOfChangePanel() {
         </View>
       </View>
 
-      {}
+      {/* Results */}
       <View style={styles.resultsSection}>
-        {}
+        {/* Meter */}
         {mode === "meter" && meterRoc && (
           <ResultsCard title="Meter Analysis" icon="speedometer">
             <View style={styles.meterHeader}>
@@ -757,13 +814,17 @@ function RateOfChangePanel() {
                 label="Rate of Change"
                 value={fmt(meterRoc.rate_of_change, 2)}
                 unit="%"
-                trend={meterRoc.rate_of_change && meterRoc.rate_of_change > 0 ? "up" : "down"}
+                trend={
+                  meterRoc.rate_of_change && meterRoc.rate_of_change > 0
+                    ? "up"
+                    : "down"
+                }
               />
             </View>
           </ResultsCard>
         )}
 
-        {}
+        {/* Tenant */}
         {mode === "tenant" && tenantRoc && (
           <ResultsCard title="Tenant Analysis" icon="person">
             <Text style={styles.tenantId}>Tenant: {tenantRoc.tenant_id}</Text>
@@ -795,7 +856,7 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {}
+        {/* Building */}
         {mode === "building" && buildingRoc && (
           <ResultsCard title="Building Analysis" icon="business">
             <View style={styles.buildingHeader}>
@@ -835,10 +896,9 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {}
+        {/* Comparison */}
         {mode === "comparison" && (
           <>
-            {}
             {cmpMonthly && (
               <ResultsCard title="Monthly Comparison" icon="calendar">
                 <View style={styles.comparisonHeader}>
@@ -877,17 +937,18 @@ function RateOfChangePanel() {
               </ResultsCard>
             )}
 
-            {}
             {cmpFour && (
               <ResultsCard title="4-Month Comparison" icon="git-branch">
                 <DataTable
                   headers={["Month", "Electric", "Water", "LPG"]}
-                  data={cmpFour.months?.map(month => ({
-                    month: month.label,
-                    electric: fmt(month.totals?.electric),
-                    water: fmt(month.totals?.water),
-                    lpg: fmt(month.totals?.lpg),
-                  })) || []}
+                  data={
+                    cmpFour.months?.map((month) => ({
+                      month: month.label,
+                      electric: fmt(month.totals?.electric),
+                      water: fmt(month.totals?.water),
+                      lpg: fmt(month.totals?.lpg),
+                    })) || []
+                  }
                 />
                 <View style={styles.totalsSection}>
                   <Text style={styles.totalsTitle}>Total Consumption</Text>
@@ -923,18 +984,19 @@ function RateOfChangePanel() {
               </ResultsCard>
             )}
 
-            {}
             {cmpYearly && (
               <ResultsCard title="Yearly Comparison" icon="albums">
                 <Text style={styles.yearTitle}>{cmpYearly.year}</Text>
                 <DataTable
                   headers={["Month", "Electric", "Water", "LPG"]}
-                  data={cmpYearly.months?.map(month => ({
-                    month: month.label,
-                    electric: fmt(month.totals?.electric),
-                    water: fmt(month.totals?.water),
-                    lpg: fmt(month.totals?.lpg),
-                  })) || []}
+                  data={
+                    cmpYearly.months?.map((month) => ({
+                      month: month.label,
+                      electric: fmt(month.totals?.electric),
+                      water: fmt(month.totals?.water),
+                      lpg: fmt(month.totals?.lpg),
+                    })) || []
+                  }
                 />
                 <View style={styles.totalsSection}>
                   <Text style={styles.totalsTitle}>Annual Totals</Text>
@@ -976,7 +1038,12 @@ function RateOfChangePanel() {
   );
 }
 
-function TabButton({ icon, label, active, onPress }: {
+function TabButton({
+  icon,
+  label,
+  active,
+  onPress,
+}: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   active: boolean;
@@ -999,7 +1066,14 @@ function TabButton({ icon, label, active, onPress }: {
   );
 }
 
-function InputField({ label, value, onChangeText, placeholder, icon, keyboardType }: {
+function InputField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  icon,
+  keyboardType,
+}: {
   label: string;
   value: string;
   onChangeText: (text: string) => void;
@@ -1012,7 +1086,12 @@ function InputField({ label, value, onChangeText, placeholder, icon, keyboardTyp
       <Text style={styles.inputLabel}>{label}</Text>
       <View style={styles.inputContainer}>
         {icon && (
-          <Ionicons name={icon} size={16} color="#64748B" style={styles.inputIcon} />
+          <Ionicons
+            name={icon}
+            size={16}
+            color="#64748B"
+            style={styles.inputIcon}
+          />
         )}
         <TextInput
           style={styles.textInput}
@@ -1027,7 +1106,13 @@ function InputField({ label, value, onChangeText, placeholder, icon, keyboardTyp
   );
 }
 
-function ActionButton({ label, icon, onPress, loading, variant = "primary" }: {
+function ActionButton({
+  label,
+  icon,
+  onPress,
+  loading,
+  variant = "primary",
+}: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
@@ -1046,31 +1131,34 @@ function ActionButton({ label, icon, onPress, loading, variant = "primary" }: {
       onPress={onPress}
       disabled={loading}
     >
-      {loading ? (
-        <Ionicons name="refresh" size={16} color="#FFFFFF" />
-      ) : (
-        <Ionicons
-          name={icon}
-          size={16}
-          color={
-            variant === "primary" ? "#FFFFFF" :
-            variant === "outline" ? "#2563EB" : "#2563EB"
-          }
-        />
-      )}
-      <Text style={[
-        styles.actionButtonText,
-        variant === "primary" && styles.actionButtonTextPrimary,
-        variant === "secondary" && styles.actionButtonTextSecondary,
-        variant === "outline" && styles.actionButtonTextOutline,
-      ]}>
+      <Ionicons
+        name={loading ? "refresh" : icon}
+        size={16}
+        color={
+          variant === "primary" ? "#FFFFFF" : variant === "outline"
+          ? "#2563EB"
+          : "#2563EB"
+        }
+      />
+      <Text
+        style={[
+          styles.actionButtonText,
+          variant === "primary" && styles.actionButtonTextPrimary,
+          variant === "secondary" && styles.actionButtonTextSecondary,
+          variant === "outline" && styles.actionButtonTextOutline,
+        ]}
+      >
         {loading ? "Processing..." : label}
       </Text>
     </TouchableOpacity>
   );
 }
 
-function ResultsCard({ title, icon, children }: {
+function ResultsCard({
+  title,
+  icon,
+  children,
+}: {
   title: string;
   icon: keyof typeof Ionicons.glyphMap;
   children: React.ReactNode;
@@ -1081,14 +1169,19 @@ function ResultsCard({ title, icon, children }: {
         <Ionicons name={icon} size={20} color="#2563EB" />
         <Text style={styles.cardTitle}>{title}</Text>
       </View>
-      <View style={styles.cardContent}>
-        {children}
-      </View>
+      <View style={styles.cardContent}>{children}</View>
     </View>
   );
 }
 
-function StatCard({ label, value, unit, trend, variant, compact }: {
+function StatCard({
+  label,
+  value,
+  unit,
+  trend,
+  variant,
+  compact,
+}: {
   label: string;
   value: string;
   unit: string;
@@ -1104,10 +1197,14 @@ function StatCard({ label, value, unit, trend, variant, compact }: {
 
   const getVariantColor = () => {
     switch (variant) {
-      case "electric": return "#F59E0B";
-      case "water": return "#3B82F6";
-      case "lpg": return "#EF4444";
-      default: return "#374151";
+      case "electric":
+        return "#F59E0B";
+      case "water":
+        return "#3B82F6";
+      case "lpg":
+        return "#EF4444";
+      default:
+        return "#374151";
     }
   };
 
@@ -1131,7 +1228,10 @@ function StatCard({ label, value, unit, trend, variant, compact }: {
   );
 }
 
-function DataTable({ headers, data }: {
+function DataTable({
+  headers,
+  data,
+}: {
   headers: string[];
   data: Array<Record<string, string | undefined>>;
 }) {
@@ -1281,6 +1381,11 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 12,
     fontSize: 14,
+    color: "#111827",
+  },
+  picker: {
+    flex: 1,
+    height: 40,
     color: "#111827",
   },
   actionRow: {
