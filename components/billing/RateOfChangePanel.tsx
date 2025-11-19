@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
   ScrollView,
+  Modal,
 } from "react-native";
 import axios, { AxiosInstance } from "axios";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,6 +19,13 @@ import { BASE_API } from "../../constants/api";
 const isWeb = Platform.OS === "web";
 const today = () => new Date().toISOString().slice(0, 10);
 const isYMD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 const fmt = (v: any, d = 2) => {
   if (v == null || v === "") return "—";
@@ -196,6 +204,233 @@ type BusyKey =
   | "yearly";
 
 type Mode = "meter" | "tenant" | "building" | "comparison";
+
+function CalendarDatePicker({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  icon = 'calendar'
+}: {
+  label: string;
+  value: string;
+  onChangeText: (date: string) => void;
+  placeholder?: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+}) {
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [viewDate, setViewDate] = useState(() => {
+    if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(value + 'T12:00:00');
+    }
+    return new Date();
+  });
+
+  const formatDisplayDate = (dateStr: string) => {
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return placeholder || 'Select date';
+    const d = new Date(dateStr + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  };
+
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDayOfWeek = firstDay.getDay();
+
+    const days: Array<{ date: number | null; isCurrentMonth: boolean; fullDate: Date | null }> = [];
+
+    // Previous month's days
+    const prevMonthLastDay = new Date(year, month, 0).getDate();
+    for (let i = startingDayOfWeek - 1; i >= 0; i--) {
+      days.push({
+        date: prevMonthLastDay - i,
+        isCurrentMonth: false,
+        fullDate: new Date(year, month - 1, prevMonthLastDay - i)
+      });
+    }
+
+    // Current month's days
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push({
+        date: i,
+        isCurrentMonth: true,
+        fullDate: new Date(year, month, i)
+      });
+    }
+
+    // Next month's days
+    const remainingDays = 42 - days.length;
+    for (let i = 1; i <= remainingDays; i++) {
+      days.push({
+        date: i,
+        isCurrentMonth: false,
+        fullDate: new Date(year, month + 1, i)
+      });
+    }
+
+    return days;
+  };
+
+  const handleDateSelect = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    onChangeText(`${year}-${month}-${day}`);
+    setShowCalendar(false);
+  };
+
+  const handlePrevMonth = () => {
+    setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1));
+  };
+
+  const handleToday = () => {
+    const today = new Date();
+    setViewDate(today);
+    handleDateSelect(today);
+  };
+
+  const isSelectedDate = (date: Date | null) => {
+    if (!date || !value) return false;
+    const selectedDate = new Date(value + 'T12:00:00');
+    return (
+      date.getDate() === selectedDate.getDate() &&
+      date.getMonth() === selectedDate.getMonth() &&
+      date.getFullYear() === selectedDate.getFullYear()
+    );
+  };
+
+  const isToday = (date: Date | null) => {
+    if (!date) return false;
+    const today = new Date();
+    return (
+      date.getDate() === today.getDate() &&
+      date.getMonth() === today.getMonth() &&
+      date.getFullYear() === today.getFullYear()
+    );
+  };
+
+  const days = getDaysInMonth(viewDate);
+
+  return (
+    <View style={calendarStyles.container}>
+      <Text style={calendarStyles.label}>{label}</Text>
+      <TouchableOpacity
+        style={calendarStyles.inputContainer}
+        onPress={() => setShowCalendar(true)}
+      >
+        <Ionicons name={icon} size={16} color="#64748B" style={calendarStyles.icon} />
+        <Text style={[calendarStyles.inputText, !value && calendarStyles.placeholder]}>
+          {formatDisplayDate(value)}
+        </Text>
+        <Ionicons name="chevron-down" size={16} color="#64748B" />
+      </TouchableOpacity>
+
+      <Modal
+        visible={showCalendar}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCalendar(false)}
+      >
+        <TouchableOpacity
+          style={calendarStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCalendar(false)}
+        >
+          <TouchableOpacity
+            style={calendarStyles.calendarContainer}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <View style={calendarStyles.calendarHeader}>
+              <Text style={calendarStyles.monthYear}>
+                {MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}
+              </Text>
+              <View style={calendarStyles.headerButtons}>
+                <TouchableOpacity
+                  style={calendarStyles.navButton}
+                  onPress={handlePrevMonth}
+                >
+                  <Ionicons name="chevron-back" size={20} color="#374151" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={calendarStyles.navButton}
+                  onPress={handleNextMonth}
+                >
+                  <Ionicons name="chevron-forward" size={20} color="#374151" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Quick Today Button */}
+            <TouchableOpacity style={calendarStyles.todayButton} onPress={handleToday}>
+              <Ionicons name="today" size={14} color="#2563EB" />
+              <Text style={calendarStyles.todayText}>Today</Text>
+            </TouchableOpacity>
+
+            {/* Day Headers */}
+            <View style={calendarStyles.dayHeaders}>
+              {DAYS.map((day) => (
+                <Text key={day} style={calendarStyles.dayHeader}>
+                  {day}
+                </Text>
+              ))}
+            </View>
+
+            {/* Calendar Grid */}
+            <View style={calendarStyles.calendarGrid}>
+              {days.map((day, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={[
+                    calendarStyles.dayCell,
+                    !day.isCurrentMonth && calendarStyles.dayCellInactive,
+                    isSelectedDate(day.fullDate) && calendarStyles.dayCellSelected,
+                    isToday(day.fullDate) && !isSelectedDate(day.fullDate) && calendarStyles.dayCellToday
+                  ]}
+                  onPress={() => day.fullDate && handleDateSelect(day.fullDate)}
+                  disabled={!day.fullDate}
+                >
+                  <Text
+                    style={[
+                      calendarStyles.dayText,
+                      !day.isCurrentMonth && calendarStyles.dayTextInactive,
+                      isSelectedDate(day.fullDate) && calendarStyles.dayTextSelected,
+                      isToday(day.fullDate) && !isSelectedDate(day.fullDate) && calendarStyles.dayTextToday
+                    ]}
+                  >
+                    {day.date}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Footer */}
+            <View style={calendarStyles.calendarFooter}>
+              <TouchableOpacity
+                style={calendarStyles.cancelButton}
+                onPress={() => setShowCalendar(false)}
+              >
+                <Text style={calendarStyles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    </View>
+  );
+}
 
 function RateOfChangePanel() {
   const { token } = useAuth();
@@ -703,7 +938,7 @@ function RateOfChangePanel() {
             </View>
           )}
 
-          <InputField
+          <CalendarDatePicker
             label="Start Date"
             value={startDate}
             onChangeText={setStartDate}
@@ -711,7 +946,7 @@ function RateOfChangePanel() {
             icon="calendar"
           />
 
-          <InputField
+          <CalendarDatePicker
             label="End Date"
             value={endDate}
             onChangeText={setEndDate}
@@ -1256,6 +1491,155 @@ function DataTable({
     </View>
   );
 }
+
+const calendarStyles = StyleSheet.create({
+  container: {
+    gap: 6,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  icon: {
+    marginRight: 8,
+  },
+  inputText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111827',
+  },
+  placeholder: {
+    color: '#94A3B8',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  calendarContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    width: 340,
+    maxWidth: '90%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  monthYear: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  navButton: {
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: '#F8FAFC',
+  },
+  todayButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#EFF6FF',
+    marginBottom: 16,
+    gap: 6,
+  },
+  todayText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#2563EB',
+  },
+  dayHeaders: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  dayHeader: {
+    width: 40,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  dayCellInactive: {
+    opacity: 0.4,
+  },
+  dayCellSelected: {
+    backgroundColor: '#2563EB',
+  },
+  dayCellToday: {
+    borderWidth: 1,
+    borderColor: '#2563EB',
+  },
+  dayText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  dayTextInactive: {
+    color: '#94A3B8',
+  },
+  dayTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  dayTextToday: {
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  calendarFooter: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    alignItems: 'flex-end',
+  },
+  cancelButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748B',
+  },
+});
 
 const styles = StyleSheet.create({
   container: {

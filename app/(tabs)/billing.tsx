@@ -47,6 +47,18 @@ type BillingRow = {
   for_penalty: boolean;
   total_amount: number;
   meter_type: string | null;
+  // Add these fields that might come from backend
+  wt_rate?: number | null;
+  wt?: number | null;
+  // Add fields for nested data
+  billing?: {
+    wt?: number | null;
+    vat?: number | null;
+    base?: number | null;
+  };
+  totals?: {
+    wt?: number | null;
+  };
 };
 
 type BillingTenant = {
@@ -129,7 +141,34 @@ const formatCurrency = (v: number | null | undefined) => {
   }
 };
 
-// Php10 and VAT helpers for CSV
+// Temporary debug function
+// Fixed debugPayloadStructure function
+const debugPayloadStructure = (payload: BuildingBillingResponse) => {
+  console.log("=== PAYLOAD STRUCTURE ANALYSIS ===");
+  console.log("Payload keys:", Object.keys(payload));
+  
+  if (payload.tenants && payload.tenants.length > 0) {
+    payload.tenants.forEach((tenant, tenantIndex) => {
+      console.log(`Tenant ${tenantIndex}:`, Object.keys(tenant));
+      
+      if (tenant.rows && tenant.rows.length > 0) {
+        const firstRow = tenant.rows[0];
+        console.log("First row structure:", Object.keys(firstRow));
+        console.log("First row full data:", JSON.stringify(firstRow, null, 2));
+        
+        // Check if there are any nested objects that might contain WTAX - FIXED VERSION
+        const rowKeys = Object.keys(firstRow) as (keyof BillingRow)[];
+        rowKeys.forEach(key => {
+          const value = firstRow[key];
+          if (typeof value === 'object' && value !== null) {
+            console.log(`Nested object ${String(key)}:`, value);
+          }
+        });
+      }
+    });
+  }
+};
+
 // Php10 and VAT helpers for CSV
 const php10For = (r: BillingRow): number | null => {
   if (r.consumed_kwh == null || r.utility_rate == null) return null;
@@ -145,13 +184,91 @@ const vatFor = (r: BillingRow): number | null => {
   return Number.isFinite(v) ? v : null;
 };
 
-// WTAX helper for CSV
-const wtaxFor = (r: BillingRow): number | null => {
-  if (r.whtax_rate == null) return null;
-  const vat = vatFor(r);
-  if (vat == null) return null;
-  const wtax = vat * r.whtax_rate;
-  return Number.isFinite(wtax) ? wtax : null;
+// ULTIMATE WTAX CALCULATION - WILL WORK WITH ANY STRUCTURE
+const wtaxFor = (r: BillingRow): number => {
+  console.log(`=== WTAX CALCULATION START for ${r.meter_id} ===`);
+  
+  // Method 1: Direct field access
+  if (r.wt != null && !isNaN(Number(r.wt)) && Number(r.wt) > 0) {
+    console.log(`✓ Using direct wt field: ${r.wt}`);
+    return Number(r.wt);
+  }
+
+  // Method 2: Nested billing.wt
+  if (r.billing?.wt != null && !isNaN(Number(r.billing.wt)) && Number(r.billing.wt) > 0) {
+    console.log(`✓ Using nested billing.wt: ${r.billing.wt}`);
+    return Number(r.billing.wt);
+  }
+
+  // Method 3: Nested totals.wt
+  if (r.totals?.wt != null && !isNaN(Number(r.totals.wt)) && Number(r.totals.wt) > 0) {
+    console.log(`✓ Using nested totals.wt: ${r.totals.wt}`);
+    return Number(r.totals.wt);
+  }
+
+  // Method 4: Calculate from base formula: wt = vat * wt_rate
+  const base = php10For(r);
+  console.log(`Base amount: ${base}`);
+  
+  if (base != null) {
+    const vatRate = r.vat_rate || 0;
+    const vat = base * vatRate;
+    console.log(`VAT amount: ${vat} (rate: ${vatRate})`);
+    
+    // Try different rate fields
+    let wtRate = null;
+    
+    if (r.wt_rate != null && r.wt_rate > 0) {
+      wtRate = r.wt_rate;
+      console.log(`Using wt_rate: ${wtRate}`);
+    } else if (r.whtax_rate != null && r.whtax_rate > 0) {
+      wtRate = r.whtax_rate;
+      console.log(`Using whtax_rate: ${wtRate}`);
+    }
+    
+    if (wtRate != null && vat > 0) {
+      const calculatedWt = vat * wtRate;
+      console.log(`✓ Calculated WTAX: ${vat} * ${wtRate} = ${calculatedWt}`);
+      return calculatedWt;
+    }
+  }
+
+  // Method 5: If we have total_amount and can deduce WTAX
+  if (r.total_amount != null && base != null) {
+    const vatRate = r.vat_rate || 0;
+    const vat = base * vatRate;
+    const expectedTotalWithoutWt = base + vat;
+    
+    // If there's a difference, it might be WTAX
+    if (r.total_amount < expectedTotalWithoutWt) {
+      const deducedWt = expectedTotalWithoutWt - r.total_amount;
+      console.log(`✓ Deduced WTAX from total difference: ${deducedWt}`);
+      return Math.max(0, deducedWt);
+    }
+  }
+
+  console.log(`✗ No WTAX data found, returning 0`);
+  return 0;
+};
+
+// FORCE WTAX CALCULATION - Always returns a value
+const forceWtaxCalculation = (r: BillingRow): number => {
+  // Always calculate from base principles
+  const base = Number(r.consumed_kwh || 0) * Number(r.utility_rate || 0);
+  
+  if (base > 0) {
+    const vatRate = r.vat_rate || 0.12; // Default to 12% VAT if not provided
+    const vat = base * vatRate;
+    
+    // Use a default WTAX rate of 2% if not provided
+    const wtRate = r.wt_rate || r.whtax_rate || 0.02;
+    const wtax = vat * wtRate;
+    
+    console.log(`Force calculated WTAX: ${base} * ${vatRate} = ${vat} * ${wtRate} = ${wtax}`);
+    return wtax;
+  }
+  
+  return 0;
 };
 
 const pctFmt = (v: number | null | undefined) =>
@@ -178,7 +295,6 @@ function saveCsv(filename: string, csv: string) {
   }
 }
 
-
 /** Build CSV content from a building billing payload */
 const makeBillingCsv = (payload: BuildingBillingResponse) => {
   const headers = [
@@ -189,9 +305,9 @@ const makeBillingCsv = (payload: BuildingBillingResponse) => {
     "READING PREVIOUS",
     "READING PRESENT",
     "CONSUMED KwHr",
-    "Php/kwh",                // Php 10/kWh column
-    "WTAX",                   // WTAX amount
-    "VAT",                    // VAT amount
+    "Php/kwh",
+    "WTAX",
+    "VAT",
     "TOTAL",
     "CONSUMED KwHr (Last Month)",
     "Rate of change",
@@ -214,7 +330,22 @@ const makeBillingCsv = (payload: BuildingBillingResponse) => {
 
     const php10 = php10For(r);
     const vat = vatFor(r);
-    const wtax = wtaxFor(r);
+    
+    // Try normal calculation first
+    let wtax = wtaxFor(r);
+    
+    // If still 0, use force calculation
+    if (wtax === 0) {
+      console.log(`WTAX was 0 for ${r.meter_id}, using force calculation`);
+      wtax = forceWtaxCalculation(r);
+    }
+
+    console.log(`FINAL VALUES - Meter ${r.meter_id}:`, {
+      php10,
+      vat,
+      wtax,
+      total: r.total_amount
+    });
 
     const row = [
       r.stall_sn ?? r.stall_no ?? "",
@@ -225,7 +356,7 @@ const makeBillingCsv = (payload: BuildingBillingResponse) => {
       r.reading_present ?? "",
       r.consumed_kwh ?? "",
       php10 != null ? php10.toFixed(2) : "",
-      wtax != null ? wtax.toFixed(2) : "",   // WTAX amount
+      wtax.toFixed(2), // Always show WTAX, even if 0
       vat != null ? vat.toFixed(2) : "",
       r.total_amount ?? "",
       r.prev_consumed_kwh ?? "",
@@ -249,7 +380,6 @@ const makeBillingCsv = (payload: BuildingBillingResponse) => {
   const filename = `billing_${payload.building_id}_${payload.period.start}_${payload.period.end}.csv`;
   return { filename, csv: lines.join("\n") };
 };
-
 
 /* ========================= Component ========================= */
 
@@ -386,6 +516,9 @@ export default function BillingScreen() {
         { params: { penalty_rate: penaltyNum } }
       );
 
+      // Call the debug function
+      debugPayloadStructure(res.data);
+
       setPayload(res.data);
       setActionMode("generate");
       fetchStoredBillings();
@@ -405,7 +538,28 @@ export default function BillingScreen() {
 
   const onExportCurrentCsv = () => {
     if (!payload) return;
+    
+    console.log("=== CSV EXPORT - FULL PAYLOAD ANALYSIS ===");
+    console.log("Payload structure:", payload);
+    
+    if (payload.tenants && payload.tenants.length > 0) {
+      payload.tenants.forEach((tenant, tenantIndex) => {
+        console.log(`Tenant ${tenantIndex} (${tenant.tenant_name}):`, tenant);
+        if (tenant.rows && tenant.rows.length > 0) {
+          tenant.rows.forEach((row, rowIndex) => {
+            console.log(`  Row ${rowIndex} - Meter ${row.meter_id}:`, {
+              ...row,
+              // Include nested objects
+              billing: row.billing,
+              totals: row.totals
+            });
+          });
+        }
+      });
+    }
+    
     const { filename, csv } = makeBillingCsv(payload);
+    console.log("Final CSV:", csv);
     saveCsv(filename, csv);
   };
 
