@@ -1,3 +1,4 @@
+// scanner.tsx
 import {
   OnSuccessfulScanProps,
   QRCodeScanner,
@@ -10,45 +11,59 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
   Platform,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import { useScanHistory } from "../../contexts/ScanHistoryContext";
-const today = () => new Date().toISOString().slice(0, 10);
+
 export default function ScannerScreen() {
   const router = useRouter();
-  const { queueScan } = useScanHistory();
   const [scanned, setScanned] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
-  const handleScan = async (data: OnSuccessfulScanProps) => {
+
+  const handleScan = (data: OnSuccessfulScanProps) => {
     if (scanned) return;
     setScanned(true);
-    const scanText =
-      (data as any)?.rawData || (data as any)?.data || JSON.stringify(data);
-    const raw = String(scanText).trim();
-    const match = raw.match(/\bMTR-[A-Za-z0-9-]+\b/i);
-    const meterId = match ? match[0].toUpperCase() : "";
-    try {
-      if (meterId) {
-        await queueScan({
-          meter_id: meterId,
-          reading_value: 0,
-          lastread_date: today(),
-        });
-      }
-    } catch {
+
+    const raw = String(
+      (data as any)?.code ??
+        (data as any)?.rawData ??
+        (data as any)?.data ??
+        ""
+    ).trim();
+
+    if (!raw) {
+      Alert.alert("QR code empty", "No data found in QR code.");
+      setTimeout(() => setScanned(false), 1500);
+      return;
     }
-    router.replace("/(tabs)/billing");
-    Alert.alert("Scanned!", meterId || raw);
-    setTimeout(() => setScanned(false), 3000);
+
+    // Expect the QR content to be the meter id, e.g. "MTR-0001"
+    const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i;
+    if (!meterIdPattern.test(raw)) {
+      Alert.alert("Invalid QR", "QR code does not contain a valid meter ID.");
+      setTimeout(() => setScanned(false), 1500);
+      return;
+    }
+
+    const meterId = raw.toUpperCase();
+
+    // Go straight to Admin → Readings and pass the meterId.
+    // MeterReadingPanel will open the Add Reading modal and preselect this meter.
+    router.replace({
+      pathname: "/(tabs)/admin",
+      params: { panel: "readings", meterId },
+    } as any);
+
+    Alert.alert("Scanned!", `Meter: ${meterId}`);
+    setTimeout(() => setScanned(false), 1500);
   };
+
   useFocusEffect(
     React.useCallback(() => {
-      setScannerKey((prev) => prev + 1); 
-    }, []),
+      // Force re-mount scanner when screen gains focus
+      setScannerKey((prev) => prev + 1);
+    }, [])
   );
+
   return (
     <View style={styles.container}>
       <QRCodeScanner
@@ -57,7 +72,7 @@ export default function ScannerScreen() {
         scanning={{ cooldownDuration: 1200 }}
         uiControls={{
           showControls: true,
-          showTorchButton: true, 
+          showTorchButton: true,
           showStatus: true,
         }}
         permissionScreen={{}}
@@ -72,32 +87,17 @@ export default function ScannerScreen() {
       <View pointerEvents="none" style={styles.overlay}>
         <Text style={styles.overlayText}>Point your camera at a QR Code</Text>
         {Platform.OS === "web" ? (
-          <Text style={styles.overlayHint}>Use CTRL/CMD + Plus to zoom if needed</Text>
+          <Text style={styles.overlayHint}>
+            Use CTRL/CMD + Plus to zoom if needed
+          </Text>
         ) : null}
       </View>
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
-  topBar: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    padding: 12,
-    flexDirection: "row",
-    justifyContent: "flex-start",
-    alignItems: "center",
-    zIndex: 20,
-  },
-  iconBtn: {
-    marginLeft: 8.7,
-    marginTop: 53.1,
-    backgroundColor: "rgba(255, 255, 255, 0.35)",
-    borderRadius: 999,
-    padding: 8,
-  },
   logoContainer: {
     position: "absolute",
     top: 40,

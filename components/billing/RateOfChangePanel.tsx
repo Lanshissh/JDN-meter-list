@@ -9,6 +9,7 @@ import {
   View,
   ScrollView,
   Modal,
+  useWindowDimensions,
 } from "react-native";
 import axios, { AxiosInstance } from "axios";
 import { Ionicons } from "@expo/vector-icons";
@@ -21,11 +22,21 @@ const today = () => new Date().toISOString().slice(0, 10);
 const isYMD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 
 const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
-const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const DAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 const fmt = (v: any, d = 2) => {
   if (v == null || v === "") return "—";
@@ -210,29 +221,32 @@ function CalendarDatePicker({
   value,
   onChangeText,
   placeholder,
-  icon = 'calendar'
+  icon = "calendar",
+  isMobile,
 }: {
   label: string;
   value: string;
   onChangeText: (date: string) => void;
   placeholder?: string;
   icon?: keyof typeof Ionicons.glyphMap;
+  isMobile?: boolean;
 }) {
   const [showCalendar, setShowCalendar] = useState(false);
   const [viewDate, setViewDate] = useState(() => {
     if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      return new Date(value + 'T12:00:00');
+      return new Date(value + "T12:00:00");
     }
     return new Date();
   });
 
   const formatDisplayDate = (dateStr: string) => {
-    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return placeholder || 'Select date';
-    const d = new Date(dateStr + 'T12:00:00');
-    return d.toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric' 
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr))
+      return placeholder || "Select date";
+    const d = new Date(dateStr + "T12:00:00");
+    return d.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
     });
   };
 
@@ -244,7 +258,11 @@ function CalendarDatePicker({
     const daysInMonth = lastDay.getDate();
     const startingDayOfWeek = firstDay.getDay();
 
-    const days: Array<{ date: number | null; isCurrentMonth: boolean; fullDate: Date | null }> = [];
+    const days: Array<{
+      date: number | null;
+      isCurrentMonth: boolean;
+      fullDate: Date | null;
+    }> = [];
 
     // Previous month's days
     const prevMonthLastDay = new Date(year, month, 0).getDate();
@@ -252,7 +270,7 @@ function CalendarDatePicker({
       days.push({
         date: prevMonthLastDay - i,
         isCurrentMonth: false,
-        fullDate: new Date(year, month - 1, prevMonthLastDay - i)
+        fullDate: new Date(year, month - 1, prevMonthLastDay - i),
       });
     }
 
@@ -261,7 +279,7 @@ function CalendarDatePicker({
       days.push({
         date: i,
         isCurrentMonth: true,
-        fullDate: new Date(year, month, i)
+        fullDate: new Date(year, month, i),
       });
     }
 
@@ -271,7 +289,7 @@ function CalendarDatePicker({
       days.push({
         date: i,
         isCurrentMonth: false,
-        fullDate: new Date(year, month + 1, i)
+        fullDate: new Date(year, month + 1, i),
       });
     }
 
@@ -280,8 +298,8 @@ function CalendarDatePicker({
 
   const handleDateSelect = (date: Date) => {
     const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
     onChangeText(`${year}-${month}-${day}`);
     setShowCalendar(false);
   };
@@ -295,14 +313,14 @@ function CalendarDatePicker({
   };
 
   const handleToday = () => {
-    const today = new Date();
-    setViewDate(today);
-    handleDateSelect(today);
+    const t = new Date();
+    setViewDate(t);
+    handleDateSelect(t);
   };
 
   const isSelectedDate = (date: Date | null) => {
     if (!date || !value) return false;
-    const selectedDate = new Date(value + 'T12:00:00');
+    const selectedDate = new Date(value + "T12:00:00");
     return (
       date.getDate() === selectedDate.getDate() &&
       date.getMonth() === selectedDate.getMonth() &&
@@ -312,11 +330,11 @@ function CalendarDatePicker({
 
   const isToday = (date: Date | null) => {
     if (!date) return false;
-    const today = new Date();
+    const t = new Date();
     return (
-      date.getDate() === today.getDate() &&
-      date.getMonth() === today.getMonth() &&
-      date.getFullYear() === today.getFullYear()
+      date.getDate() === t.getDate() &&
+      date.getMonth() === t.getMonth() &&
+      date.getFullYear() === t.getFullYear()
     );
   };
 
@@ -329,8 +347,18 @@ function CalendarDatePicker({
         style={calendarStyles.inputContainer}
         onPress={() => setShowCalendar(true)}
       >
-        <Ionicons name={icon} size={16} color="#64748B" style={calendarStyles.icon} />
-        <Text style={[calendarStyles.inputText, !value && calendarStyles.placeholder]}>
+        <Ionicons
+          name={icon}
+          size={16}
+          color="#64748B"
+          style={calendarStyles.icon}
+        />
+        <Text
+          style={[
+            calendarStyles.inputText,
+            !value && calendarStyles.placeholder,
+          ]}
+        >
           {formatDisplayDate(value)}
         </Text>
         <Ionicons name="chevron-down" size={16} color="#64748B" />
@@ -348,7 +376,10 @@ function CalendarDatePicker({
           onPress={() => setShowCalendar(false)}
         >
           <TouchableOpacity
-            style={calendarStyles.calendarContainer}
+            style={[
+              calendarStyles.calendarContainer,
+              isMobile && calendarStyles.calendarContainerMobile,
+            ]}
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
           >
@@ -374,7 +405,10 @@ function CalendarDatePicker({
             </View>
 
             {/* Quick Today Button */}
-            <TouchableOpacity style={calendarStyles.todayButton} onPress={handleToday}>
+            <TouchableOpacity
+              style={calendarStyles.todayButton}
+              onPress={handleToday}
+            >
               <Ionicons name="today" size={14} color="#2563EB" />
               <Text style={calendarStyles.todayText}>Today</Text>
             </TouchableOpacity>
@@ -396,8 +430,11 @@ function CalendarDatePicker({
                   style={[
                     calendarStyles.dayCell,
                     !day.isCurrentMonth && calendarStyles.dayCellInactive,
-                    isSelectedDate(day.fullDate) && calendarStyles.dayCellSelected,
-                    isToday(day.fullDate) && !isSelectedDate(day.fullDate) && calendarStyles.dayCellToday
+                    isSelectedDate(day.fullDate) &&
+                      calendarStyles.dayCellSelected,
+                    isToday(day.fullDate) &&
+                      !isSelectedDate(day.fullDate) &&
+                      calendarStyles.dayCellToday,
                   ]}
                   onPress={() => day.fullDate && handleDateSelect(day.fullDate)}
                   disabled={!day.fullDate}
@@ -406,8 +443,11 @@ function CalendarDatePicker({
                     style={[
                       calendarStyles.dayText,
                       !day.isCurrentMonth && calendarStyles.dayTextInactive,
-                      isSelectedDate(day.fullDate) && calendarStyles.dayTextSelected,
-                      isToday(day.fullDate) && !isSelectedDate(day.fullDate) && calendarStyles.dayTextToday
+                      isSelectedDate(day.fullDate) &&
+                        calendarStyles.dayTextSelected,
+                      isToday(day.fullDate) &&
+                        !isSelectedDate(day.fullDate) &&
+                        calendarStyles.dayTextToday,
                     ]}
                   >
                     {day.date}
@@ -434,6 +474,9 @@ function CalendarDatePicker({
 
 function RateOfChangePanel() {
   const { token } = useAuth();
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
+
   const headerToken =
     token && /^Bearer\s/i.test(token.trim())
       ? token.trim()
@@ -473,7 +516,8 @@ function RateOfChangePanel() {
   const [meterRoc, setMeterRoc] = useState<RocMeter | null>(null);
   const [tenantRoc, setTenantRoc] = useState<RocTenant | null>(null);
   const [buildingRoc, setBuildingRoc] = useState<RocBuilding | null>(null);
-  const [cmpMonthly, setCmpMonthly] = useState<BuildingMonthlyTotals | null>(null);
+  const [cmpMonthly, setCmpMonthly] =
+    useState<BuildingMonthlyTotals | null>(null);
   const [cmpFour, setCmpFour] = useState<BuildingFourMonths | null>(null);
   const [cmpYearly, setCmpYearly] = useState<BuildingYearly | null>(null);
 
@@ -823,16 +867,27 @@ function RateOfChangePanel() {
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Rate of Change Analysis</Text>
-        <Text style={styles.subtitle}>
-          Analyze consumption patterns and trends across meters, tenants, and buildings
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[
+        styles.contentContainer,
+        isMobile && styles.contentContainerMobile,
+      ]}
+    >
+      <View style={[styles.header, isMobile && styles.headerMobile]}>
+        <Text style={[styles.title, isMobile && styles.titleMobile]}>
+          Rate of Change Analysis
+        </Text>
+        <Text style={[styles.subtitle, isMobile && styles.subtitleMobile]}>
+          Analyze consumption patterns and trends across meters, tenants, and
+          buildings
         </Text>
       </View>
 
       {/* Tabs */}
-      <View style={styles.tabContainer}>
+      <View
+        style={[styles.tabContainer, isMobile && styles.tabContainerMobile]}
+      >
         <TabButton
           icon="speedometer"
           label="Meter"
@@ -870,7 +925,7 @@ function RateOfChangePanel() {
       )}
 
       {/* Parameters */}
-      <View style={styles.inputCard}>
+      <View style={[styles.inputCard, isMobile && styles.inputCardMobile]}>
         <Text style={styles.sectionTitle}>Parameters</Text>
 
         <View style={styles.inputGrid}>
@@ -944,6 +999,7 @@ function RateOfChangePanel() {
             onChangeText={setStartDate}
             placeholder="YYYY-MM-DD"
             icon="calendar"
+            isMobile={isMobile}
           />
 
           <CalendarDatePicker
@@ -952,13 +1008,16 @@ function RateOfChangePanel() {
             onChangeText={setEndDate}
             placeholder="YYYY-MM-DD"
             icon="calendar"
+            isMobile={isMobile}
           />
 
           {mode === "comparison" && (
             <InputField
               label="Year"
               value={year}
-              onChangeText={(v) => setYear(v.replace(/[^\d]/g, "").slice(0, 4))}
+              onChangeText={(v) =>
+                setYear(v.replace(/[^\d]/g, "").slice(0, 4))
+              }
               placeholder="2024"
               icon="today"
               keyboardType="numeric"
@@ -995,7 +1054,12 @@ function RateOfChangePanel() {
             />
           )}
           {mode === "comparison" && (
-            <View style={styles.comparisonActions}>
+            <View
+              style={[
+                styles.comparisonActions,
+                isMobile && styles.comparisonActionsMobile,
+              ]}
+            >
               <ActionButton
                 label="Monthly"
                 icon="calendar"
@@ -1023,16 +1087,25 @@ function RateOfChangePanel() {
       </View>
 
       {/* Results */}
-      <View style={styles.resultsSection}>
+      <View
+        style={[
+          styles.resultsSection,
+          isMobile && styles.resultsSectionMobile,
+        ]}
+      >
         {/* Meter */}
         {mode === "meter" && meterRoc && (
           <ResultsCard title="Meter Analysis" icon="speedometer">
             <View style={styles.meterHeader}>
-              <Text style={styles.meterId}>{meterRoc.meter_sn || meterRoc.meter_id}</Text>
+              <Text style={styles.meterId}>
+                {meterRoc.meter_sn || meterRoc.meter_id}
+              </Text>
               <Text style={styles.meterType}>{meterRoc.meter_type}</Text>
             </View>
 
-            <View style={styles.statsGrid}>
+            <View
+              style={[styles.statsGrid, isMobile && styles.statsGridMobile]}
+            >
               <StatCard
                 label="Current Period"
                 value={fmt(meterRoc.current_consumption, 2)}
@@ -1066,9 +1139,16 @@ function RateOfChangePanel() {
 
             {(tenantRoc.groups ?? []).map((group, index) => (
               <View key={index} style={styles.utilitySection}>
-                <Text style={styles.utilityTitle}>{group.meter_type} Consumption</Text>
+                <Text style={styles.utilityTitle}>
+                  {group.meter_type} Consumption
+                </Text>
                 {group.totals && (
-                  <View style={styles.statsGrid}>
+                  <View
+                    style={[
+                      styles.statsGrid,
+                      isMobile && styles.statsGridMobile,
+                    ]}
+                  >
                     <StatCard
                       label="Current"
                       value={fmt(group.totals.current_consumption, 2)}
@@ -1095,7 +1175,9 @@ function RateOfChangePanel() {
         {mode === "building" && buildingRoc && (
           <ResultsCard title="Building Analysis" icon="business">
             <View style={styles.buildingHeader}>
-              <Text style={styles.buildingName}>{buildingRoc.building_name}</Text>
+              <Text style={styles.buildingName}>
+                {buildingRoc.building_name}
+              </Text>
               <Text style={styles.buildingId}>{buildingRoc.building_id}</Text>
             </View>
 
@@ -1105,7 +1187,12 @@ function RateOfChangePanel() {
                   {tenant.tenant_name || tenant.tenant_id}
                 </Text>
                 {tenant.totals && (
-                  <View style={styles.statsGrid}>
+                  <View
+                    style={[
+                      styles.statsGrid,
+                      isMobile && styles.statsGridMobile,
+                    ]}
+                  >
                     <StatCard
                       label="Current"
                       value={fmt(tenant.totals.current_consumption, 2)}
@@ -1141,7 +1228,12 @@ function RateOfChangePanel() {
                     {cmpMonthly.period?.start} → {cmpMonthly.period?.end}
                   </Text>
                 </View>
-                <View style={styles.statsGrid}>
+                <View
+                  style={[
+                    styles.statsGrid,
+                    isMobile && styles.statsGridMobile,
+                  ]}
+                >
                   <StatCard
                     label="Electric"
                     value={fmt(cmpMonthly.totals?.electric)}
@@ -1187,7 +1279,12 @@ function RateOfChangePanel() {
                 />
                 <View style={styles.totalsSection}>
                   <Text style={styles.totalsTitle}>Total Consumption</Text>
-                  <View style={styles.statsGrid}>
+                  <View
+                    style={[
+                      styles.statsGrid,
+                      isMobile && styles.statsGridMobile,
+                    ]}
+                  >
                     <StatCard
                       label="Electric"
                       value={fmt(cmpFour.totals_all?.electric)}
@@ -1235,7 +1332,12 @@ function RateOfChangePanel() {
                 />
                 <View style={styles.totalsSection}>
                   <Text style={styles.totalsTitle}>Annual Totals</Text>
-                  <View style={styles.statsGrid}>
+                  <View
+                    style={[
+                      styles.statsGrid,
+                      isMobile && styles.statsGridMobile,
+                    ]}
+                  >
                     <StatCard
                       label="Electric"
                       value={fmt(cmpYearly.totals_all?.electric)}
@@ -1370,9 +1472,11 @@ function ActionButton({
         name={loading ? "refresh" : icon}
         size={16}
         color={
-          variant === "primary" ? "#FFFFFF" : variant === "outline"
-          ? "#2563EB"
-          : "#2563EB"
+          variant === "primary"
+            ? "#FFFFFF"
+            : variant === "outline"
+            ? "#2563EB"
+            : "#2563EB"
         }
       />
       <Text
@@ -1498,16 +1602,16 @@ const calendarStyles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
+    fontWeight: "500",
+    color: "#374151",
   },
   inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: "#D1D5DB",
     borderRadius: 8,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: "#F9FAFB",
     paddingHorizontal: 12,
     paddingVertical: 12,
   },
@@ -1517,118 +1621,123 @@ const calendarStyles = StyleSheet.create({
   inputText: {
     flex: 1,
     fontSize: 14,
-    color: '#111827',
+    color: "#111827",
   },
   placeholder: {
-    color: '#94A3B8',
+    color: "#94A3B8",
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   calendarContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: 20,
     width: 340,
-    maxWidth: '90%',
-    shadowColor: '#000',
+    maxWidth: "90%",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,
     shadowRadius: 24,
     elevation: 8,
   },
+  calendarContainerMobile: {
+    width: "95%",
+    maxWidth: 360,
+    paddingHorizontal: 16,
+  },
   calendarHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
   monthYear: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#0F172A',
+    fontWeight: "600",
+    color: "#0F172A",
   },
   headerButtons: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 4,
   },
   navButton: {
     padding: 8,
     borderRadius: 6,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: "#F8FAFC",
   },
   todayButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 6,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: "#EFF6FF",
     marginBottom: 16,
     gap: 6,
   },
   todayText: {
     fontSize: 13,
-    fontWeight: '500',
-    color: '#2563EB',
+    fontWeight: "500",
+    color: "#2563EB",
   },
   dayHeaders: {
-    flexDirection: 'row',
+    flexDirection: "row",
     marginBottom: 8,
   },
   dayHeader: {
     width: 40,
-    textAlign: 'center',
+    textAlign: "center",
     fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
+    fontWeight: "600",
+    color: "#64748B",
   },
   calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
   },
   dayCell: {
     width: 40,
     height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     borderRadius: 8,
   },
   dayCellInactive: {
     opacity: 0.4,
   },
   dayCellSelected: {
-    backgroundColor: '#2563EB',
+    backgroundColor: "#2563EB",
   },
   dayCellToday: {
     borderWidth: 1,
-    borderColor: '#2563EB',
+    borderColor: "#2563EB",
   },
   dayText: {
     fontSize: 14,
-    color: '#374151',
+    color: "#374151",
   },
   dayTextInactive: {
-    color: '#94A3B8',
+    color: "#94A3B8",
   },
   dayTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
   dayTextToday: {
-    color: '#2563EB',
-    fontWeight: '600',
+    color: "#2563EB",
+    fontWeight: "600",
   },
   calendarFooter: {
     marginTop: 16,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    alignItems: 'flex-end',
+    borderTopColor: "#F1F5F9",
+    alignItems: "flex-end",
   },
   cancelButton: {
     paddingVertical: 8,
@@ -1636,8 +1745,8 @@ const calendarStyles = StyleSheet.create({
   },
   cancelButtonText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#64748B',
+    fontWeight: "500",
+    color: "#64748B",
   },
 });
 
@@ -1646,6 +1755,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F8FAFC",
   },
+  contentContainer: {
+    paddingBottom: 24,
+  },
+  contentContainerMobile: {
+    paddingBottom: 16,
+  },
   header: {
     padding: 24,
     paddingBottom: 16,
@@ -1653,16 +1768,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
   },
+  headerMobile: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
   title: {
     fontSize: 28,
     fontWeight: "700",
     color: "#0F172A",
     marginBottom: 4,
   },
+  titleMobile: {
+    fontSize: 22,
+  },
   subtitle: {
     fontSize: 14,
     color: "#64748B",
     lineHeight: 20,
+  },
+  subtitleMobile: {
+    fontSize: 13,
   },
   tabContainer: {
     flexDirection: "row",
@@ -1671,6 +1797,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
+  },
+  tabContainerMobile: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexWrap: "wrap",
+    gap: 8,
   },
   tabButton: {
     flexDirection: "row",
@@ -1733,6 +1865,12 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
+  inputCardMobile: {
+    marginHorizontal: 12,
+    marginTop: 16,
+    marginBottom: 12,
+    padding: 16,
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
@@ -1779,6 +1917,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
   },
+  comparisonActionsMobile: {
+    flexDirection: "column",
+  },
   actionButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -1821,6 +1962,11 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingTop: 0,
     gap: 16,
+  },
+  resultsSectionMobile: {
+    paddingHorizontal: 12,
+    paddingTop: 0,
+    paddingBottom: 24,
   },
   resultsCard: {
     backgroundColor: "#FFFFFF",
@@ -1871,6 +2017,9 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: "row",
     gap: 12,
+  },
+  statsGridMobile: {
+    flexDirection: "column",
   },
   statCard: {
     flex: 1,

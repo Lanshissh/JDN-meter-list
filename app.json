@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "JDN-METRO",
-    "slug": "JDN-METRO",
+    "slug": "jdn-metro",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -47,7 +47,8 @@
           "recordAudioAndroid": true
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
@@ -55,8 +56,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "f77d7a54-e72e-41f8-a494-f9492bdd0cbf"
+        "projectId": "c1de54fa-7de4-4abb-bf56-a4b0a5d8f4de"
       }
-    }
+    },
+    "owner": "lansii"
   }
 }

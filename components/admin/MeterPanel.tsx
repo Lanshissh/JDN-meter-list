@@ -274,6 +274,85 @@ export default function MeterPanel({ token }: { token: string | null }) {
       notify("Download failed", "Could not generate QR image.");
     }
   };
+  const printQr = () => {
+    if (!qrCodeRef.current) {
+      notify("Print QR", "QR code is not ready yet.");
+      return;
+    }
+
+    try {
+      qrCodeRef.current.toDataURL((data: string) => {
+        const dataUrl = `data:image/png;base64,${data}`;
+
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          const printWindow = window.open("", "_blank");
+          if (!printWindow) {
+            notify("Print QR", "Pop-up blocked. Please allow pop-ups and try again.");
+            return;
+          }
+
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <meta charset="utf-8" />
+                <title>Meter QR - ${qrMeterId}</title>
+                <style>
+                  body {
+                    margin: 0;
+                    padding: 0;
+                    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100vh;
+                    background: #ffffff;
+                  }
+                  .wrap {
+                    text-align: center;
+                  }
+                  img {
+                    width: 280px;
+                    height: 280px;
+                  }
+                  h1 {
+                    font-size: 18px;
+                    margin-bottom: 8px;
+                  }
+                  p {
+                    font-size: 14px;
+                    color: #6b7280;
+                  }
+                  @media print {
+                    body { margin: 0; }
+                  }
+                </style>
+              </head>
+              <body>
+                <div class="wrap">
+                  <h1>Meter QR</h1>
+                  <p>${qrMeterId || ""}</p>
+                  <img src="${dataUrl}" alt="Meter QR" />
+                </div>
+                <script>
+                  setTimeout(function () {
+                    window.print();
+                  }, 500);
+                </script>
+              </body>
+            </html>
+          `);
+          printWindow.document.close();
+        } else {
+          // Native apps: just show a hint for now
+          notify("Print QR", "Direct printing is only available on web. On mobile, please download or screenshot the QR.");
+        }
+      });
+    } catch (e) {
+      notify("Print failed", "Could not generate QR image for printing.");
+    }
+  };
+
   if (busy) {
     return (
       <View style={[styles.screen, { justifyContent: "center", alignItems: "center" }]}>
@@ -523,6 +602,9 @@ export default function MeterPanel({ token }: { token: string | null }) {
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setQrVisible(false)}>
                 <Text style={styles.btnGhostText}>Close</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btn} onPress={printQr}>
+                <Text style={styles.btnText}>Print</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btn} onPress={downloadQr}>
                 <Text style={styles.btnText}>Download</Text>

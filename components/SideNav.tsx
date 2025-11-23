@@ -34,19 +34,48 @@ function decodeRole(token: string | null): string {
 }
 
 export default function SideNav({ active, onSelect }: Props) {
-  const { token } = useAuth();
-  const role = useMemo(() => decodeRole(token), [token]);
-  const canSeeAdmin = true;
+  const { token, hasRole } = useAuth();
+  const legacyRole = useMemo(() => decodeRole(token), [token]);
+
+  const isAdmin = hasRole("admin") || legacyRole === "admin";
+  const isOperator = hasRole("operator") || legacyRole === "operator";
+  const isBiller = hasRole("biller") || legacyRole === "biller";
+  const isReader = hasRole("reader") || legacyRole === "reader";
+
+  const nonAdminRoles = [
+    isOperator ? "operator" : null,
+    isBiller ? "biller" : null,
+    isReader ? "reader" : null,
+  ].filter(Boolean) as string[];
+
+  const isPureOperator = !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "operator";
+  const isPureBiller = !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "biller";
+  const isPureReader = !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "reader";
+
+  const canSeeAdmin = isAdmin || isOperator || isBiller || isReader;
+  const canSeeScanner = isAdmin || isPureReader;
+  const canSeeBilling = isAdmin || isPureBiller;
+  const canSeeDashboard = isAdmin;
+
+  const homeTab: TabKey =
+    isPureBiller && canSeeBilling
+      ? "billing"
+      : canSeeAdmin
+      ? "admin"
+      : canSeeBilling
+      ? "billing"
+      : canSeeScanner
+      ? "scanner"
+      : "dashboard";
 
   const [expanded, setExpanded] = useState(false);
-  const widthAnim = useRef(new Animated.Value(68)).current;
+  const widthAnim = useRef(new Animated.Value(72)).current;
 
   useEffect(() => {
-    Animated.spring(widthAnim, {
-      toValue: expanded ? 220 : 68,
+    Animated.timing(widthAnim, {
+      toValue: expanded ? 240 : 72,
+      duration: 220,
       useNativeDriver: false,
-      speed: 18,
-      bounciness: 6,
     }).start();
   }, [expanded, widthAnim]);
 
@@ -63,201 +92,273 @@ export default function SideNav({ active, onSelect }: Props) {
     return (
       <TouchableOpacity
         onPress={() => onSelect(tab)}
-        style={[
-          styles.item,
-          expanded && styles.itemWide,
-          isActive && styles.itemActive,
-        ]}
+        style={[styles.item, isActive && styles.itemActive]}
+        activeOpacity={0.7}
         {...(Platform.OS === "web" && !expanded ? { title: label } : {})}
       >
-        <View style={[styles.itemRow, expanded && styles.itemRowWide]}>
-          <Ionicons
-            name={icon}
-            size={22}
-            color="#fff"
-          />
+        <View style={[styles.itemInner, expanded && styles.itemInnerExpanded]}>
+          <View style={[styles.iconWrap, isActive && styles.iconWrapActive]}>
+            <Ionicons
+              name={icon}
+              size={20}
+              color={isActive ? "#fff" : "rgba(255,255,255,0.7)"}
+            />
+          </View>
           {expanded && (
-            <Text style={[styles.itemText, isActive && styles.itemTextActive]}>
+            <Text style={[styles.itemLabel, isActive && styles.itemLabelActive]}>
               {label}
             </Text>
           )}
         </View>
+        {isActive && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
     );
   };
 
   return (
-    <Animated.View style={[styles.shell, { width: widthAnim }]}>
-      {/* soft overlay – keeps your #082cac base but adds subtle depth */}
-      <View pointerEvents="none" style={styles.overlay} />
-
-      {/* Logo / brand */}
+    <Animated.View style={[styles.container, { width: widthAnim }]}>
+      {/* Logo */}
       <TouchableOpacity
-        style={[styles.logoBtn, expanded && styles.logoBtnWide]}
-        onPress={() => onSelect("admin")}
-        {...(Platform.OS === "web" && !expanded ? { title: "Admin" } : {})}
+        style={[styles.logoContainer, expanded && styles.logoContainerExpanded]}
+        onPress={() => onSelect(homeTab)}
+        activeOpacity={0.8}
+        {...(Platform.OS === "web" && !expanded ? { title: "Home" } : {})}
       >
-        <Image source={require("../assets/images/jdn.jpg")} style={styles.logo} />
-        {expanded && <Text style={styles.brand}>JDN</Text>}
+        <View style={styles.logoWrap}>
+          <Image
+            source={require("../assets/images/jdn.jpg")}
+            style={styles.logo}
+          />
+        </View>
+        {expanded && (
+          <View style={styles.brandInfo}>
+            <Text style={styles.brandName}>JDN</Text>
+            <Text style={styles.brandSub}>Portal</Text>
+          </View>
+        )}
       </TouchableOpacity>
 
-      {/* Nav section */}
-      <View style={styles.section}>
-        {canSeeAdmin && <NavItem icon="person-circle-outline" label="Admin" tab="admin" />}
-        <NavItem icon="scan-outline" label="Scanner" tab="scanner" />
-        <NavItem icon="card-outline" label="Billing" tab="billing" />
+      {/* Divider */}
+      <View style={styles.divider} />
+
+      {/* Navigation */}
+      <View style={styles.navSection}>
+        {canSeeAdmin && <NavItem icon="people-outline" label="Admin" tab="admin" />}
+        {canSeeScanner && <NavItem icon="scan-outline" label="Scanner" tab="scanner" />}
+        {canSeeBilling && <NavItem icon="wallet-outline" label="Billing" tab="billing" />}
       </View>
 
-      <View style={{ flex: 1 }} />
+      <View style={styles.spacer} />
 
-      {/* Bottom items */}
-      <NavItem icon="stats-chart-outline" label="Dashboard" tab="dashboard" />
+      {/* Bottom section */}
+      <View style={styles.bottomSection}>
+        {canSeeDashboard && (
+          <NavItem icon="analytics-outline" label="Dashboard" tab="dashboard" />
+        )}
 
-      {/* Expand / Collapse */}
-      <TouchableOpacity
-        onPress={() => setExpanded((v) => !v)}
-        style={[styles.toggle, expanded && styles.itemWide]}
-        accessibilityLabel={expanded ? "Collapse sidebar" : "Expand sidebar"}
-        {...(Platform.OS === "web" ? { title: expanded ? "Collapse" : "Expand" } : {})}
-      >
-        <View style={[styles.itemRow, expanded && styles.itemRowWide]}>
-          {!expanded ? (
-            <View style={styles.expandIconRow}>
-              <Ionicons name="arrow-forward-outline" size={18} color="#fff" />
-              <View style={styles.vertBar} />
+        <View style={styles.dividerThin} />
+
+        {/* Expand/Collapse */}
+        <TouchableOpacity
+          onPress={() => setExpanded((v) => !v)}
+          style={styles.toggleBtn}
+          activeOpacity={0.7}
+          accessibilityLabel={expanded ? "Collapse sidebar" : "Expand sidebar"}
+          {...(Platform.OS === "web" ? { title: expanded ? "Collapse" : "Expand" } : {})}
+        >
+          <View style={[styles.itemInner, expanded && styles.itemInnerExpanded]}>
+            <View style={styles.toggleIconWrap}>
+              <Ionicons
+                name={expanded ? "chevron-back" : "chevron-forward"}
+                size={18}
+                color="rgba(255,255,255,0.6)"
+              />
             </View>
-          ) : (
-            <View style={styles.expandIconRow}>
-              <View style={styles.vertBar} />
-              <Ionicons name="arrow-back-outline" size={18} color="#fff" />
-            </View>
-          )}
-          {expanded && <Text style={styles.itemText}>Collapse</Text>}
-        </View>
-      </TouchableOpacity>
+            {expanded && <Text style={styles.toggleLabel}>Collapse</Text>}
+          </View>
+        </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 }
 
-const BRAND_BG = "#082cac";
-const BORDER = "#eee";
-const TEXT = "#fff";
-
 const styles = StyleSheet.create({
-  shell: {
+  container: {
     height: "100%",
-    paddingVertical: 16,
-    paddingHorizontal: 8,
-    backgroundColor: BRAND_BG,
-    borderRightWidth: 1,
-    borderRightColor: BORDER,
+    paddingVertical: 20,
+    paddingHorizontal: 12,
+    backgroundColor: "#082cac",
     overflow: "hidden",
     ...(Platform.OS === "web"
       ? {
-          backdropFilter: "blur(8px)",
-          WebkitBackdropFilter: "blur(8px)",
-          boxShadow:
-            "inset 0 0 0 1px rgba(255,255,255,0.06), 0 8px 28px rgba(0,0,0,0.24)",
+          background: "linear-gradient(180deg, #0a3ad1 0%, #082cac 100%)",
+          boxShadow: "4px 0 24px rgba(8,44,172,0.3)",
         }
       : {
-          shadowColor: "#000",
-          shadowOpacity: 0.18,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 8 },
+          shadowColor: "#082cac",
+          shadowOpacity: 0.3,
+          shadowRadius: 24,
+          shadowOffset: { width: 4, height: 0 },
         }),
-    borderTopRightRadius: 16,
-    borderBottomRightRadius: 16,
   },
 
-  overlay: {
-    position: "absolute",
-    inset: 0 as any,
-    borderTopRightRadius: 16,
-    borderBottomRightRadius: 16,
-    backgroundColor: "transparent",
-    ...(Platform.OS === "web"
-      ? {
-          background:
-            "linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.03) 40%, rgba(0,0,0,0.08) 100%)",
-        }
-      : {}),
-  },
-
-  /* logo */
-  logoBtn: {
-    height: 56,
-    width: 56,
-    borderRadius: 16,
+  // Logo
+  logoContainer: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    marginBottom: 12,
+    paddingVertical: 4,
+    marginBottom: 8,
   },
-  logoBtnWide: {
-    width: "100%",
+  logoContainerExpanded: {
     flexDirection: "row",
-    gap: 10,
     justifyContent: "flex-start",
-    paddingHorizontal: 10,
+    paddingHorizontal: 4,
+    gap: 12,
+  },
+  logoWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }
+      : { elevation: 4 }),
   },
   logo: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.25)",
-  },
-  brand: { color: TEXT, fontWeight: "800", fontSize: 16, letterSpacing: 0.4 },
-
-  /* section */
-  section: { marginTop: 8, gap: 8 },
-
-  /* items */
-  item: {
-    height: 46,
+    width: 44,
+    height: 44,
     borderRadius: 12,
-    alignItems: "center",
+  },
+  brandInfo: {
     justifyContent: "center",
-    marginVertical: 4,
+  },
+  brandName: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  brandSub: {
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 11,
+    fontWeight: "500",
+    letterSpacing: 0.3,
+    marginTop: 1,
+  },
+
+  // Dividers
+  divider: {
+    height: 1,
     backgroundColor: "rgba(255,255,255,0.08)",
+    marginVertical: 16,
+    marginHorizontal: 4,
+  },
+  dividerThin: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginVertical: 12,
+    marginHorizontal: 8,
+  },
+
+  // Navigation
+  navSection: {
+    gap: 4,
+  },
+  spacer: {
+    flex: 1,
+  },
+  bottomSection: {
+    gap: 4,
+  },
+
+  // Nav Item
+  item: {
+    position: "relative",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     ...(Platform.OS === "web"
-      ? { cursor: "pointer", transition: "box-shadow 140ms ease, background 140ms ease" }
+      ? {
+          cursor: "pointer",
+          transition: "background 150ms ease",
+        }
       : {}),
   },
-  itemWide: { alignItems: "flex-start", paddingHorizontal: 10 },
-
-  itemRow: { alignItems: "center" },
-  itemRowWide: { flexDirection: "row", gap: 10 },
-
   itemActive: {
-    backgroundColor: "rgba(255,255,255,0.18)",
-    ...(Platform.OS === "web"
-      ? { boxShadow: "0 0 0 3px rgba(255,255,255,0.24), 0 10px 24px rgba(0,0,0,0.25)" }
-      : {
-          shadowColor: "#000",
-          shadowOpacity: 0.35,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 8 },
-        }),
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
   },
-  itemText: { color: TEXT, fontWeight: "700", fontSize: 14 },
-  itemTextActive: { color: TEXT },
-
-  /* toggle */
-  toggle: {
-    height: 46,
-    borderRadius: 12,
+  itemInner: {
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 6,
-    backgroundColor: "rgba(255,255,255,0.08)",
   },
-  expandIconRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  vertBar: {
+  itemInnerExpanded: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    gap: 12,
+  },
+  iconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  iconWrapActive: {
+    backgroundColor: "rgba(255,255,255,0.25)",
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)" }
+      : {}),
+  },
+  itemLabel: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 14,
+    fontWeight: "500",
+    letterSpacing: 0.2,
+  },
+  itemLabelActive: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  activeIndicator: {
+    position: "absolute",
+    left: 0,
+    top: "50%",
+    marginTop: -10,
     width: 3,
     height: 20,
-    backgroundColor: TEXT,
     borderRadius: 2,
-    opacity: 0.9,
+    backgroundColor: "#fff",
+  },
+
+  // Toggle
+  toggleBtn: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    ...(Platform.OS === "web"
+      ? {
+          cursor: "pointer",
+          transition: "background 150ms ease",
+        }
+      : {}),
+  },
+  toggleIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  toggleLabel: {
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 13,
+    fontWeight: "500",
   },
 });

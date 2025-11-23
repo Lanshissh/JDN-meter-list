@@ -21,7 +21,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Picker } from "@react-native-picker/picker";
 import NetInfo from "@react-native-community/netinfo";
-import { QRCodeScanner, OnSuccessfulScanProps } from "@masumdev/rn-qrcode-scanner";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
@@ -248,8 +247,13 @@ export type Meter = {
 type Stall = { stall_id: string; building_id?: string; stall_sn?: string };
 type Building = { building_id: string; building_name: string };
 
-export default function MeterReadingPanel({ token }: { token: string | null }) {
-  // auth + api
+export default function MeterReadingPanel({
+  token,
+  initialMeterId,
+}: {
+  token: string | null;
+  initialMeterId?: string;
+}) {
   const jwt = useMemo(() => decodeJwtPayload(token), [token]);
   const rolesRaw = String(jwt?.user_level ?? jwt?.user_roles ?? "").toLowerCase();
   const isAdmin = rolesRaw.includes("admin");
@@ -301,18 +305,29 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const [query, setQuery] = useState("");
 
   // selection & modals
-  const [selectedMeterId, setSelectedMeterId] = useState("");
+  const [selectedMeterId, setSelectedMeterId] = useState<string>(initialMeterId ?? "");
   const [readingsModalVisible, setReadingsModalVisible] = useState(false);
   const PAGE_SIZE = 30;
   const [page, setPage] = useState(1);
   useEffect(() => setPage(1), [selectedMeterId]);
 
   const [createVisible, setCreateVisible] = useState(false);
-  const [formMeterId, setFormMeterId] = useState("");
+  const [formMeterId, setFormMeterId] = useState<string>(initialMeterId ?? "");
   const [formValue, setFormValue] = useState("");
   const [formDate, setFormDate] = useState<string>(todayStr());
   const [formRemarks, setFormRemarks] = useState<string>("");
   const [formImage, setFormImage] = useState<string>("");
+
+  // When coming from scanner with initialMeterId:
+  // - preselect the meter
+  // - auto-open the Create Reading modal
+  useEffect(() => {
+    if (initialMeterId) {
+      setSelectedMeterId(initialMeterId);
+      setFormMeterId(initialMeterId);
+      setCreateVisible(true);
+    }
+  }, [initialMeterId]);
 
   const [createWarn, setCreateWarn] = useState(false);
 
@@ -326,8 +341,6 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
 
   const [editWarn, setEditWarn] = useState(false);
 
-  const [scanVisible, setScanVisible] = useState(false);
-  const [scannerKey, setScannerKey] = useState(0);
   const readingInputRef = useRef<TextInput>(null);
 
   const [historyVisible, setHistoryVisible] = useState(false);
@@ -339,95 +352,95 @@ export default function MeterReadingPanel({ token }: { token: string | null }) {
   const READING_ENDPOINTS = ["/meter_reading", "/readings", "/meter-readings", "/meterreadings"];
   const [readingBase, setReadingBase] = useState<string>(READING_ENDPOINTS[0]);
   /* ===== Billing lock detection (optional) ===== */
-type BillingHeader = {
-  building_id: string;
-  period: { start: string; end: string };
-  // optional status if you later add a locked flag in the DB
-  status?: string;
-};
+  type BillingHeader = {
+    building_id: string;
+    period: { start: string; end: string };
+    // optional status if you later add a locked flag in the DB
+    status?: string;
+  };
 
-const BILLING_HEADERS_ENDPOINTS = [
-  "/billing/headers",
-  "/billings/headers",
-  "/billings/buildings", // 👈 your real endpoint
-  "/billing",
-  "/billings",
-];
+  const BILLING_HEADERS_ENDPOINTS = [
+    "/billing/headers",
+    "/billings/headers",
+    "/billings/buildings", // 👈 your real endpoint
+    "/billing",
+    "/billings",
+  ];
 
-const [billingHeadersBase, setBillingHeadersBase] = useState<string | null>(null);
-const [billingHeaders, setBillingHeaders] = useState<BillingHeader[]>([]);
+  const [billingHeadersBase, setBillingHeadersBase] = useState<string | null>(null);
+  const [billingHeaders, setBillingHeaders] = useState<BillingHeader[]>([]);
 
-async function detectBillingHeadersEndpoint() {
-  for (const p of BILLING_HEADERS_ENDPOINTS) {
-    try {
-      const res = await api.get(p, { validateStatus: () => true });
-      const ok =
-        res.status >= 200 &&
-        res.status < 400 &&
-        (
-          Array.isArray(res.data) ||
-          (res.data && typeof res.data === "object" && !Array.isArray(res.data))
-        );
+  async function detectBillingHeadersEndpoint() {
+    for (const p of BILLING_HEADERS_ENDPOINTS) {
+      try {
+        const res = await api.get(p, { validateStatus: () => true });
+        const ok =
+          res.status >= 200 &&
+          res.status < 400 &&
+          (
+            Array.isArray(res.data) ||
+            (res.data && typeof res.data === "object" && !Array.isArray(res.data))
+          );
 
-      if (ok) {
-        setBillingHeadersBase(p);
-        return p;
+        if (ok) {
+          setBillingHeadersBase(p);
+          return p;
+        }
+      } catch {
+        // ignore and try next
       }
-    } catch {
-      // ignore and try next
     }
+    return null;
   }
-  return null;
-}
 
-const reloadBillingHeaders = async () => {
-  try {
-    const base = billingHeadersBase ?? (await detectBillingHeadersEndpoint());
-    if (!base) return;
+  const reloadBillingHeaders = async () => {
+    try {
+      const base = billingHeadersBase ?? (await detectBillingHeadersEndpoint());
+      if (!base) return;
 
-    const res = await api.get(base, { validateStatus: () => true });
-    const data = res.data;
+      const res = await api.get(base, { validateStatus: () => true });
+      const data = res.data;
 
-    let headers: BillingHeader[] = [];
+      let headers: BillingHeader[] = [];
 
-    // Case 1: backend returns an array of headers
-    if (Array.isArray(data)) {
-      headers = data as BillingHeader[];
+      // Case 1: backend returns an array of headers
+      if (Array.isArray(data)) {
+        headers = data as BillingHeader[];
+      }
+      // Case 2: backend returns grouped object like /billings/buildings
+      else if (data && typeof data === "object") {
+        headers = Object.values(data as Record<string, any>).map((item) => ({
+          building_id: item.building_id,
+          period: item.period ?? {
+            start: item.period_start,
+            end: item.period_end,
+          },
+          status:
+            item.status ?? 
+            item.lock_status ?? 
+            (typeof item.is_locked !== "undefined"
+              ? String(item.is_locked)
+              : undefined),
+        }));
+      }
+
+      // keep only valid ones
+      headers = headers.filter(
+        (h) =>
+          h &&
+          h.building_id &&
+          h.period &&
+          typeof h.period.start === "string" &&
+          typeof h.period.end === "string"
+      );
+
+      setBillingHeaders(headers);
+    } catch (e) {
+      if (Platform.OS === "web") {
+        console.error("Billing header load failed:", e);
+      }
     }
-    // Case 2: backend returns grouped object like /billings/buildings
-    else if (data && typeof data === "object") {
-      headers = Object.values(data as Record<string, any>).map((item) => ({
-        building_id: item.building_id,
-        period: item.period ?? {
-          start: item.period_start,
-          end: item.period_end,
-        },
-        status:
-          item.status ??
-          item.lock_status ??
-          (typeof item.is_locked !== "undefined"
-            ? String(item.is_locked)
-            : undefined),
-      }));
-    }
-
-    // keep only valid ones
-    headers = headers.filter(
-      (h) =>
-        h &&
-        h.building_id &&
-        h.period &&
-        typeof h.period.start === "string" &&
-        typeof h.period.end === "string"
-    );
-
-    setBillingHeaders(headers);
-  } catch (e) {
-    if (Platform.OS === "web") {
-      console.error("Billing header load failed:", e);
-    }
-  }
-};
+  };
 
   async function detectReadingEndpoint() {
     for (const p of READING_ENDPOINTS) {
@@ -462,38 +475,38 @@ const reloadBillingHeaders = async () => {
       notify("Not logged in", "Please log in to manage meter readings.");
       return;
     }
-  try {
-    setBusy(true);
-    const base = await detectReadingEndpoint();
-    const [rRes, mRes, sRes] = await Promise.all([
-      api.get<Reading[]>(base),
-      api.get<Meter[]>("/meters"),
-      api.get<Stall[]>("/stalls"),
-    ]);
-    setReadings(Array.isArray(rRes.data) ? rRes.data : (rRes.data as any)?.items ?? []);
-    setMeters(mRes.data || []);
-    setStalls(sRes.data || []);
-    if (!formMeterId && mRes.data?.length) setFormMeterId(mRes.data[0].meter_id);
-    if (isAdmin) {
-      try {
-        const bRes = await api.get<Building[]>("/buildings");
-        setBuildings(bRes.data || []);
-      } catch {
-        setBuildings([]);
+    try {
+      setBusy(true);
+      const base = await detectReadingEndpoint();
+      const [rRes, mRes, sRes] = await Promise.all([
+        api.get<Reading[]>(base),
+        api.get<Meter[]>("/meters"),
+        api.get<Stall[]>("/stalls"),
+      ]);
+      setReadings(Array.isArray(rRes.data) ? rRes.data : (rRes.data as any)?.items ?? []);
+      setMeters(mRes.data || []);
+      setStalls(sRes.data || []);
+      if (!formMeterId && mRes.data?.length) setFormMeterId(mRes.data[0].meter_id);
+      if (isAdmin) {
+        try {
+          const bRes = await api.get<Building[]>("/buildings");
+          setBuildings(bRes.data || []);
+        } catch {
+          setBuildings([]);
+        }
       }
-    }
-    if (!isAdmin && userBuildingId) {
-      setBuildingFilter((prev) => prev || userBuildingId);
-    }
+      if (!isAdmin && userBuildingId) {
+        setBuildingFilter((prev) => prev || userBuildingId);
+      }
 
-    // 🔒 also fetch stored billings headers for lock detection
-    await reloadBillingHeaders();
-  } catch (err: any) {
-    notify("Load failed", errorText(err, "Please check your connection and permissions."));
-    if (Platform.OS === "web") console.error("LOAD ERROR", err?.response ?? err);
-  } finally {
-    setBusy(false);
-  }
+      // 🔒 also fetch stored billings headers for lock detection
+      await reloadBillingHeaders();
+    } catch (err: any) {
+      notify("Load failed", errorText(err, "Please check your connection and permissions."));
+      if (Platform.OS === "web") console.error("LOAD ERROR", err?.response ?? err);
+    } finally {
+      setBusy(false);
+    }
 
   };
   useEffect(() => {
@@ -513,81 +526,80 @@ const reloadBillingHeaders = async () => {
     return m;
   }, [stalls]);
 
-  
-// Helper to map meter → building
-const buildingIdForMeter = (
-  meterId: string | null | undefined
-): string | null => {
-  if (!meterId) return null;
-  const m = metersById.get(meterId);
-  if (!m) return null;
+  // Helper to map meter → building
+  const buildingIdForMeter = (
+    meterId: string | null | undefined
+  ): string | null => {
+    if (!meterId) return null;
+    const m = metersById.get(meterId);
+    if (!m) return null;
 
-  const stallId =
-    (m as any).stall_id ||
-    (m as any).stall_no ||
-    (m as any).stall_sn ||
-    null;
+    const stallId =
+      (m as any).stall_id ||
+      (m as any).stall_no ||
+      (m as any).stall_sn ||
+      null;
 
-  if (stallId && stallToBuilding.has(String(stallId))) {
-    return stallToBuilding.get(String(stallId)) || null;
-  }
+    if (stallId && stallToBuilding.has(String(stallId))) {
+      return stallToBuilding.get(String(stallId)) || null;
+    }
 
-  return (m as any).building_id || null;
-};
+    return (m as any).building_id || null;
+  };
 
-const ymd = (d: string) =>
-  typeof d === "string" ? d.split("T")[0] : d;
+  const ymd = (d: string) =>
+    typeof d === "string" ? d.split("T")[0] : d;
 
-const isBetween = (d: string, s: string, e: string) => {
-  const x = ymd(d);
-  return x >= ymd(s) && x <= ymd(e);
-};
+  const isBetween = (d: string, s: string, e: string) => {
+    const x = ymd(d);
+    return x >= ymd(s) && x <= ymd(e);
+  };
 
-const isLockedHeader = (h: BillingHeader): boolean => {
-  const status = (h.status ?? "").toString().toLowerCase();
-  if (!status) {
-    // no status column → treat any stored billing as locked
-    return true;
-  }
-  return ["locked", "lock", "closed", "finalized", "1", "true"].includes(
-    status
-  );
-};
+  const isLockedHeader = (h: BillingHeader): boolean => {
+    const status = (h.status ?? "").toString().toLowerCase();
+    if (!status) {
+      // no status column → treat any stored billing as locked
+      return true;
+    }
+    return ["locked", "lock", "closed", "finalized", "1", "true"].includes(
+      status
+    );
+  };
 
-const isDateLockedFor = (buildingId: string | null, dateYmd: string): boolean => {
+  const isDateLockedFor = (buildingId: string | null, dateYmd: string): boolean => {
     if (!buildingId) return false;
     if (!billingHeaders?.length) return false;
     return billingHeaders.some((h) => h.building_id === buildingId && isBetween(dateYmd, h.period.start, h.period.end));
   };
 
-// Existing simple flag helper (if you already have one, keep yours)
-const isReadingLocked = (row?: Reading | null): boolean => {
-  return getReadingLockInfo(row).locked;
-};
+  // Existing simple flag helper (if you already have one, keep yours)
+  const isReadingLocked = (row?: Reading | null): boolean => {
+    return getReadingLockInfo(row).locked;
+  };
 
-// NEW: rich lock info (flag + billing header)
-const getReadingLockInfo = (
-  row?: Reading | null
-): { locked: boolean; header?: BillingHeader } => {
-  if (!row) return { locked: false };
+  // NEW: rich lock info (flag + billing header)
+  const getReadingLockInfo = (
+    row?: Reading | null
+  ): { locked: boolean; header?: BillingHeader } => {
+    if (!row) return { locked: false };
 
-  const buildingId = buildingIdForMeter(row.meter_id);
-  if (!buildingId) return { locked: false };
+    const buildingId = buildingIdForMeter(row.meter_id);
+    if (!buildingId) return { locked: false };
 
-  const dateStr = ymd(row.lastread_date);
-  if (!billingHeaders || billingHeaders.length === 0) {
-    return { locked: false };
-  }
+    const dateStr = ymd(row.lastread_date);
+    if (!billingHeaders || billingHeaders.length === 0) {
+      return { locked: false };
+    }
 
-  const header = billingHeaders.find(
-    (h) =>
-      h.building_id === buildingId &&
-      isLockedHeader(h) &&
-      isBetween(dateStr, h.period.start, h.period.end)
-  );
+    const header = billingHeaders.find(
+      (h) =>
+        h.building_id === buildingId &&
+        isLockedHeader(h) &&
+        isBetween(dateStr, h.period.start, h.period.end)
+    );
 
-  return { locked: !!header, header };
-};
+    return { locked: !!header, header };
+  };
 
   // numeric sort helper for meter ids
   const mtrNum = (id: string) => {
@@ -630,7 +642,7 @@ const getReadingLockInfo = (
 
   const buildingChipOptionsDeps = 0;
 
-const buildingChipOptions = useMemo(() => {
+  const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
       return [{ label: "All", value: "" }].concat(
         buildings
@@ -645,7 +657,6 @@ const buildingChipOptions = useMemo(() => {
     return base.concat(ids.map((id) => ({ label: id, value: id })));
   }, [isAdmin, buildings, stalls, userBuildingId]);
 
-  
   const metersVisible = useMemo(() => {
     let arr = meters.slice();
 
@@ -677,7 +688,7 @@ const buildingChipOptions = useMemo(() => {
       (a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id)
     );
   }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
-/* ---------- CRUD ---------- */
+  /* ---------- CRUD ---------- */
   const onCreate = async () => {
     const b = buildingIdForMeter(formMeterId);
     if (b && isDateLockedFor(b, formDate)) { notify('Locked by billing', 'That date is inside a locked billing period for this building.'); return; }
@@ -828,29 +839,6 @@ const buildingChipOptions = useMemo(() => {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  // scanning
-  const onScan = (data: OnSuccessfulScanProps | string) => {
-    const raw = String((data as any)?.code ?? (data as any)?.rawData ?? (data as any)?.data ?? data ?? "").trim();
-    if (!raw) return;
-    const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i;
-    if (!meterIdPattern.test(raw)) return;
-    const meterId = raw;
-    setScanVisible(false);
-    if (!metersById.get(meterId)) {
-      notify("Unknown meter", `No meter found for id: ${meterId}`);
-      return;
-    }
-    setFormMeterId(meterId);
-    setFormValue("");
-    setFormDate(todayStr());
-    setTimeout(() => readingInputRef.current?.focus?.(), 150);
-  };
-  const openScanner = () => {
-    setScannerKey((k) => k + 1);
-    setScanVisible(true);
-    Keyboard.dismiss();
   };
 
   // Test function for image endpoint
@@ -1134,9 +1122,6 @@ const buildingChipOptions = useMemo(() => {
                     value: m.meter_id,
                   }))}
                 />
-                <TouchableOpacity style={styles.scanBtn} onPress={openScanner}>
-                  <Text style={styles.scanBtnText}>Scan QR to select</Text>
-                </TouchableOpacity>
               </View>
               <View style={styles.rowWrap}>
                 <View style={{ flex: 1, marginTop: 8 }}>
@@ -1218,20 +1203,20 @@ const buildingChipOptions = useMemo(() => {
         </KeyboardAvoidingView>
       </Modal>
 
-<ReadingsModal
-  visible={readingsModalVisible}
-  onClose={() => {
-    setReadingsModalVisible(false);
-    setSelectedMeterId("");
-    setQuery("");
-    setPage(1);
-  }}
-  selectedMeterId={selectedMeterId}
-  query={query}
-  setQuery={setQuery}
-  sortBy={sortBy}
-  setSortBy={setSortBy}
-  readingsForSelected={(() => {
+      <ReadingsModal
+        visible={readingsModalVisible}
+        onClose={() => {
+          setReadingsModalVisible(false);
+          setSelectedMeterId("");
+          setQuery("");
+          setPage(1);
+        }}
+        selectedMeterId={selectedMeterId}
+        query={query}
+        setQuery={setQuery}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
+        readingsForSelected={(() => {
           if (!selectedMeterId) return [];
           const typed = readings.filter((r) => r.meter_id === selectedMeterId);
           const searched = query.trim()
@@ -1259,21 +1244,20 @@ const buildingChipOptions = useMemo(() => {
           }
           return arr;
         })()}
-  page={page}
-  setPage={setPage}
-  metersById={metersById}
-  submitting={submitting}
-  onDelete={onDelete}
-  openEdit={openEdit}
-  busy={busy}
-  readingBase={readingBase}
-  api={api}
-  testImageEndpoint={testImageEndpoint} // Add this line
-  readings={readings}
-  isReadingLockedFn={isReadingLocked}
-  getReadingLockInfoFn={getReadingLockInfo} // Add this line
-
-/>
+        page={page}
+        setPage={setPage}
+        metersById={metersById}
+        submitting={submitting}
+        onDelete={onDelete}
+        openEdit={openEdit}
+        busy={busy}
+        readingBase={readingBase}
+        api={api}
+        testImageEndpoint={testImageEndpoint}
+        readings={readings}
+        isReadingLockedFn={isReadingLocked}
+        getReadingLockInfoFn={getReadingLockInfo}
+      />
 
       {/* EDIT modal */}
       <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
@@ -1386,52 +1370,6 @@ const buildingChipOptions = useMemo(() => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* QR SCANNER */}
-      <Modal
-        visible={scanVisible}
-        animationType="fade"
-        presentationStyle="fullScreen"
-        statusBarTranslucent
-        onRequestClose={() => setScanVisible(false)}
-      >
-        <View style={styles.scannerScreen}>
-          <View style={styles.scannerFill}>
-            <QRCodeScanner
-              key={scannerKey}
-              core={{ onSuccessfulScan: onScan }}
-              scanning={{ cooldownDuration: 1200 }}
-              uiControls={{ showControls: true, showTorchButton: true, showStatus: true }}
-            />
-          </View>
-          <SafeAreaView style={styles.scanTopBar} pointerEvents="box-none">
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Close scanner"
-              onPress={() => setScanVisible(false)}
-              style={styles.closeFab}
-              hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}
-            >
-              <Text style={styles.closeFabText}>×</Text>
-            </TouchableOpacity>
-          </SafeAreaView>
-          {Platform.OS === "web" ? (
-            <Text style={[styles.scanInfo, styles.scanTopInfo]}>
-              Camera access requires HTTPS in the browser. If the camera does not start, please use
-              the dropdown instead.
-            </Text>
-          ) : null}
-          <SafeAreaView style={styles.scanFooter} pointerEvents="box-none">
-            <Text style={styles.scanHint}>
-              Point your camera at a meter QR code to quick-edit its latest reading or pre-fill the
-              form.
-            </Text>
-            <TouchableOpacity style={[styles.btn, styles.scanCloseBtn]} onPress={() => setScanVisible(false)}>
-              <Text style={styles.btnText}>Close</Text>
-            </TouchableOpacity>
-          </SafeAreaView>
-        </View>
-      </Modal>
-
       {/* OFFLINE HISTORY */}
       <HistoryModal
         visible={historyVisible}
@@ -1503,7 +1441,7 @@ function DatePickerField({ label, value, onChange }: { label: string; value: str
   const [year, setYear] = useState(y || new Date().getFullYear());
   const [month, setMonth] = useState((m || new Date().getMonth() + 1) as number);
   const [day, setDay] = useState(d || new Date().getDate());
-useEffect(() => {
+  useEffect(() => {
     const [py, pm, pd] = (value || todayStr()).split("-").map((n: string) => parseInt(n, 10));
     if (py && pm && pd) {
       setYear(py);
@@ -1594,8 +1532,7 @@ function ReadingsModal({
   readingBase,
   api,
   isReadingLockedFn,
-  getReadingLockInfoFn, // Add this prop
-
+  getReadingLockInfoFn,
 }: any) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
@@ -1619,79 +1556,76 @@ function ReadingsModal({
   });
   const [printLoading, setPrintLoading] = useState(false);
 
-const openPrintProof = async (reading: Reading) => {
-  setPrintLoading(true);
-  setPrintProofVisible(true);
-  
-  try {
-    const endpoint = `${readingBase}/${encodeURIComponent(reading.reading_id)}/image`;
-    console.log('🖼️ Fetching image from:', endpoint);
+  const openPrintProof = async (reading: Reading) => {
+    setPrintLoading(true);
+    setPrintProofVisible(true);
     
-    const response = await api.get(endpoint, {
-      responseType: 'arraybuffer',
-      headers: {
-        'Accept': 'image/*',
-      },
-      timeout: 10000,
-      validateStatus: (status: number) => status < 500, // Add type annotation here
-    });
-    
-    console.log('🖼️ Image response status:', response.status);
-    console.log('🖼️ Image data length:', response.data?.byteLength || 0);
-    
-    let imageUri = null;
-    
-    if (response.status === 200 && response.data && response.data.byteLength > 0) {
-      try {
-        // Convert ArrayBuffer to base64 safely
-        const uint8Array = new Uint8Array(response.data);
-        let binary = '';
-        for (let i = 0; i < uint8Array.length; i++) {
-          binary += String.fromCharCode(uint8Array[i]);
+    try {
+      const endpoint = `${readingBase}/${encodeURIComponent(reading.reading_id)}/image`;
+      console.log('🖼️ Fetching image from:', endpoint);
+      
+      const response = await api.get(endpoint, {
+        responseType: 'arraybuffer',
+        headers: {
+          'Accept': 'image/*',
+        },
+        timeout: 10000,
+        validateStatus: (status: number) => status < 500,
+      });
+      
+      console.log('🖼️ Image response status:', response.status);
+      console.log('🖼️ Image data length:', response.data?.byteLength || 0);
+      
+      let imageUri = null;
+      
+      if (response.status === 200 && response.data && response.data.byteLength > 0) {
+        try {
+          const uint8Array = new Uint8Array(response.data);
+          let binary = '';
+          for (let i = 0; i < uint8Array.length; i++) {
+            binary += String.fromCharCode(uint8Array[i]);
+          }
+          const base64 = btoa(binary);
+          imageUri = asDataUrl(base64);
+          console.log('🖼️ Image converted to data URL successfully');
+        } catch (convertError) {
+          console.error('❌ Error converting image to base64:', convertError);
         }
-        const base64 = btoa(binary);
-        imageUri = asDataUrl(base64); // uses your helper to build data:image/jpeg;base64,...
-        console.log('🖼️ Image converted to data URL successfully');
-      } catch (convertError) {
-        console.error('❌ Error converting image to base64:', convertError);
+      } else if (response.status === 404) {
+        console.warn('🖼️ Image not found (404) for reading:', reading.reading_id);
+      } else {
+        console.warn('🖼️ No image data received or empty response');
       }
-    } else if (response.status === 404) {
-      console.warn('🖼️ Image not found (404) for reading:', reading.reading_id);
-    } else {
-      console.warn('🖼️ No image data received or empty response');
-    }
 
-    // Get previous reading for comparison
-    const allReadingsForMeter = readingsForSelected
-      .filter((r: Reading) => r.meter_id === reading.meter_id)
-      .sort((a: Reading, b: Reading) => ts(b.lastread_date) - ts(a.lastread_date));
-    
-    const currentIndex = allReadingsForMeter.findIndex((r: Reading) => r.reading_id === reading.reading_id);
-    const previousReading = currentIndex < allReadingsForMeter.length - 1 ? allReadingsForMeter[currentIndex + 1] : null;
+      const allReadingsForMeter = readingsForSelected
+        .filter((r: Reading) => r.meter_id === reading.meter_id)
+        .sort((a: Reading, b: Reading) => ts(b.lastread_date) - ts(a.lastread_date));
+      
+      const currentIndex = allReadingsForMeter.findIndex((r: Reading) => r.reading_id === reading.reading_id);
+      const previousReading = currentIndex < allReadingsForMeter.length - 1 ? allReadingsForMeter[currentIndex + 1] : null;
 
-    setPrintData({
-      reading,
-      imageUri,
-      previousReading,
-    });
-  } catch (err: any) {
-    console.error('❌ Error loading print data:', err);
-    console.error('❌ Error details:', errorText(err));
-    
-    // Set data without image on error
-    setPrintData({
-      reading,
-      imageUri: null,
-      previousReading: null,
-    });
-    
-    if (err.response?.status !== 404) {
-      notify("Warning", "Image not available for this reading. Other data loaded successfully.");
+      setPrintData({
+        reading,
+        imageUri,
+        previousReading,
+      });
+    } catch (err: any) {
+      console.error('❌ Error loading print data:', err);
+      console.error('❌ Error details:', errorText(err));
+      
+      setPrintData({
+        reading,
+        imageUri: null,
+        previousReading: null,
+      });
+      
+      if (err.response?.status !== 404) {
+        notify("Warning", "Image not available for this reading. Other data loaded successfully.");
+      }
+    } finally {
+      setPrintLoading(false);
     }
-  } finally {
-    setPrintLoading(false);
-  }
-};
+  };
 
   const handlePrint = () => {
     if (Platform.OS === "web") {
@@ -1766,7 +1700,7 @@ const openPrintProof = async (reading: Reading) => {
               <p>Generated on: ${new Date().toLocaleString()}</p>
             </div>
             
-            <div class="content">
+            <div class="content"> x
               <div class="reading-info">
                 <h2>Reading Details</h2>
                 <p><strong>Reading ID:</strong> ${printData.reading?.reading_id}</p>
@@ -1817,7 +1751,6 @@ const openPrintProof = async (reading: Reading) => {
             </div>
 
             <script>
-              // Auto-print and close for better UX
               setTimeout(() => {
                 window.print();
               }, 500);
@@ -1828,7 +1761,6 @@ const openPrintProof = async (reading: Reading) => {
         printWindow.document.close();
       }
     } else {
-      // For native platforms, show a message
       notify("Print", "Print functionality is available on web platform. On mobile, you can take a screenshot of this proof.");
     }
   };
@@ -1847,77 +1779,74 @@ const openPrintProof = async (reading: Reading) => {
             keyExtractor={(item) => item.reading_id}
             contentContainerStyle={{ paddingBottom: 12 }}
             ListEmptyComponent={<Text style={styles.empty}>No readings for this meter.</Text>}
-renderItem={({ item }) => {
-    const { locked, header } = getReadingLockInfoFn(item);
+            renderItem={({ item }) => {
+              const { locked, header } = getReadingLockInfoFn(item);
 
-    return (
-      <View style={[styles.listRow, isMobile && styles.listRowMobile]}>
-        <View style={{ flex: 1 }}>
-          {isMobile ? (
-            <>
-              <Text style={styles.rowTitle}>
-                <Text style={styles.meterLink}>{item.reading_id}</Text> •{" "}
-                <Text>{item.lastread_date}</Text>
-              </Text>
-              <Text style={styles.rowSub}>
-                Value: {fmtValue(item.reading_value)}
-              </Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.rowTitle}>{item.reading_id}</Text>
-              <Text style={styles.rowSub}>
-                {item.lastread_date} • Value: {fmtValue(item.reading_value)}
-              </Text>
-            </>
-          )}
+              return (
+                <View style={[styles.listRow, isMobile && styles.listRowMobile]}>
+                  <View style={{ flex: 1 }}>
+                    {isMobile ? (
+                      <>
+                        <Text style={styles.rowTitle}>
+                          <Text style={styles.meterLink}>{item.reading_id}</Text> •{" "}
+                          <Text>{item.lastread_date}</Text>
+                        </Text>
+                        <Text style={styles.rowSub}>
+                          Value: {fmtValue(item.reading_value)}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.rowTitle}>{item.reading_id}</Text>
+                        <Text style={styles.rowSub}>
+                          {item.lastread_date} • Value: {fmtValue(item.reading_value)}
+                        </Text>
+                      </>
+                    )}
 
-          {/* 🔒 lock badge */}
-          {locked && (
-            <View style={styles.lockBadge}>
-              <Text style={styles.lockBadgeText}>
-                🔒 Locked (Billing{" "}
-                {header?.period?.start ?? "?"} → {header?.period?.end ?? "?"})
-              </Text>
-            </View>
-          )}
+                    {locked && (
+                      <View style={styles.lockBadge}>
+                        <Text style={styles.lockBadgeText}>
+                          🔒 Locked (Billing{" "}
+                          {header?.period?.start ?? "?"} → {header?.period?.end ?? "?"})
+                        </Text>
+                      </View>
+                    )}
 
-          <Text style={styles.rowSubSmall}>
-            Updated {formatDateTime(item.last_updated)} by {item.updated_by}
-          </Text>
-        </View>
+                    <Text style={styles.rowSubSmall}>
+                      Updated {formatDateTime(item.last_updated)} by {item.updated_by}
+                    </Text>
+                  </View>
 
-        {/* Hide Update button when locked */}
-        {!locked && (
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.actionBtnGhost]}
-            onPress={() => openEdit(item)}
-          >
-            <Text style={styles.actionBtnGhostText}>Update</Text>
-          </TouchableOpacity>
-        )}
+                  {!locked && (
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.actionBtnGhost]}
+                      onPress={() => openEdit(item)}
+                    >
+                      <Text style={styles.actionBtnGhostText}>Update</Text>
+                    </TouchableOpacity>
+                  )}
 
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.actionBtnGhost]}
-          onPress={() => openPrintProof(item)}
-        >
-          <Text style={styles.actionBtnGhostText}>Print Proof</Text>
-        </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnGhost]}
+                    onPress={() => openPrintProof(item)}
+                  >
+                    <Text style={styles.actionBtnGhostText}>Print Proof</Text>
+                  </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.actionBtnDanger]}
-          onPress={() => onDelete(item)}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.actionBtnText}>Delete</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-    );
-  }}
-
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnDanger]}
+                    onPress={() => onDelete(item)}
+                  >
+                    {submitting ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.actionBtnText}>Delete</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              );
+            }}
             ListHeaderComponent={
               <>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -1999,13 +1928,11 @@ renderItem={({ item }) => {
                     </View>
                   ) : printData.reading ? (
                     <View style={styles.printProofContent}>
-                      {/* Header */}
                       <View style={styles.printHeader}>
                         <Text style={styles.printTitle}>Meter Reading Proof</Text>
                         <Text style={styles.printSubtitle}>Generated on: {new Date().toLocaleString()}</Text>
                       </View>
 
-                      {/* Reading Details */}
                       <View style={styles.printSection}>
                         <Text style={styles.sectionTitle}>Reading Details</Text>
                         <View style={styles.detailsGrid}>
@@ -2040,7 +1967,6 @@ renderItem={({ item }) => {
                         </View>
                       </View>
 
-                      {/* Reading Comparison */}
                       <View style={styles.printSection}>
                         <Text style={styles.sectionTitle}>Reading Comparison</Text>
                         <View style={styles.comparisonGrid}>
@@ -2072,35 +1998,32 @@ renderItem={({ item }) => {
                         </View>
                       </View>
 
-{/* Meter Image */}
-<View style={styles.printSection}>
-  <Text style={styles.sectionTitle}>Meter Image</Text>
-  {printData.imageUri ? (
-    <View style={styles.imageContainer}>
-      <RNImage
-        source={{ uri: printData.imageUri }}
-        style={styles.proofImage}
-        resizeMode="contain"
-        onError={(error) => {
-          console.error('❌ Image loading error:', error.nativeEvent.error);
-          // Update state to remove broken image
-          setPrintData(prev => ({ ...prev, imageUri: null }));
-        }}
-        onLoad={() => console.log('✅ Image loaded successfully')}
-      />
-    </View>
-  ) : (
-    <View style={styles.noImageContainer}>
-      <Ionicons name="image-outline" size={48} color="#94a3b8" />
-      <Text style={styles.noData}>No image available for this reading</Text>
-      <Text style={[styles.noData, { fontSize: 12, marginTop: 8 }]}>
-        The image may not have been uploaded or the endpoint is not available.
-      </Text>
-    </View>
-  )}
-</View>
+                      <View style={styles.printSection}>
+                        <Text style={styles.sectionTitle}>Meter Image</Text>
+                        {printData.imageUri ? (
+                          <View style={styles.imageContainer}>
+                            <RNImage
+                              source={{ uri: printData.imageUri }}
+                              style={styles.proofImage}
+                              resizeMode="contain"
+                              onError={(error) => {
+                                console.error('❌ Image loading error:', error.nativeEvent.error);
+                                setPrintData(prev => ({ ...prev, imageUri: null }));
+                              }}
+                              onLoad={() => console.log('✅ Image loaded successfully')}
+                            />
+                          </View>
+                        ) : (
+                          <View style={styles.noImageContainer}>
+                            <Ionicons name="image-outline" size={48} color="#94a3b8" />
+                            <Text style={styles.noData}>No image available for this reading</Text>
+                            <Text style={[styles.noData, { fontSize: 12, marginTop: 8 }]}>
+                              The image may not have been uploaded or the endpoint is not available.
+                            </Text>
+                          </View>
+                        )}
+                      </View>
 
-                      {/* Footer */}
                       <View style={styles.printFooter}>
                         <Text style={styles.footerText}>
                           This is an official meter reading record. Generated automatically by the system.
@@ -2543,7 +2466,7 @@ const styles = StyleSheet.create({
   datePickerCol: { flex: 1 },
   input: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#fff", color: "#102a43", marginTop: 6, minWidth: 160 },
 
-  // history / scanner
+  // history
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
   headerActions: { flexDirection: "row", gap: 8 },
 
@@ -2563,18 +2486,6 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: "#bfbfbfff", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   badgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
 
-  // scanner
-  scannerScreen: { flex: 1, backgroundColor: "#000" },
-  scannerFill: { flex: 1, justifyContent: "center", alignItems: "center" },
-  scanTopBar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", justifyContent: "flex-end", padding: 16 },
-  closeFab: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.8)", alignItems: "center", justifyContent: "center" },
-  closeFabText: { fontSize: 24, fontWeight: "800", color: "#111" },
-  scanInfo: { color: "#fff", textAlign: "center", padding: 8 },
-  scanTopInfo: { backgroundColor: "rgba(0,0,0,0.6)" },
-  scanFooter: { position: "absolute", bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center" },
-  scanHint: { color: "#fff", marginBottom: 8, textAlign: "center" },
-  scanCloseBtn: { backgroundColor: "#dc2626" },
-
   // select wrapper used in mobile building picker
   select: {
     borderRadius: 10,
@@ -2588,19 +2499,6 @@ const styles = StyleSheet.create({
   },
 
   rowWrap: { flexDirection: "row", alignItems: "flex-end", gap: 10, flexWrap: "wrap" },
-
-  scanBtn: {
-    height: 40,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: "#e0ecff",
-    borderWidth: 1,
-    borderColor: "#93c5fd",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  scanBtnText: { fontWeight: "800", color: "#1d4ed8" },
 
   smallBtnGhost: {
     backgroundColor: "#f1f5f9",
@@ -2770,25 +2668,25 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   noImageContainer: {
-  alignItems: 'center',
-  padding: 20,
-  backgroundColor: '#f8fafc',
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#e2e8f0',
-  borderStyle: 'dashed',
-},
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderStyle: 'dashed',
+  },
   lockBadge: {
     marginTop: 4,
     alignSelf: "flex-start",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 9999,
-    backgroundColor: "#fee2e2", // light red
+    backgroundColor: "#fee2e2",
   },
   lockBadgeText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#b91c1c", // dark red
+    color: "#b91c1c",
   },
 });

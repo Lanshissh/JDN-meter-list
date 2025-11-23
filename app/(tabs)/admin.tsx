@@ -1,20 +1,21 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   Platform,
   TouchableOpacity,
-  Modal,
   Image,
-  Animated,
-  Dimensions,
+  ScrollView,
+  Modal,
+  Pressable,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { jwtDecode } from "jwt-decode";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
+
 import AccountsPanel from "../../components/admin/AccountsPanel";
 import BuildingPanel from "../../components/admin/BuildingPanel";
 import WithholdingPanel from "../../components/admin/WithholdingPanel";
@@ -24,6 +25,7 @@ import TenantsPanel from "../../components/admin/TenantsPanel";
 import AssignTenantPanel from "../../components/admin/AssignTenantPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
+
 export type PageKey =
   | "accounts"
   | "buildings"
@@ -34,445 +36,808 @@ export type PageKey =
   | "assign"
   | "meters"
   | "readings";
-type Page = { label: string; key: PageKey; icon: keyof typeof Ionicons.glyphMap };
+
+type Page = {
+  label: string;
+  key: PageKey;
+  icon: keyof typeof Ionicons.glyphMap;
+};
+
+const MOBILE_BREAKPOINT = 768;
+
 export default function AdminScreen() {
   const router = useRouter();
-  const { token, logout } = useAuth();
-  const params = useLocalSearchParams<{ panel?: string; tab?: string }>();
+  const { token, user, logout } = useAuth();
+  const params = useLocalSearchParams<{
+    panel?: string;
+    tab?: string;
+    meterId?: string;
+  }>();
+  const { width } = useWindowDimensions();
+  const isMobile = width < MOBILE_BREAKPOINT;
+
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const pages: Page[] = useMemo(
     () => [
-      { label: "Accounts", key: "accounts", icon: "people-outline" }, 
-      { label: "Buildings", key: "buildings", icon: "business-outline" },
-      { label: "Stalls", key: "stalls", icon: "storefront-outline" },
-      { label: "Withholding Tax", key: "wt", icon: "pricetag-outline" },
-      { label: "VAT", key: "vat", icon: "cash-outline" },
-      { label: "Tenants", key: "tenants", icon: "person-outline" },
-      { label: "Assign", key: "assign", icon: "person-add-outline" },
-      { label: "Meters", key: "meters", icon: "speedometer-outline" },
-      { label: "Readings", key: "readings", icon: "reader-outline" },
+      { label: "Accounts", key: "accounts", icon: "people" },
+      { label: "Buildings", key: "buildings", icon: "business" },
+      { label: "Stalls", key: "stalls", icon: "storefront" },
+      { label: "Withholding", key: "wt", icon: "receipt" },
+      { label: "VAT", key: "vat", icon: "calculator" },
+      { label: "Tenants", key: "tenants", icon: "person" },
+      { label: "Assign", key: "assign", icon: "person-add" },
+      { label: "Meters", key: "meters", icon: "speedometer" },
+      { label: "Readings", key: "readings", icon: "analytics" },
     ],
     []
   );
+
+  // Normalize roles (handles array or comma-separated string)
   const role: string = useMemo(() => {
-    try {
-      if (!token) return "";
-      const dec: any = jwtDecode(token);
-      return String(dec?.user_level || "").toLowerCase();
-    } catch { return ""; }
-  }, [token]);
+    const rawRoles: any = user?.user_roles;
+    const roles: string[] = Array.isArray(rawRoles)
+      ? rawRoles
+      : typeof rawRoles === "string"
+      ? rawRoles.split(",").map((r) => r.trim())
+      : [];
+
+    if (roles.includes("admin")) return "admin";
+    if (roles.includes("operator")) return "operator";
+    if (roles.includes("biller")) return "biller";
+    if (roles.includes("reader")) return "reader";
+    return "admin";
+  }, [user]);
+
   const roleAllowed: Record<string, Set<PageKey>> = useMemo(
     () => ({
       admin: new Set<PageKey>([
-        "accounts","buildings","stalls","wt","vat","tenants","assign","meters","readings",
+        "accounts",
+        "buildings",
+        "stalls",
+        "wt",
+        "vat",
+        "tenants",
+        "assign",
+        "meters",
+        "readings",
       ]),
-      operator: new Set<PageKey>(["stalls","tenants","meters","readings"]),
-      biller: new Set<PageKey>(["wt","vat","tenants"]),
+      operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
+      biller: new Set<PageKey>(["buildings", "wt", "vat"]),
+      reader: new Set<PageKey>(["readings"]),
     }),
     []
   );
+
   const allowed = roleAllowed[role] ?? roleAllowed.admin;
-  const visiblePages = useMemo(() => pages.filter(p => allowed.has(p.key)), [pages, allowed]);
-  const roleInitial: Record<string, PageKey> = { admin: "buildings", operator: "stalls", biller: "wt" };
+  const visiblePages = useMemo(
+    () => pages.filter((p) => allowed.has(p.key)),
+    [pages, allowed]
+  );
+
+  const roleInitial: Record<string, PageKey> = {
+    admin: "buildings",
+    operator: "stalls",
+    biller: "buildings",
+    reader: "readings",
+  };
+
   const resolveInitial = (): PageKey => {
-    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
+    const wanted = String(
+      params?.panel || params?.tab || ""
+    ).toLowerCase() as PageKey;
     if (wanted && allowed.has(wanted)) return wanted;
     return roleInitial[role] ?? "buildings";
   };
+
   const [active, setActive] = useState<PageKey>(resolveInitial());
+
   useEffect(() => {
-    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
+    const wanted = String(
+      params?.panel || params?.tab || ""
+    ).toLowerCase() as PageKey;
     const allowedSet = roleAllowed[role] ?? roleAllowed.admin;
-    if (wanted && allowedSet.has(wanted)) setActive(wanted);
-    else if (!allowedSet.has(active)) setActive(roleInitial[role] ?? "buildings");
-  }, [role, token, params?.panel, params?.tab, allowed.size]);
-  const ready = visiblePages.some((p) => p.key === active);
-  const [userInfo, setUserInfo] = useState<{ name?: string; level?: string }>({});
-  useEffect(() => {
-    if (!token) return;
-    try {
-      const dec: any = jwtDecode(token);
-      setUserInfo({ name: dec.user_fullname, level: dec.user_level });
-    } catch {}
-  }, [token]);
-  const screenW = Dimensions.get("window").width;
-  const drawerWidth = Math.min(300, Math.round(screenW * 0.86));
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const slideX = useRef(new Animated.Value(-drawerWidth)).current;
-  const openDrawer = () => {
-    setDrawerOpen(true);
-    Animated.timing(slideX, { toValue: 0, duration: 220, useNativeDriver: false }).start();
-  };
-  const closeDrawer = () => {
-    Animated.timing(slideX, { toValue: -drawerWidth, duration: 200, useNativeDriver: false }).start(({ finished }) => {
-      if (finished) setDrawerOpen(false);
-    });
-  };
+
+    if (wanted && allowedSet.has(wanted)) {
+      setActive(wanted);
+    } else if (!allowedSet.has(active)) {
+      setActive(roleInitial[role] ?? "buildings");
+    }
+  }, [role, params?.panel, params?.tab, allowed, active, roleAllowed]);
+
   const applyRouteParam = (key: PageKey) => {
-    try { router.setParams({ panel: key }); } catch {}
+    try {
+      router.setParams?.({ panel: key });
+    } catch {
+      // ignore
+    }
   };
+
   const handleSelect = (key: PageKey) => {
     setActive(key);
     applyRouteParam(key);
-    if (drawerOpen) closeDrawer();
+    setMenuOpen(false);
   };
+
+  const handleLogout = async () => {
+    setMenuOpen(false);
+    await logout();
+    router.replace?.("/(auth)/login");
+  };
+
   const renderContent = () => {
     switch (active) {
-      case "accounts": return <AccountsPanel token={token} />;
-      case "buildings": return <BuildingPanel token={token} />;
-      case "stalls": return <StallsPanel token={token} />;
-      case "wt": return <WithholdingPanel token={token} />;
-      case "vat": return <VATPanel token={token} />;
-      case "tenants": return <TenantsPanel token={token} />;
-      case "assign": return <AssignTenantPanel token={token} />;
-      case "meters": return <MeterPanel token={token} />;
-      case "readings": return <MeterReadingPanel token={token} />;
-      default: return null;
+      case "accounts":
+        return <AccountsPanel token={token} />;
+      case "buildings":
+        return <BuildingPanel token={token} />;
+      case "stalls":
+        return <StallsPanel token={token} />;
+      case "wt":
+        return <WithholdingPanel token={token} />;
+      case "vat":
+        return <VATPanel token={token} />;
+      case "tenants":
+        return <TenantsPanel token={token} />;
+      case "assign":
+        return <AssignTenantPanel token={token} />;
+      case "meters":
+        return <MeterPanel token={token} />;
+      case "readings":
+        return (
+          <MeterReadingPanel
+            token={token}
+            initialMeterId={
+              params?.meterId ? String(params.meterId) : undefined
+            }
+          />
+        );
+      default:
+        return null;
     }
   };
-  const Header = () => (
-    <View style={styles.headerWrap}>
-      {Platform.OS !== "web" && (
-        <TouchableOpacity onPress={openDrawer} style={styles.hamburger}>
-          <Ionicons name="menu" size={22} color="#2563eb" />
-        </TouchableOpacity>
-      )}
-      <View style={styles.brandRow}>
-        <Image source={require("../../assets/images/jdn.jpg")} style={styles.logo} />
-        <Text style={styles.brand}>Admin</Text>
-      </View>
-      <View style={styles.headerRight}>
-        {!!userInfo?.name && (
-          <Text style={styles.userText} numberOfLines={1}>
-            {userInfo.name}{userInfo.level ? ` · ${String(userInfo.level).toUpperCase()}` : ""}
-          </Text>
-        )}
-        {Platform.OS === "web" && (
-          <TouchableOpacity
-            onPress={async () => { await logout(); router.replace("/(auth)/login"); }}
-            style={styles.logoutBtn}
-          >
-            <Ionicons name="log-out-outline" size={16} color="#fff" />
-            <Text style={styles.logoutTxt}>Logout</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
-  const NavPill = ({
-    label, icon, isActive, onPress,
-  }: { label: string; icon: keyof typeof Ionicons.glyphMap; isActive: boolean; onPress: () => void; }) => {
-    const scale = useRef(new Animated.Value(1)).current;
-    const onDown = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 40, bounciness: 3 }).start();
-    const onUp = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 40, bounciness: 6 }).start();
-    return (
-      <Animated.View style={{ transform: [{ scale }], borderRadius: 8 }}>
-        <TouchableOpacity
-          onPressIn={onDown}
-          onPressOut={onUp}
-          onPress={onPress}
-          style={[styles.pill, isActive && styles.pillActive]}
-        >
-          <Ionicons name={icon} size={15} color={isActive ? "#fff" : "#64748b"} />
-          <Text style={[styles.pillText, isActive && styles.pillTextActive]}>{label}</Text>
-          {isActive && <View style={styles.neonEdge} />}
-        </TouchableOpacity>
-      </Animated.View>
-    );
+
+  const displayName = user?.user_fullname ?? "";
+  const initials = displayName
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  const roleColors: Record<string, { bg: string; text: string }> = {
+    admin: { bg: "rgba(99, 102, 241, 0.1)", text: "#6366f1" },
+    operator: { bg: "rgba(16, 185, 129, 0.1)", text: "#10b981" },
+    biller: { bg: "rgba(245, 158, 11, 0.1)", text: "#f59e0b" },
+    reader: { bg: "rgba(59, 130, 246, 0.1)", text: "#3b82f6" },
   };
-  const leftOrder: PageKey[] = ["buildings","stalls","wt","vat","tenants","assign","meters","readings"];
-  const leftItems = visiblePages
-    .filter(p => leftOrder.includes(p.key))
-    .sort((a,b) => leftOrder.indexOf(a.key) - leftOrder.indexOf(b.key));
-  const showAccounts = visiblePages.some(p => p.key === "accounts");
-  return (
-    <SafeAreaView style={styles.screen}>
-      <View style={styles.bgBlobA} />
-      <View style={styles.bgBlobB} />
-      <View style={styles.bgBlobC} />
-      <Header />
-      {Platform.OS === "web" && (
-        <View style={styles.navHolder}>
-          <View style={styles.navbar}>
-            <View style={styles.navLeft}>
-              {leftItems.map((p) => (
-                <NavPill
-                  key={p.key}
-                  label={p.label}
-                  icon={p.icon}
-                  isActive={active === p.key}
-                  onPress={() => handleSelect(p.key)}
-                />
-              ))}
-            </View>
-            {showAccounts && (
-              <View style={styles.navRight}>
-                <NavPill
-                  label="Accounts"
-                  icon="people-outline"
-                  isActive={active === "accounts"}
-                  onPress={() => handleSelect("accounts")}
+
+  const currentRoleStyle = roleColors[role] || roleColors.admin;
+  const activePageLabel =
+    visiblePages.find((p) => p.key === active)?.label || "Admin";
+
+  // Mobile Menu Drawer
+  const MobileMenu = () => (
+    <Modal
+      visible={menuOpen}
+      animationType="fade"
+      transparent
+      onRequestClose={() => setMenuOpen(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setMenuOpen(false)}
+        />
+        <View style={styles.drawer}>
+          {/* Drawer Header */}
+          <View style={styles.drawerHeader}>
+            <View style={styles.drawerLogoRow}>
+              <View style={styles.logoWrap}>
+                <Image
+                  source={require("../../assets/images/jdn.jpg")}
+                  style={styles.logo}
                 />
               </View>
-            )}
+              <View>
+                <Text style={styles.drawerTitle}>Admin Portal</Text>
+                <Text style={styles.drawerSub}>Management Console</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={() => setMenuOpen(false)}
+              style={styles.closeBtn}
+            >
+              <Ionicons name="close" size={22} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+
+          {/* User Info */}
+          <View style={styles.drawerUser}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initials || "U"}</Text>
+            </View>
+            <View style={styles.drawerUserInfo}>
+              <Text style={styles.drawerUserName}>
+                {displayName || "User"}
+              </Text>
+              <View
+                style={[
+                  styles.roleBadge,
+                  { backgroundColor: currentRoleStyle.bg },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.roleText,
+                    { color: currentRoleStyle.text },
+                  ]}
+                >
+                  {role.charAt(0).toUpperCase() + role.slice(1)}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Nav Items */}
+          <ScrollView
+            style={styles.drawerNav}
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.drawerLabel}>NAVIGATION</Text>
+            {visiblePages.map((page) => {
+              const isActive = active === page.key;
+              return (
+                <TouchableOpacity
+                  key={page.key}
+                  onPress={() => handleSelect(page.key)}
+                  style={[
+                    styles.drawerItem,
+                    isActive && styles.drawerItemActive,
+                  ]}
+                  activeOpacity={0.7}
+                >
+                  <View
+                    style={[
+                      styles.drawerIconWrap,
+                      isActive && styles.drawerIconWrapActive,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        (isActive
+                          ? page.icon
+                          : `${page.icon}-outline`) as any
+                      }
+                      size={18}
+                      color={isActive ? "#fff" : "#64748b"}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.drawerItemText,
+                      isActive && styles.drawerItemTextActive,
+                    ]}
+                  >
+                    {page.label}
+                  </Text>
+                  {isActive && (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={18}
+                      color="#6366f1"
+                    />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* Logout */}
+          <View style={styles.drawerFooter}>
+            <TouchableOpacity
+              onPress={handleLogout}
+              style={styles.drawerLogout}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name="log-out-outline"
+                size={20}
+                color="#ef4444"
+              />
+              <Text style={styles.drawerLogoutText}>Logout</Text>
+            </TouchableOpacity>
           </View>
         </View>
-      )}
-      {Platform.OS !== "web" && (
-        <Modal visible={drawerOpen} transparent animationType="fade" onRequestClose={closeDrawer}>
-          <TouchableOpacity style={styles.drawerBackdrop} activeOpacity={1} onPress={closeDrawer}>
-            <Animated.View style={[styles.drawer, { width: drawerWidth, transform: [{ translateX: slideX }] }]}>
-              <Text style={styles.drawerTitle}>Navigate</Text>
-              {leftOrder.concat(showAccounts ? ["accounts"] as PageKey[] : []).map((k) => {
-                const page = visiblePages.find((p) => p.key === k);
-                if (!page) return null;
-                const isActive = active === page.key;
-                return (
-                  <TouchableOpacity
-                    key={page.key}
-                    onPress={() => handleSelect(page.key)}
-                    style={[styles.drawerItem, isActive && styles.drawerItemActive]}
+      </View>
+    </Modal>
+  );
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      {/* Mobile Menu */}
+      {isMobile && <MobileMenu />}
+
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          {isMobile ? (
+            <>
+              <TouchableOpacity
+                onPress={() => setMenuOpen(true)}
+                style={styles.hamburger}
+              >
+                <Ionicons name="menu" size={24} color="#0f172a" />
+              </TouchableOpacity>
+              <Text style={styles.mobileTitle}>{activePageLabel}</Text>
+            </>
+          ) : (
+            <>
+              <View style={styles.logoWrap}>
+                <Image
+                  source={require("../../assets/images/jdn.jpg")}
+                  style={styles.logo}
+                />
+              </View>
+              <View style={styles.titleWrap}>
+                <Text style={styles.brandTitle}>Admin Portal</Text>
+                <Text style={styles.brandSub}>Management Console</Text>
+              </View>
+            </>
+          )}
+        </View>
+
+        {!isMobile && (
+          <View style={styles.headerRight}>
+            <View style={styles.userCard}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{initials || "U"}</Text>
+              </View>
+              <View style={styles.userInfo}>
+                <Text style={styles.userName} numberOfLines={1}>
+                  {displayName || "User"}
+                </Text>
+                <View
+                  style={[
+                    styles.roleBadge,
+                    { backgroundColor: currentRoleStyle.bg },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.roleText,
+                      { color: currentRoleStyle.text },
+                    ]}
                   >
-                    <Ionicons name={page.icon} size={18} color={isActive ? "#2563eb" : "#64748b"} />
-                    <Text style={[styles.drawerText, isActive && styles.drawerTextActive]}>{page.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </Animated.View>
-          </TouchableOpacity>
-        </Modal>
+                    {role.charAt(0).toUpperCase() + role.slice(1)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+            <View style={styles.headerDivider} />
+            <TouchableOpacity
+              onPress={handleLogout}
+              style={styles.logoutBtn}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name="log-out-outline"
+                size={18}
+                color="#64748b"
+              />
+              <Text style={styles.logoutText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {isMobile && (
+          <View style={styles.mobileHeaderRight}>
+            <View style={styles.avatarSmall}>
+              <Text style={styles.avatarTextSmall}>
+                {initials || "U"}
+              </Text>
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* Tab Navigation - Desktop Only */}
+      {!isMobile && (
+        <View style={styles.tabBar}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabScroll}
+          >
+            {visiblePages.map((page) => {
+              const isActive = active === page.key;
+              return (
+                <TouchableOpacity
+                  key={page.key}
+                  onPress={() => handleSelect(page.key)}
+                  style={[styles.tab, isActive && styles.tabActive]}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={
+                      (isActive
+                        ? page.icon
+                        : `${page.icon}-outline`) as any
+                    }
+                    size={16}
+                    color={isActive ? "#6366f1" : "#64748b"}
+                  />
+                  <Text
+                    style={[
+                      styles.tabText,
+                      isActive && styles.tabTextActive,
+                    ]}
+                  >
+                    {page.label}
+                  </Text>
+                  {isActive && <View style={styles.tabIndicator} />}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
       )}
-      <View style={styles.body}>
-        {ready ? renderContent() : null}
+
+      {/* Content */}
+      <View style={[styles.content, isMobile && styles.contentMobile]}>
+        {renderContent()}
       </View>
     </SafeAreaView>
   );
 }
-const BG = "#fafbfc";                 
-const CARD = "#ffffff";
-const BORDER = "rgba(15, 23, 42, 0.08)";
-const TEXT = "#0f172a";
-const MUTED = "#64748b";
-const BRAND = "#2563eb";               
-const BRAND_SOFT = "rgba(37, 99, 235, 0.08)";
-const BRAND_HOVER = "#1e40af";
-const GLASS = {
-  backgroundColor: "#ffffff",
-  borderColor: BORDER,
-  borderWidth: 1,
-};
+
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: BG },
-  bgBlobA: {
-    position: "absolute", 
-    top: 0, 
-    right: 0, 
-    width: "100%", 
-    height: 200,
-    opacity: 0.4,
-    ...(Platform.OS === "web" ? { 
-      background: "linear-gradient(135deg, rgba(37, 99, 235, 0.03) 0%, transparent 50%)" 
-    } : { backgroundColor: "rgba(37, 99, 235, 0.02)" }),
+  screen: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
   },
-  bgBlobB: {
-    position: "absolute", 
-    display: "none",
-  },
-  bgBlobC: {
-    position: "absolute", 
-    display: "none",
-  },
-  headerWrap: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderRadius: 12,
+  // Header
+  header: {
     flexDirection: "row",
     alignItems: "center",
-    ...GLASS,
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
     ...(Platform.OS === "web"
-      ? { boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)" }
-      : { 
-          shadowColor: "#0f172a", 
-          shadowOpacity: 0.06, 
-          shadowRadius: 3, 
-          shadowOffset: { width: 0, height: 1 } 
-        }),
-  },
-  hamburger: { 
-    padding: 8, 
-    marginRight: 8, 
-    borderRadius: 8, 
-    backgroundColor: BRAND_SOFT,
-  },
-  brandRow: { flexDirection: "row", alignItems: "center" },
-  logo: { 
-    width: 32, 
-    height: 32, 
-    borderRadius: 8, 
-    marginRight: 10, 
-    borderWidth: 1, 
-    borderColor: BORDER,
-  },
-  brand: { 
-    fontSize: 20, 
-    fontWeight: "700", 
-    color: TEXT, 
-    letterSpacing: -0.3 
-  },
-  headerRight: { 
-    marginLeft: "auto", 
-    flexDirection: "row", 
-    alignItems: "center", 
-    gap: 12 
-  },
-  userText: { 
-    color: MUTED, 
-    fontSize: 13, 
-    fontWeight: "500",
-    maxWidth: 260 
-  },
-  logoutBtn: {
-    backgroundColor: TEXT,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    ...(Platform.OS === "web" ? { 
-      cursor: "pointer",
-      transition: "all 150ms ease",
-    } : null),
-  },
-  logoutTxt: { 
-    color: "#fff", 
-    fontWeight: "600", 
-    fontSize: 13 
-  },
-  navHolder: {
-    position: "sticky" as any,
-    top: 12,
-    zIndex: 5,
-    marginHorizontal: 16,
-  },
-  navbar: {
-    marginTop: 12,
-    padding: 6,
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    ...GLASS,
-    ...(Platform.OS === "web"
-      ? { boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)" }
-      : { 
-          shadowColor: "#0f172a", 
-          shadowOpacity: 0.06, 
-          shadowRadius: 3, 
-          shadowOffset: { width: 0, height: 1 } 
-        }),
-  },
-  navLeft: { 
-    flexDirection: "row", 
-    flexWrap: "wrap", 
-    gap: 6, 
-    alignItems: "center", 
-    flex: 1 
-  },
-  navRight: { 
-    marginLeft: "auto", 
-    flexDirection: "row" 
-  },
-  pill: {
-    position: "relative",
-    overflow: "hidden",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
-    backgroundColor: "transparent",
-    borderWidth: 0,
-    ...(Platform.OS === "web" ? { 
-      cursor: "pointer", 
-      transition: "all 180ms cubic-bezier(0.4, 0, 0.2, 1)",
-    } : {}),
-  },
-  pillActive: {
-    backgroundColor: BRAND,
-    borderWidth: 0,
-    ...(Platform.OS === "web"
-      ? { boxShadow: "0 1px 2px rgba(37, 99, 235, 0.2), 0 0 0 1px rgba(37, 99, 235, 0.1)" }
+      ? {
+          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+        }
       : {
-          shadowColor: BRAND,
-          shadowOpacity: 0.2,
-          shadowRadius: 2,
+          shadowColor: "#000",
+          shadowOpacity: 0.04,
+          shadowRadius: 3,
           shadowOffset: { width: 0, height: 1 },
         }),
   },
-  neonEdge: {
-    display: "none",
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  pillText: { 
-    color: MUTED, 
-    fontWeight: "600", 
-    fontSize: 13.5, 
-    letterSpacing: -0.1 
+  hamburger: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "#f1f5f9",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  pillTextActive: { 
+  mobileTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  logoWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    overflow: "hidden",
+    ...(Platform.OS === "web"
+      ? {
+          boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
+        }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.08,
+          shadowRadius: 6,
+          shadowOffset: { width: 0, height: 2 },
+        }),
+  },
+  logo: {
+    width: 42,
+    height: 42,
+  },
+  titleWrap: {
+    gap: 1,
+  },
+  brandTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+    letterSpacing: -0.3,
+  },
+  brandSub: {
+    fontSize: 12,
+    color: "#94a3b8",
+    fontWeight: "500",
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  mobileHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  userCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "#6366f1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
+    fontSize: 13,
+    fontWeight: "700",
     color: "#fff",
+  },
+  avatarSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#6366f1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarTextSmall: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  userInfo: {
+    gap: 2,
+  },
+  userName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#0f172a",
+    maxWidth: 120,
+  },
+  roleBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  roleText: {
+    fontSize: 10,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  headerDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: "#e2e8f0",
+  },
+  logoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  logoutText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#64748b",
+  },
+  // Tab Bar
+  tabBar: {
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+  },
+  tabScroll: {
+    paddingHorizontal: 16,
+    gap: 4,
+  },
+  tab: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    position: "relative",
+  },
+  tabActive: {},
+  tabText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#64748b",
+  },
+  tabTextActive: {
+    color: "#6366f1",
     fontWeight: "600",
   },
-  drawerBackdrop: { 
-    flex: 1, 
-    backgroundColor: "rgba(15, 23, 42, 0.4)" 
+  tabIndicator: {
+    position: "absolute",
+    bottom: 0,
+    left: 14,
+    right: 14,
+    height: 2,
+    backgroundColor: "#6366f1",
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
+  },
+  // Content
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  contentMobile: {
+    padding: 12,
+  },
+  // Mobile Drawer
+  modalOverlay: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.4)",
   },
   drawer: {
-    height: "100%",
+    width: 300,
+    maxWidth: "85%",
     backgroundColor: "#ffffff",
-    paddingTop: 24,
-    paddingHorizontal: 16,
-    borderRightWidth: 1,
-    borderRightColor: BORDER,
+    height: "100%",
+    ...(Platform.OS === "web"
+      ? {
+          boxShadow: "4px 0 24px rgba(0,0,0,0.12)",
+        }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.12,
+          shadowRadius: 24,
+          shadowOffset: { width: 4, height: 0 },
+        }),
   },
-  drawerTitle: { 
-    fontSize: 11, 
-    color: MUTED, 
-    fontWeight: "700", 
-    marginBottom: 16,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
+  drawerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  drawerLogoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  drawerTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  drawerSub: {
+    fontSize: 11,
+    color: "#94a3b8",
+    fontWeight: "500",
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "#f8fafc",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  drawerUser: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: "#f8fafc",
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 12,
+  },
+  drawerUserInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  drawerUserName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0f172a",
+  },
+  drawerNav: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 20,
+  },
+  drawerLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#94a3b8",
+    letterSpacing: 0.5,
+    marginBottom: 12,
+    marginLeft: 4,
   },
   drawerItem: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     borderRadius: 10,
-    backgroundColor: "transparent",
     marginBottom: 4,
   },
-  drawerItemActive: { 
-    backgroundColor: BRAND_SOFT,
-    borderLeftWidth: 3,
-    borderLeftColor: BRAND,
+  drawerItemActive: {
+    backgroundColor: "#f1f5f9",
   },
-  drawerText: { 
-    color: TEXT, 
-    fontSize: 15, 
-    fontWeight: "600" 
+  drawerIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "#f8fafc",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  drawerTextActive: { 
-    color: BRAND,
+  drawerIconWrapActive: {
+    backgroundColor: "#6366f1",
+  },
+  drawerItemText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#64748b",
+  },
+  drawerItemTextActive: {
+    color: "#0f172a",
     fontWeight: "600",
   },
-  body: { 
-    flex: 1, 
-    paddingHorizontal: 16, 
-    paddingBottom: 16, 
-    paddingTop: 12 
+  drawerFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+  },
+  drawerLogout: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+  },
+  drawerLogoutText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#ef4444",
   },
 });
