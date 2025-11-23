@@ -1555,6 +1555,10 @@ function ReadingsModal({
     previousReading: null,
   });
   const [printLoading, setPrintLoading] = useState(false);
+  const [ledgerVisible, setLedgerVisible] = useState(false);
+  const [ledgerStart, setLedgerStart] = useState<string>(todayStr());
+  const [ledgerEnd, setLedgerEnd] = useState<string>(todayStr());
+
 
   const openPrintProof = async (reading: Reading) => {
     setPrintLoading(true);
@@ -1765,6 +1769,259 @@ function ReadingsModal({
     }
   };
 
+
+  const handlePrintLedger = () => {
+    if (!selectedMeterId) {
+      notify("No meter", "Please select a meter first.");
+      return;
+    }
+
+    const parseYmd = (val: string): Date | null => {
+      const d = new Date(val);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const startDate = parseYmd(ledgerStart);
+    const endDate = parseYmd(ledgerEnd);
+
+    if (!startDate || !endDate) {
+      notify("Invalid dates", "Please enter valid start and end dates (YYYY-MM-DD).");
+      return;
+    }
+    if (startDate > endDate) {
+      notify("Invalid range", "Start date must be before end date.");
+      return;
+    }
+
+    const allForMeter = (readingsForSelected as Reading[])
+      .filter((r: Reading) => r.meter_id === selectedMeterId)
+      .slice()
+      .sort(
+        (a: Reading, b: Reading) =>
+          new Date(a.lastread_date).getTime() -
+          new Date(b.lastread_date).getTime()
+      );
+
+
+    if (!allForMeter.length) {
+      notify("No data", "There are no readings for this meter in the selected range.");
+      return;
+    }
+
+    // last reading before range for PRE column
+    let lastValue: number | null = null;
+    for (const row of allForMeter) {
+      const d = new Date(row.lastread_date);
+      if (d < startDate) {
+        const v = Number(row.reading_value);
+        if (!Number.isNaN(v)) {
+          lastValue = v;
+        }
+      }
+    }
+
+    const byDate: Record<string, Reading> = {};
+    for (const row of allForMeter) {
+      const d = new Date(row.lastread_date);
+      if (d >= startDate && d <= endDate) {
+        const key = d.toISOString().slice(0, 10);
+        const existing = byDate[key];
+        if (!existing || new Date(existing.lastread_date).getTime() < d.getTime()) {
+          byDate[key] = row;
+        }
+      }
+    }
+
+    type LedgerRow = {
+      date: string;
+      prev: string;
+      current: string;
+      cons: string;
+      remarks: string;
+    };
+
+    const rows: LedgerRow[] = [];
+    const cursor = new Date(startDate.getTime());
+
+    while (cursor <= endDate) {
+      const key = cursor.toISOString().slice(0, 10);
+      const reading = byDate[key];
+      const dayLabel = String(cursor.getDate());
+
+      if (reading) {
+        const currentVal = Number(reading.reading_value);
+        const prevVal = lastValue;
+        const consVal =
+          prevVal != null && !Number.isNaN(currentVal) ? currentVal - prevVal : null;
+
+        const prevStr = prevVal != null ? String(prevVal) : "";
+        const currStr = !Number.isNaN(currentVal)
+          ? String(currentVal)
+          : String(reading.reading_value);
+        const consStr = consVal != null ? fmtValue(consVal) : "";
+        let remarks = reading.remarks || "";
+
+        if (!remarks && consVal != null && prevVal != null && prevVal > 0) {
+          const pct = consVal / prevVal;
+          if (pct >= 0.2) {
+            remarks = "high cons";
+          }
+        }
+
+        rows.push({
+          date: dayLabel,
+          prev: prevStr,
+          current: currStr,
+          cons: consStr,
+          remarks,
+        });
+
+        if (!Number.isNaN(currentVal)) {
+          lastValue = currentVal;
+        }
+      } else {
+        rows.push({
+          date: dayLabel,
+          prev: "",
+          current: "",
+          cons: "",
+          remarks: "",
+        });
+      }
+
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const meter = metersById.get ? metersById.get(selectedMeterId) : null;
+      const meterType = String((meter as any)?.meter_type || "Meter").toUpperCase();
+
+      const tenantName =
+        (meter as any)?.tenant_name ||
+        (meter as any)?.tenant ||
+        (meter as any)?.tenant_fullname ||
+        "";
+      const tenantCode =
+        (meter as any)?.tenant_code ||
+        (meter as any)?.tenant_id ||
+        (meter as any)?.account_no ||
+        selectedMeterId;
+      const tenantLine = [tenantCode, tenantName].filter(Boolean).join(" ");
+
+      const rowsHtml = rows
+        .map(
+          (r) => `
+          <tr>
+            <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:center;">${r.date}</td>
+            <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">${r.prev}</td>
+            <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">${r.current}</td>
+            <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">${r.cons}</td>
+            <td style="border:1px solid #d1d5db;padding:4px 6px;">${r.remarks}</td>
+          </tr>
+        `
+        )
+        .join("");
+
+      const w = window.open("", "_blank");
+      if (!w) {
+        notify("Popup blocked", "Please allow popups to print the ledger.");
+        return;
+      }
+
+      w.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charSet="utf-8" />
+          <title>Tenant Meter Reading Ledger</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 20px;
+              color: #111827;
+            }
+            .wrap {
+              max-width: 900px;
+              margin: 0 auto;
+            }
+            .header {
+              margin-bottom: 12px;
+            }
+            .header h1 {
+              font-size: 18px;
+              margin: 0 0 4px 0;
+            }
+            .header p {
+              margin: 2px 0;
+              font-size: 13px;
+            }
+            table {
+              border-collapse: collapse;
+              width: 100%;
+              font-size: 12px;
+            }
+            th {
+              border: 1px solid #d1d5db;
+              background: #f3f4f6;
+              padding: 4px 6px;
+              text-align: center;
+            }
+            td {
+              font-size: 12px;
+            }
+            .no-print {
+              margin-top: 16px;
+              text-align: center;
+            }
+            @media print {
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="wrap">
+            <div class="header">
+              <h1>Tenant Meter Reading Ledger</h1>
+              <p>${meterType}</p>
+              <p>${tenantLine}</p>
+              <p>From ${ledgerStart} to ${ledgerEnd}</p>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:50px;">Date</th>
+                  <th>Previous</th>
+                  <th>Current</th>
+                  <th>Cons</th>
+                  <th>Remarks</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+
+            <div class="no-print">
+              <button onclick="window.print()" style="padding:8px 16px;border-radius:4px;border:0;background:#2563eb;color:white;cursor:pointer;">
+                Print Ledger
+              </button>
+            </div>
+          </div>
+
+          <script>
+            setTimeout(function () { window.print(); }, 500);
+          </script>
+        </body>
+        </html>
+      `);
+      w.document.close();
+    } else {
+      notify("Print", "Ledger printing is available on the web version.");
+    }
+
+    setLedgerVisible(false);
+  };
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
@@ -1853,9 +2110,14 @@ function ReadingsModal({
                   <Text style={styles.modalTitle}>
                     Readings for <Text style={styles.meterLink}>{selectedMeterId || "—"}</Text>
                   </Text>
-                  <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={onClose}>
-                    <Text style={styles.btnGhostText}>Close</Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setLedgerVisible(true)}>
+                      <Text style={styles.btnGhostText}>Print Ledger</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={onClose}>
+                      <Text style={styles.btnGhostText}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 <View style={[styles.searchWrap, { marginTop: 8 }]}>
@@ -1908,6 +2170,46 @@ function ReadingsModal({
               </>
             }
           />
+
+          {/* Ledger date range modal */}
+          <Modal
+            visible={ledgerVisible}
+            animationType="fade"
+            transparent
+            onRequestClose={() => setLedgerVisible(false)}
+          >
+            <View style={styles.promptOverlay}>
+              <View style={styles.promptCard}>
+                <Text style={styles.modalTitle}>Print Ledger</Text>
+                <View style={styles.modalDivider} />
+                <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Start date (YYYY-MM-DD)</Text>
+                <TextInput
+                  value={ledgerStart}
+                  onChangeText={setLedgerStart}
+                  style={styles.input}
+                  placeholder="2025-01-01"
+                />
+                <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>End date (YYYY-MM-DD)</Text>
+                <TextInput
+                  value={ledgerEnd}
+                  onChangeText={setLedgerEnd}
+                  style={styles.input}
+                  placeholder="2025-01-31"
+                />
+                <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 16, gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.btn, styles.btnGhost]}
+                    onPress={() => setLedgerVisible(false)}
+                  >
+                    <Text style={styles.btnGhostText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.btn} onPress={handlePrintLedger}>
+                    <Text style={styles.btnText}>{Platform.OS === "web" ? "Print Ledger" : "Generate"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
 
           {/* ---- Print Proof Modal ---- */}
           <Modal visible={printProofVisible} transparent animationType="slide" onRequestClose={() => setPrintProofVisible(false)}>
