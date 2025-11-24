@@ -1631,16 +1631,29 @@ function ReadingsModal({
     }
   };
 
-  const handlePrint = () => {
-    if (Platform.OS === "web") {
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        const meter = metersById.get(printData.reading?.meter_id || '');
-        const meterType = meter?.meter_type || 'Unknown';
-        
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
+const handlePrint = () => {
+  if (Platform.OS === "web") {
+    const printWindow = window.open("", "_blank");
+    if (printWindow) {
+      const meter = metersById.get(printData.reading?.meter_id || "");
+      const meterType = meter?.meter_type || "Unknown";
+
+      // NEW: tenant details coming from updated /meters backend
+      const tenantName =
+        (meter as any)?.tenant_name ||
+        (meter as any)?.tenant ||
+        (meter as any)?.tenant_fullname ||
+        "";
+      const tenantCode =
+        (meter as any)?.tenant_sn ||
+        (meter as any)?.tenant_id ||
+        (meter as any)?.account_no ||
+        "";
+      const tenantLine = [tenantCode, tenantName].filter(Boolean).join(" - ");
+
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
           <head>
             <title>Meter Reading Proof - ${printData.reading?.reading_id}</title>
             <style>
@@ -1701,18 +1714,20 @@ function ReadingsModal({
           <body>
             <div class="header">
               <h1>Meter Reading Proof</h1>
+              ${tenantLine ? `<p>Tenant: ${tenantLine}</p>` : ""}
               <p>Generated on: ${new Date().toLocaleString()}</p>
             </div>
-            
-            <div class="content"> x
+                        
+            <div class="content">
               <div class="reading-info">
                 <h2>Reading Details</h2>
                 <p><strong>Reading ID:</strong> ${printData.reading?.reading_id}</p>
                 <p><strong>Meter ID:</strong> ${printData.reading?.meter_id}</p>
                 <p><strong>Meter Type:</strong> ${meterType.toUpperCase()}</p>
+                ${tenantLine ? `<p><strong>Tenant:</strong> ${tenantLine}</p>` : ""}
                 <p><strong>Date Read:</strong> ${printData.reading?.lastread_date}</p>
                 <p><strong>Read By:</strong> ${printData.reading?.read_by}</p>
-                ${printData.reading?.remarks ? `<p><strong>Remarks:</strong> ${printData.reading.remarks}</p>` : ''}
+                ${printData.reading?.remarks ? `<p><strong>Remarks:</strong> ${printData.reading.remarks}</p>` : ""}
               </div>
 
               <div class="comparison">
@@ -1902,7 +1917,7 @@ function ReadingsModal({
         (meter as any)?.tenant_fullname ||
         "";
       const tenantCode =
-        (meter as any)?.tenant_code ||
+        (meter as any)?.tenant_sn ||
         (meter as any)?.tenant_id ||
         (meter as any)?.account_no ||
         selectedMeterId;
