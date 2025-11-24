@@ -55,7 +55,7 @@ export default function SideNav({ active, onSelect }: Props) {
   const canSeeAdmin = isAdmin || isOperator || isBiller || isReader;
   const canSeeScanner = isAdmin || isPureReader;
   const canSeeBilling = isAdmin || isPureBiller;
-  const canSeeDashboard = isAdmin;
+  const canSeeDashboard = isAdmin || isOperator || isBiller || isReader;
 
   const homeTab: TabKey =
     isPureBiller && canSeeBilling

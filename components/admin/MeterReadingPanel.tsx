@@ -258,7 +258,9 @@ export default function MeterReadingPanel({
   const rolesRaw = String(jwt?.user_level ?? jwt?.user_roles ?? "").toLowerCase();
   const isAdmin = rolesRaw.includes("admin");
   const isOperator = rolesRaw.includes("operator");
-  const canWrite = isAdmin || isOperator;
+  const isReader = rolesRaw.includes("reader");
+  const canWrite = isAdmin || isOperator || isReader;
+  
   const userBuildingId = String(jwt?.building_id || "");
 
   const headerToken =

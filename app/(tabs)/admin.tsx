@@ -103,7 +103,7 @@ export default function AdminScreen() {
         "readings",
       ]),
       operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
-      biller: new Set<PageKey>(["buildings", "wt", "vat"]),
+      biller: new Set<PageKey>(["buildings", "wt", "vat", "readings"]),
       reader: new Set<PageKey>(["readings"]),
     }),
     []
