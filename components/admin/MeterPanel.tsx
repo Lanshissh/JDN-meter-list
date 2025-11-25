@@ -312,8 +312,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
                     text-align: center;
                   }
                   img {
-                    width: 280px;
-                    height: 280px;
+                    width: 60px;
+                    height: 60px;
                   }
                   h1 {
                     font-size: 18px;
@@ -330,7 +330,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
               </head>
               <body>
                 <div class="wrap">
-                  <h1>Meter QR</h1>
                   <p>${qrMeterId || ""}</p>
                   <img src="${dataUrl}" alt="Meter QR" />
                 </div>

@@ -13,12 +13,14 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   useWindowDimensions,
-  LogBox, 
 } from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
+import { useAuth } from "../../contexts/AuthContext";  // <-- ADD THIS
+
 type Props = { token: string | null };
+
 type WtCode = {
   wt_id: string;
   wt_code: string;
@@ -29,18 +31,22 @@ type WtCode = {
   last_updated?: string;
   updated_by?: string;
 };
+
 type SortMode = "newest" | "oldest" | "codeAsc" | "codeDesc";
+
 const fmtDate = (iso?: string) => {
   if (!iso) return "";
   const t = Date.parse(iso);
   return Number.isFinite(t) ? new Date(t).toLocaleString() : String(iso);
 };
+
 const toNumOrNull = (s: string): number | null => {
   const t = s.trim();
   if (t === "") return null;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
 };
+
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -48,6 +54,7 @@ function notify(title: string, message?: string) {
     Alert.alert(title, message);
   }
 }
+
 function errorText(err: any, fallback = "Server error.") {
   const d = err?.response?.data;
   if (typeof d === "string") return d;
@@ -56,14 +63,27 @@ function errorText(err: any, fallback = "Server error.") {
   if (err?.message) return String(err.message);
   try { return JSON.stringify(d ?? err); } catch { return fallback; }
 }
+
 const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
     <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
   </TouchableOpacity>
 );
+
 export default function WithholdingPanel({ token }: Props) {
+
+  // ==========================
+  //  ROLE ACCESS (NEW)
+  // ==========================
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole("admin");
+  const isBiller = hasRole("biller");
+  const isOperator = hasRole("operator");
+  const canEdit = isAdmin || isBiller; // <-- ONLY admin & biller can edit WT
+
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
+
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [rows, setRows] = useState<WtCode[]>([]);
@@ -71,26 +91,38 @@ export default function WithholdingPanel({ token }: Props) {
   const [onlyNonZero, setOnlyNonZero] = useState(false);
   const [hasAnyRate, setHasAnyRate] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("newest");
+
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
+
   const [c_code, setC_code] = useState("");
   const [c_desc, setC_desc] = useState("");
   const [c_e, setC_e] = useState("");
   const [c_w, setC_w] = useState("");
   const [c_l, setC_l] = useState("");
+
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<WtCode | null>(null);
+
   const [e_code, setE_code] = useState("");
   const [e_desc, setE_desc] = useState("");
   const [e_e, setE_e] = useState("");
   const [e_w, setE_w] = useState("");
   const [e_l, setE_l] = useState("");
+
   const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
+
   const basePath = "/wt";
+
   useEffect(() => { loadAll(); }, [token]);
+
   const loadAll = async () => {
-    if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage withholding codes."); return; }
+    if (!token) {
+      setBusy(false);
+      notify("Not logged in", "Please log in to manage withholding codes.");
+      return;
+    }
     try {
       setBusy(true);
       const res = await api.get<WtCode[]>(basePath);
@@ -101,6 +133,8 @@ export default function WithholdingPanel({ token }: Props) {
       setBusy(false);
     }
   };
+
+  // Filters & sorting
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const nz = (v: number | null) => (v == null ? false : (onlyNonZero ? Number(v) > 0 : true));
@@ -113,18 +147,31 @@ export default function WithholdingPanel({ token }: Props) {
       return textOk && rateOk;
     });
   }, [rows, query, onlyNonZero, hasAnyRate]);
+
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
-      case "codeAsc":  return arr.sort((a, b) => a.wt_code.localeCompare(b.wt_code, undefined, { numeric: true }));
-      case "codeDesc": return arr.sort((a, b) => b.wt_code.localeCompare(a.wt_code, undefined, { numeric: true }));
-      case "oldest":   return arr.sort((a, b) => (Date.parse(a.last_updated || "") || 0) - (Date.parse(b.last_updated || "") || 0));
+      case "codeAsc":
+        return arr.sort((a, b) => a.wt_code.localeCompare(b.wt_code, undefined, { numeric: true }));
+      case "codeDesc":
+        return arr.sort((a, b) => b.wt_code.localeCompare(a.wt_code, undefined, { numeric: true }));
+      case "oldest":
+        return arr.sort((a, b) => (Date.parse(a.last_updated || "") || 0) - (Date.parse(b.last_updated || "") || 0));
       case "newest":
-      default:         return arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
+      default:
+        return arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
     }
   }, [filtered, sortMode]);
+
+  // ==========================
+  // CREATE (Admin + Biller only)
+  // ==========================
   const onCreate = async () => {
-    if (!c_code.trim()) { notify("Missing info", "Please enter a withholding code."); return; }
+    if (!canEdit) return; // safety
+    if (!c_code.trim()) {
+      notify("Missing info", "Please enter a withholding code.");
+      return;
+    }
     try {
       setSubmitting(true);
       await api.post(basePath, {
@@ -140,9 +187,16 @@ export default function WithholdingPanel({ token }: Props) {
       notify("Success", "Withholding code created.");
     } catch (err) {
       notify("Create failed", errorText(err));
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  // ==========================
+  // EDIT (Admin + Biller only)
+  // ==========================
   const openEdit = (row: WtCode) => {
+    if (!canEdit) return;
     setEditRow(row);
     setE_code(row.wt_code || "");
     setE_desc(row.wt_description || "");
@@ -151,8 +205,9 @@ export default function WithholdingPanel({ token }: Props) {
     setE_l(row.l_wt != null ? String(row.l_wt) : "");
     setEditVisible(true);
   };
+
   const onUpdate = async () => {
-    if (!editRow) return;
+    if (!editRow || !canEdit) return;
     try {
       setSubmitting(true);
       await api.put(`${basePath}/${encodeURIComponent(editRow.wt_id)}`, {
@@ -167,9 +222,16 @@ export default function WithholdingPanel({ token }: Props) {
       notify("Updated", "Withholding code updated.");
     } catch (err) {
       notify("Update failed", errorText(err));
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  // ==========================
+  // DELETE (Admin + Biller only)
+  // ==========================
   const onDelete = (row: WtCode) => {
+    if (!canEdit) return;
     const go = async () => {
       try {
         setSubmitting(true);
@@ -178,9 +240,12 @@ export default function WithholdingPanel({ token }: Props) {
         notify("Deleted", "Withholding code removed.");
       } catch (err) {
         notify("Delete failed", errorText(err));
-      } finally { setSubmitting(false); }
+      } finally {
+        setSubmitting(false);
+      }
     };
-    if (Platform.OS === "web" && typeof window !== "undefined" && window.confirm) {
+
+    if (Platform.OS === "web" && window.confirm) {
       if (window.confirm(`Delete ${row.wt_code} (${row.wt_id})?`)) go();
     } else {
       Alert.alert("Confirm delete", `Delete ${row.wt_code}?`, [
@@ -189,16 +254,27 @@ export default function WithholdingPanel({ token }: Props) {
       ]);
     }
   };
+
+  // ============================================================
+  // RENDER
+  // ============================================================
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
+          
+          {/* HEADER ======================== */}
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Withholding Codes</Text>
-            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
-              <Text style={styles.btnText}>+ New</Text>
-            </TouchableOpacity>
+
+            {canEdit && (
+              <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+                <Text style={styles.btnText}>+ New</Text>
+              </TouchableOpacity>
+            )}
           </View>
+
+          {/* SEARCH + FILTERS ============== */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -210,11 +286,14 @@ export default function WithholdingPanel({ token }: Props) {
                 style={styles.search}
               />
             </View>
+
             <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
               <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
+
+          {/* LIST ========================== */}
           {busy ? (
             <View style={styles.loader}><ActivityIndicator /></View>
           ) : (
@@ -232,6 +311,8 @@ export default function WithholdingPanel({ token }: Props) {
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
+                  
+                  {/* MAIN TEXT BLOCK */}
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
                       {item.wt_code} <Text style={styles.rowSub}>({item.wt_id})</Text>
@@ -240,46 +321,57 @@ export default function WithholdingPanel({ token }: Props) {
                     <Text style={styles.rowMeta}>
                       ELECTRIC: {item.e_wt ?? "—"} • WATER: {item.w_wt ?? "—"} • LPG: {item.l_wt ?? "—"}
                     </Text>
+
                     {item.last_updated ? (
                       <Text style={styles.rowMetaSmall}>
                         Updated {fmtDate(item.last_updated)} {item.updated_by ? `• by ${item.updated_by}` : ""}
                       </Text>
                     ) : null}
                   </View>
-                  {isMobile ? (
-                    <View style={styles.rowActionsMobile}>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
-                        <Ionicons name="create-outline" size={16} color="#1f2937" />
-                        <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
-                        <Ionicons name="trash-outline" size={16} color="#fff" />
-                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.rowActions}>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
-                        <Ionicons name="create-outline" size={16} color="#1f2937" />
-                        <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
-                        <Ionicons name="trash-outline" size={16} color="#fff" />
-                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
-                      </TouchableOpacity>
-                    </View>
+
+                  {/* ACTIONS (Shown only if admin/biller) */}
+                  {canEdit && (
+                    isMobile ? (
+                      <View style={styles.rowActionsMobile}>
+                        <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                          <Ionicons name="create-outline" size={16} color="#1f2937" />
+                          <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                          <Ionicons name="trash-outline" size={16} color="#fff" />
+                          <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.rowActions}>
+                        <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
+                          <Ionicons name="create-outline" size={16} color="#1f2937" />
+                          <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                          <Ionicons name="trash-outline" size={16} color="#fff" />
+                          <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )
                   )}
                 </View>
               )}
             />
           )}
+
         </View>
       </View>
+
+      {/* FILTERS MODAL ======================= */}
       <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
             <View style={styles.modalDivider} />
+
             <Text style={styles.dropdownLabel}>Sort by</Text>
             <View style={styles.chipsRow}>
               <Chip label="Newest"  active={sortMode === "newest"}  onPress={() => setSortMode("newest")} />
@@ -287,129 +379,240 @@ export default function WithholdingPanel({ token }: Props) {
               <Chip label="Code ↑"  active={sortMode === "codeAsc"} onPress={() => setSortMode("codeAsc")} />
               <Chip label="Code ↓"  active={sortMode === "codeDesc"} onPress={() => setSortMode("codeDesc")} />
             </View>
+
             <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
+
             <View style={styles.chipsRow}>
               <Chip label="Only non-zero" active={onlyNonZero} onPress={() => setOnlyNonZero((v) => !v)} />
               <Chip label="Has any rate" active={hasAnyRate} onPress={() => setHasAnyRate((v) => !v)} />
             </View>
+
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btnGhostAlt]}
-                onPress={() => { setSortMode("newest"); setOnlyNonZero(false); setHasAnyRate(false); }}
+                onPress={() => {
+                  setSortMode("newest");
+                  setOnlyNonZero(false);
+                  setHasAnyRate(false);
+                }}
               >
                 <Text style={styles.btnGhostTextAlt}>Reset</Text>
               </TouchableOpacity>
+
               <TouchableOpacity style={[styles.btn]} onPress={() => setFiltersVisible(false)}>
                 <Text style={styles.btnText}>Done</Text>
               </TouchableOpacity>
             </View>
+
           </View>
         </View>
       </Modal>
-      <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>New Withholding Code</Text>
-            <View style={styles.modalDivider} />
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Code</Text>
-                <TextInput placeholder="e.g., WH-01" value={c_code} onChangeText={setC_code} style={styles.input} placeholderTextColor="#9aa5b1" />
-              </View>
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Description</Text>
-                <TextInput placeholder="Description" value={c_desc} onChangeText={setC_desc} style={styles.input} placeholderTextColor="#9aa5b1" />
-              </View>
-              <Text style={styles.sectionTitle}>Rates (%)</Text>
-              <View style={styles.grid3}>
+
+      {/* CREATE MODAL (Admin + Biller) */}
+      {canEdit && (
+        <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>New Withholding Code</Text>
+              <View style={styles.modalDivider} />
+
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
                 <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>Electric %</Text>
-                  <TextInput keyboardType="numeric" value={c_e} onChangeText={setC_e} style={styles.input} placeholderTextColor="#9aa5b1" />
+                  <Text style={styles.inputLabel}>Code</Text>
+                  <TextInput
+                    placeholder="e.g., WH-01"
+                    value={c_code}
+                    onChangeText={setC_code}
+                    style={styles.input}
+                    placeholderTextColor="#9aa5b1"
+                    editable={canEdit}
+                  />
                 </View>
+
                 <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>Water %</Text>
-                  <TextInput keyboardType="numeric" value={c_w} onChangeText={setC_w} style={styles.input} placeholderTextColor="#9aa5b1" />
+                  <Text style={styles.inputLabel}>Description</Text>
+                  <TextInput
+                    placeholder="Description"
+                    value={c_desc}
+                    onChangeText={setC_desc}
+                    style={styles.input}
+                    placeholderTextColor="#9aa5b1"
+                    editable={canEdit}
+                  />
                 </View>
-                <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>LPG %</Text>
-                  <TextInput keyboardType="numeric" value={c_l} onChangeText={setC_l} style={styles.input} placeholderTextColor="#9aa5b1" />
+
+                <Text style={styles.sectionTitle}>Rates (%)</Text>
+
+                <View style={styles.grid3}>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Electric %</Text>
+                    <TextInput
+                      keyboardType="numeric"
+                      value={c_e}
+                      onChangeText={setC_e}
+                      style={styles.input}
+                      placeholderTextColor="#9aa5b1"
+                      editable={canEdit}
+                    />
+                  </View>
+
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Water %</Text>
+                    <TextInput
+                      keyboardType="numeric"
+                      value={c_w}
+                      onChangeText={setC_w}
+                      style={styles.input}
+                      placeholderTextColor="#9aa5b1"
+                      editable={canEdit}
+                    />
+                  </View>
+
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>LPG %</Text>
+                    <TextInput
+                      keyboardType="numeric"
+                      value={c_l}
+                      onChangeText={setC_l}
+                      style={styles.input}
+                      placeholderTextColor="#9aa5b1"
+                      editable={canEdit}
+                    />
+                  </View>
                 </View>
-              </View>
-              <Text style={styles.helpText}>Leave blank to save as <Text style={{ fontWeight: "700" }}>null</Text>.</Text>
-            </ScrollView>
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
-                <Text style={styles.btnGhostTextAlt}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
-                <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-      <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{editRow ? `Edit • ${editRow.wt_code}` : "Edit Withholding Code"}</Text>
-            <View style={styles.modalDivider} />
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Code</Text>
-                <TextInput placeholder="e.g., WH-01" value={e_code} onChangeText={setE_code} style={styles.input} placeholderTextColor="#9aa5b1" />
-              </View>
-              <View style={styles.inputRow}>
-                <Text style={styles.inputLabel}>Description</Text>
-                <TextInput placeholder="Description" value={e_desc} onChangeText={setE_desc} style={styles.input} placeholderTextColor="#9aa5b1" />
-              </View>
-              <Text style={styles.sectionTitle}>Rates (%)</Text>
-              <View style={styles.grid3}>
-                <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>Electric %</Text>
-                  <TextInput keyboardType="numeric" value={e_e} onChangeText={setE_e} style={styles.input} placeholderTextColor="#9aa5b1" />
-                </View>
-                <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>Water %</Text>
-                  <TextInput keyboardType="numeric" value={e_w} onChangeText={setE_w} style={styles.input} placeholderTextColor="#9aa5b1" />
-                </View>
-                <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>LPG %</Text>
-                  <TextInput keyboardType="numeric" value={e_l} onChangeText={setE_l} style={styles.input} placeholderTextColor="#9aa5b1" />
-                </View>
-              </View>
-              {editRow?.last_updated ? (
+
                 <Text style={styles.helpText}>
-                  Last updated: {fmtDate(editRow.last_updated)} {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
+                  Leave blank to save as <Text style={{ fontWeight: "700" }}>null</Text>.
                 </Text>
-              ) : null}
-            </ScrollView>
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
-                <Text style={styles.btnGhostTextAlt}>Close</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
-                <Text style={styles.btnText}>{submitting ? "Saving…" : "Save"}</Text>
-              </TouchableOpacity>
+
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
+                  <Text style={styles.btnGhostTextAlt}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
+                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
+                </TouchableOpacity>
+              </View>
+
             </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+          </KeyboardAvoidingView>
+        </Modal>
+      )}
+
+      {/* EDIT MODAL (Admin + Biller) */}
+      {canEdit && (
+        <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>{editRow ? `Edit • ${editRow.wt_code}` : "Edit Withholding Code"}</Text>
+              <View style={styles.modalDivider} />
+
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Code</Text>
+                  <TextInput
+                    placeholder="e.g., WH-01"
+                    value={e_code}
+                    onChangeText={setE_code}
+                    style={styles.input}
+                    placeholderTextColor="#9aa5b1"
+                    editable={canEdit}
+                  />
+                </View>
+
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Description</Text>
+                  <TextInput
+                    placeholder="Description"
+                    value={e_desc}
+                    onChangeText={setE_desc}
+                    style={styles.input}
+                    placeholderTextColor="#9aa5b1"
+                    editable={canEdit}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>Rates (%)</Text>
+
+                <View style={styles.grid3}>
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Electric %</Text>
+                    <TextInput
+                      keyboardType="numeric"
+                      value={e_e}
+                      onChangeText={setE_e}
+                      style={styles.input}
+                      placeholderTextColor="#9aa5b1"
+                      editable={canEdit}
+                    />
+                  </View>
+
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>Water %</Text>
+                    <TextInput
+                      keyboardType="numeric"
+                      value={e_w}
+                      onChangeText={setE_w}
+                      style={styles.input}
+                      placeholderTextColor="#9aa5b1"
+                      editable={canEdit}
+                    />
+                  </View>
+
+                  <View style={styles.inputRow}>
+                    <Text style={styles.inputLabel}>LPG %</Text>
+                    <TextInput
+                      keyboardType="numeric"
+                      value={e_l}
+                      onChangeText={setE_l}
+                      style={styles.input}
+                      placeholderTextColor="#9aa5b1"
+                      editable={canEdit}
+                    />
+                  </View>
+                </View>
+
+                {editRow?.last_updated ? (
+                  <Text style={styles.helpText}>
+                    Last updated: {fmtDate(editRow.last_updated)} {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
+                  </Text>
+                ) : null}
+
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
+                  <Text style={styles.btnGhostTextAlt}>Close</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
+                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Save"}</Text>
+                </TouchableOpacity>
+              </View>
+
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      )}
+
     </View>
   );
 }
+
+
+// ============================================================
+// STYLES
+// ============================================================
+
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,            
-    minHeight: 0,       
-  },
-  grid: {
-    flex: 1,
-    padding: 14,
-    gap: 14,
-    minHeight: 0,
-  },
+  page: { flex: 1, minHeight: 0 },
+  grid: { flex: 1, padding: 14, gap: 14, minHeight: 0 },
   card: {
-    flex: 1,            
+    flex: 1,
     minHeight: 0,
     backgroundColor: "#fff",
     borderRadius: 14,
@@ -419,17 +622,16 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
+
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 10,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
+
+  cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
+
   btn: {
     backgroundColor: "#2563eb",
     paddingVertical: 10,
@@ -438,6 +640,7 @@ const styles = StyleSheet.create({
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
+
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -445,6 +648,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     flexWrap: "wrap",
   },
+
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -455,11 +659,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
+
   search: {
     flex: 1,
     height: 40,
     color: "#0f172a",
   },
+
   btnGhost: {
     flexDirection: "row",
     alignItems: "center",
@@ -470,8 +676,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#cbd5e1",
   },
+
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
+
   loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
+
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -482,18 +691,24 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+
   rowMobile: {
     flexDirection: "column",
     alignItems: "stretch",
   },
+
   rowMain: {
     flex: 1,
     paddingRight: 10,
   },
+
   rowTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
   rowSub: { color: "#64748b", fontWeight: "600" },
+
   rowMeta: { color: "#334155", marginTop: 6 },
+
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
+
   rowActions: {
     width: 200,
     flexDirection: "row",
@@ -501,6 +716,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     gap: 8,
   },
+
   rowActionsMobile: {
     flexDirection: "row",
     gap: 8,
@@ -508,6 +724,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     alignItems: "center",
   },
+
   actionBtn: {
     height: 36,
     paddingHorizontal: 12,
@@ -516,15 +733,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
+
   actionEdit: { backgroundColor: "#e2e8f0" },
   actionDelete: { backgroundColor: "#ef4444" },
+
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
+
   emptyPad: { paddingVertical: 30 },
+
   empty: { alignItems: "center", gap: 6 },
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
+
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
@@ -532,6 +754,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 14,
   },
+
   modalCard: {
     backgroundColor: "#fff",
     borderRadius: 14,
@@ -543,14 +766,18 @@ const styles = StyleSheet.create({
       default: { elevation: 3 },
     }) as any),
   },
+
   modalTitle: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
+
   modalDivider: { height: 1, backgroundColor: "#e2e8f0", marginVertical: 10 },
+
   modalActions: {
     marginTop: 10,
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: 8,
   },
+
   btnGhostAlt: {
     backgroundColor: "#f1f5f9",
     borderWidth: 1,
@@ -559,9 +786,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
   },
+
   btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
+
   inputRow: { marginBottom: 10 },
+
   inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
+
   input: {
     backgroundColor: "#f8fafc",
     borderWidth: 1,
@@ -571,8 +802,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     color: "#0f172a",
   },
+
   sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
+
   helpText: { color: "#94a3b8", fontSize: 12, lineHeight: 16, marginTop: 2 },
+
   grid3: {
     gap: 10,
     ...(Platform.OS === "web"
@@ -584,6 +818,7 @@ const styles = StyleSheet.create({
         } as any)
       : {}),
   },
+
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
@@ -591,6 +826,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 14,
   },
+
   promptCard: {
     backgroundColor: "#fff",
     borderRadius: 14,
@@ -602,12 +838,15 @@ const styles = StyleSheet.create({
       default: { elevation: 3 },
     }) as any),
   },
+
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8 },
+
   chipsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
+
   chip: {
     borderWidth: 1,
     borderColor: "#cbd5e1",
@@ -616,9 +855,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+
   chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
   chipIdle: {},
+
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
+
 });
