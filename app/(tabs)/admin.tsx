@@ -25,6 +25,7 @@ import TenantsPanel from "../../components/admin/TenantsPanel";
 import AssignTenantPanel from "../../components/admin/AssignTenantPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
+import ReaderDevicesPanel from "../../components/admin/ReaderDevicesPanel"; // ✅ NEW
 
 export type PageKey =
   | "accounts"
@@ -35,7 +36,8 @@ export type PageKey =
   | "tenants"
   | "assign"
   | "meters"
-  | "readings";
+  | "readings"
+  | "readerDevices"; // ✅ NEW
 
 type Page = {
   label: string;
@@ -69,6 +71,7 @@ export default function AdminScreen() {
       { label: "Assign", key: "assign", icon: "person-add" },
       { label: "Meters", key: "meters", icon: "speedometer" },
       { label: "Readings", key: "readings", icon: "analytics" },
+      { label: "Reader Devices", key: "readerDevices", icon: "phone-portrait" }, // ✅ NEW
     ],
     []
   );
@@ -101,6 +104,7 @@ export default function AdminScreen() {
         "assign",
         "meters",
         "readings",
+        "readerDevices", // ✅ NEW
       ]),
       operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
       biller: new Set<PageKey>(["buildings", "wt", "vat", "tenants", "readings"]),
@@ -187,11 +191,11 @@ export default function AdminScreen() {
         return (
           <MeterReadingPanel
             token={token}
-            initialMeterId={
-              params?.meterId ? String(params.meterId) : undefined
-            }
+            initialMeterId={params?.meterId ? String(params.meterId) : undefined}
           />
         );
+      case "readerDevices": // ✅ NEW
+        return <ReaderDevicesPanel />;
       default:
         return null;
     }
@@ -225,10 +229,7 @@ export default function AdminScreen() {
       onRequestClose={() => setMenuOpen(false)}
     >
       <View style={styles.modalOverlay}>
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setMenuOpen(false)}
-        />
+        <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)} />
         <View style={styles.drawer}>
           {/* Drawer Header */}
           <View style={styles.drawerHeader}>
@@ -244,10 +245,7 @@ export default function AdminScreen() {
                 <Text style={styles.drawerSub}>Management Console</Text>
               </View>
             </View>
-            <TouchableOpacity
-              onPress={() => setMenuOpen(false)}
-              style={styles.closeBtn}
-            >
+            <TouchableOpacity onPress={() => setMenuOpen(false)} style={styles.closeBtn}>
               <Ionicons name="close" size={22} color="#64748b" />
             </TouchableOpacity>
           </View>
@@ -258,9 +256,7 @@ export default function AdminScreen() {
               <Text style={styles.avatarText}>{initials || "U"}</Text>
             </View>
             <View style={styles.drawerUserInfo}>
-              <Text style={styles.drawerUserName}>
-                {displayName || "User"}
-              </Text>
+              <Text style={styles.drawerUserName}>{displayName || "User"}</Text>
               <View
                 style={[
                   styles.roleBadge,
@@ -280,10 +276,7 @@ export default function AdminScreen() {
           </View>
 
           {/* Nav Items */}
-          <ScrollView
-            style={styles.drawerNav}
-            showsVerticalScrollIndicator={false}
-          >
+          <ScrollView style={styles.drawerNav} showsVerticalScrollIndicator={false}>
             <Text style={styles.drawerLabel}>NAVIGATION</Text>
             {visiblePages.map((page) => {
               const isActive = active === page.key;
@@ -291,10 +284,7 @@ export default function AdminScreen() {
                 <TouchableOpacity
                   key={page.key}
                   onPress={() => handleSelect(page.key)}
-                  style={[
-                    styles.drawerItem,
-                    isActive && styles.drawerItemActive,
-                  ]}
+                  style={[styles.drawerItem, isActive && styles.drawerItemActive]}
                   activeOpacity={0.7}
                 >
                   <View
@@ -307,7 +297,7 @@ export default function AdminScreen() {
                       name={
                         (isActive
                           ? page.icon
-                          : `${page.icon}-outline`) as any
+                          : (`${page.icon}-outline` as any)) as any
                       }
                       size={18}
                       color={isActive ? "#fff" : "#64748b"}
@@ -322,11 +312,7 @@ export default function AdminScreen() {
                     {page.label}
                   </Text>
                   {isActive && (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={18}
-                      color="#6366f1"
-                    />
+                    <Ionicons name="checkmark-circle" size={18} color="#6366f1" />
                   )}
                 </TouchableOpacity>
               );
@@ -340,11 +326,7 @@ export default function AdminScreen() {
               style={styles.drawerLogout}
               activeOpacity={0.7}
             >
-              <Ionicons
-                name="log-out-outline"
-                size={20}
-                color="#ef4444"
-              />
+              <Ionicons name="log-out-outline" size={20} color="#ef4444" />
               <Text style={styles.drawerLogoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -420,11 +402,7 @@ export default function AdminScreen() {
               style={styles.logoutBtn}
               activeOpacity={0.7}
             >
-              <Ionicons
-                name="log-out-outline"
-                size={18}
-                color="#64748b"
-              />
+              <Ionicons name="log-out-outline" size={18} color="#64748b" />
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -433,9 +411,7 @@ export default function AdminScreen() {
         {isMobile && (
           <View style={styles.mobileHeaderRight}>
             <View style={styles.avatarSmall}>
-              <Text style={styles.avatarTextSmall}>
-                {initials || "U"}
-              </Text>
+              <Text style={styles.avatarTextSmall}>{initials || "U"}</Text>
             </View>
           </View>
         )}
@@ -462,7 +438,7 @@ export default function AdminScreen() {
                     name={
                       (isActive
                         ? page.icon
-                        : `${page.icon}-outline`) as any
+                        : (`${page.icon}-outline` as any)) as any
                     }
                     size={16}
                     color={isActive ? "#6366f1" : "#64748b"}

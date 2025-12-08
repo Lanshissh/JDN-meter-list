@@ -25,8 +25,8 @@ import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
+import * as Device from "expo-device";
 
-/* ---------- helpers ---------- */
 const todayStr = () => new Date().toISOString().slice(0, 10);
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert)
@@ -132,7 +132,6 @@ function toDataUrl(val?: string) {
   return `data:image/jpeg;base64,${s}`;
 }
 
-/* ---------- image helpers ---------- */
 const MAX_IMAGE_BYTES = 400 * 1024;
 function base64Bytes(b64: string): number {
   const len = (b64 || "").replace(/[^A-Za-z0-9+/=]/g, "").length;
@@ -200,7 +199,6 @@ async function ensureSizedBase64(input: string, mime = "image/jpeg"): Promise<st
   throw new Error(`Image is still too large (${(base64Bytes(c2)/1024).toFixed(0)} KB). Please choose a smaller image.`);
 }
 
-/* ---------- last two readings + % calc ---------- */
 function ts(d: string) {
   const t = Date.parse(d);
   return Number.isFinite(t) ? t : 0;
@@ -223,7 +221,6 @@ function pctUp(newVal: number, oldVal: number | string | null | undefined): numb
   return (nv - oldN) / oldN;
 }
 
-/* ---------- types ---------- */
 export type Reading = {
   reading_id: string;
   meter_id: string;
@@ -268,51 +265,104 @@ export default function MeterReadingPanel({
   const authHeader = useMemo(() => (headerToken ? { Authorization: headerToken } : {}), [headerToken]);
   const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
 
-  // Load lock headers once auth header changes (root-level)
   useEffect(() => {
     reloadBillingHeaders();
   }, [authHeader]);
 
-  // device
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
-  // connectivity
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   useEffect(() => {
     const sub = NetInfo.addEventListener((s) => setIsConnected(!!s.isConnected));
     NetInfo.fetch().then((s) => setIsConnected(!!s.isConnected));
     return () => sub && sub();
   }, []);
-  const { scans, queueScan, removeScan, approveOne, approveAll, markPending, isConnected: ctxConnected } =
-    useScanHistory();
+  const {
+    scans,
+    queueScan,
+    removeScan,
+    approveOne,
+    approveAll,
+    markPending,
+    isConnected: ctxConnected,
+    deviceToken,
+    registerDevice,
+  } = useScanHistory();
+
   const online = isConnected ?? ctxConnected ?? false;
 
-  // filters + data
+  useEffect(() => {
+    async function ensureDeviceRegistered() {
+      if (!token) return;
+      if (deviceToken) return;
+
+      try {
+        let deviceName = "Unknown Device";
+
+        if (Device.isDevice) {
+          const brand = Device.brand ?? "";
+          const model = Device.modelName ?? "";
+          const combined = `${brand} ${model}`.trim();
+          if (combined) {
+            deviceName = combined;
+          }
+        } else {
+          if (Platform.OS === "web") {
+            deviceName = "Web Browser";
+          } else {
+            deviceName =
+              Platform.OS === "android"
+                ? "Android Emulator"
+                : Platform.OS === "ios"
+                ? "iOS Simulator"
+                : "Unknown Device";
+          }
+        }
+
+        const osName = Device.osName ?? Platform.OS;
+        const osVersion =
+          Device.osVersion ??
+          (typeof Platform.Version === "string"
+            ? Platform.Version
+            : String(Platform.Version ?? ""));
+        const deviceInfo = `${osName} ${osVersion}`.trim();
+
+        await registerDevice(token, deviceName, deviceInfo);
+      } catch (err: any) {
+        if (Platform.OS === "web") {
+          console.error("Device registration failed", err);
+        }
+        notify(
+          "Device registration failed",
+          errorText(
+            err,
+            "This device cannot register for offline export right now."
+          )
+        );
+      }
+    }
+
+    ensureDeviceRegistered();
+  }, [token, deviceToken, registerDevice]);
+
   const [typeFilter, setTypeFilter] = useState<"" | "electric" | "water" | "lpg">("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "id_desc" | "id_asc">("date_desc");
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [meters, setMeters] = useState<Meter[]>([]);
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-
-  // searches
   const [meterQuery, setMeterQuery] = useState("");
   const [query, setQuery] = useState("");
-
-  // selection & modals
   const [selectedMeterId, setSelectedMeterId] = useState<string>(initialMeterId ?? "");
   const [readingsModalVisible, setReadingsModalVisible] = useState(false);
   const PAGE_SIZE = 30;
   const [page, setPage] = useState(1);
   useEffect(() => setPage(1), [selectedMeterId]);
-
   const [createVisible, setCreateVisible] = useState(false);
   const [formMeterId, setFormMeterId] = useState<string>(initialMeterId ?? "");
   const [formValue, setFormValue] = useState("");
@@ -320,9 +370,6 @@ export default function MeterReadingPanel({
   const [formRemarks, setFormRemarks] = useState<string>("");
   const [formImage, setFormImage] = useState<string>("");
 
-  // When coming from scanner with initialMeterId:
-  // - preselect the meter
-  // - auto-open the Create Reading modal
   useEffect(() => {
     if (initialMeterId) {
       setSelectedMeterId(initialMeterId);
@@ -350,21 +397,18 @@ export default function MeterReadingPanel({
 
   const [imgToolVisible, setImgToolVisible] = useState(false);
 
-  // ---------- AUTO-DETECT READING ENDPOINT ----------
   const READING_ENDPOINTS = ["/meter_reading", "/readings", "/meter-readings", "/meterreadings"];
   const [readingBase, setReadingBase] = useState<string>(READING_ENDPOINTS[0]);
-  /* ===== Billing lock detection (optional) ===== */
   type BillingHeader = {
     building_id: string;
     period: { start: string; end: string };
-    // optional status if you later add a locked flag in the DB
     status?: string;
   };
 
   const BILLING_HEADERS_ENDPOINTS = [
     "/billing/headers",
     "/billings/headers",
-    "/billings/buildings", // 👈 your real endpoint
+    "/billings/buildings",
     "/billing",
     "/billings",
   ];
@@ -389,7 +433,6 @@ export default function MeterReadingPanel({
           return p;
         }
       } catch {
-        // ignore and try next
       }
     }
     return null;
@@ -405,11 +448,9 @@ export default function MeterReadingPanel({
 
       let headers: BillingHeader[] = [];
 
-      // Case 1: backend returns an array of headers
       if (Array.isArray(data)) {
         headers = data as BillingHeader[];
       }
-      // Case 2: backend returns grouped object like /billings/buildings
       else if (data && typeof data === "object") {
         headers = Object.values(data as Record<string, any>).map((item) => ({
           building_id: item.building_id,
@@ -426,7 +467,6 @@ export default function MeterReadingPanel({
         }));
       }
 
-      // keep only valid ones
       headers = headers.filter(
         (h) =>
           h &&
@@ -466,10 +506,8 @@ export default function MeterReadingPanel({
     return m ? parseInt(m[1], 10) : 0;
   };
 
-  // load
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
   const loadAll = async () => {
     if (!token) {
@@ -501,7 +539,6 @@ export default function MeterReadingPanel({
         setBuildingFilter((prev) => prev || userBuildingId);
       }
 
-      // 🔒 also fetch stored billings headers for lock detection
       await reloadBillingHeaders();
     } catch (err: any) {
       notify("Load failed", errorText(err, "Please check your connection and permissions."));
@@ -528,7 +565,6 @@ export default function MeterReadingPanel({
     return m;
   }, [stalls]);
 
-  // Helper to map meter → building
   const buildingIdForMeter = (
     meterId: string | null | undefined
   ): string | null => {
@@ -560,7 +596,6 @@ export default function MeterReadingPanel({
   const isLockedHeader = (h: BillingHeader): boolean => {
     const status = (h.status ?? "").toString().toLowerCase();
     if (!status) {
-      // no status column → treat any stored billing as locked
       return true;
     }
     return ["locked", "lock", "closed", "finalized", "1", "true"].includes(
@@ -574,12 +609,10 @@ export default function MeterReadingPanel({
     return billingHeaders.some((h) => h.building_id === buildingId && isBetween(dateYmd, h.period.start, h.period.end));
   };
 
-  // Existing simple flag helper (if you already have one, keep yours)
   const isReadingLocked = (row?: Reading | null): boolean => {
     return getReadingLockInfo(row).locked;
   };
 
-  // NEW: rich lock info (flag + billing header)
   const getReadingLockInfo = (
     row?: Reading | null
   ): { locked: boolean; header?: BillingHeader } => {
@@ -603,13 +636,11 @@ export default function MeterReadingPanel({
     return { locked: !!header, header };
   };
 
-  // numeric sort helper for meter ids
   const mtrNum = (id: string) => {
     const n = (id || "").replace(/\D+/g, "");
     return n ? parseInt(n, 10) : 0;
   };
 
-  // Filtered/sorted meter list used by the picker
   const filteredMeters = useMemo(() => {
     let arr = meters.slice();
 
@@ -690,7 +721,6 @@ export default function MeterReadingPanel({
       (a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id)
     );
   }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
-  /* ---------- CRUD ---------- */
   const onCreate = async () => {
     const b = buildingIdForMeter(formMeterId);
     if (b && isDateLockedFor(b, formDate)) { notify('Locked by billing', 'That date is inside a locked billing period for this building.'); return; }
@@ -843,7 +873,6 @@ export default function MeterReadingPanel({
     }
   };
 
-  // Test function for image endpoint
   const testImageEndpoint = async () => {
     if (!readings.length) {
       notify("No readings available", "Please load some readings first.");
@@ -876,20 +905,25 @@ export default function MeterReadingPanel({
     }
   };
 
-  /* ---------- UI ---------- */
   return (
     <View style={styles.screen}>
-      {/* connectivity banner */}
       <View style={[styles.infoBar, online ? styles.infoOnline : styles.infoOffline]}>
-        <Text style={styles.infoText}>{online ? "Online" : "Offline"}</Text>
+        <View>
+          <Text style={styles.infoText}>{online ? "Online" : "Offline"}</Text>
+          <Text style={styles.infoSubText}>
+            {deviceToken
+              ? `Device token: ${deviceToken.slice(0, 6)}…`
+              : "Device not registered yet"}
+          </Text>
+        </View>
+
         <TouchableOpacity style={styles.historyBtn} onPress={() => setHistoryVisible(true)}>
           <Text style={styles.historyBtnText}>Offline History ({scans.length})</Text>
         </TouchableOpacity>
       </View>
 
-      {/* meters card */}
+
       <View style={styles.card}>
-        {/* header */}
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Meter Readings</Text>
           {canWrite && (
@@ -899,7 +933,6 @@ export default function MeterReadingPanel({
           )}
         </View>
 
-        {/* toolbar: search + Filters */}
         <View style={styles.filtersBar}>
           <View style={[styles.searchWrap, { flex: 1 }]}>
             <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
@@ -916,8 +949,6 @@ export default function MeterReadingPanel({
             <Text style={styles.btnGhostText}>Filters</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Building chips */}
         <View style={{ marginTop: 6, marginBottom: 10 }}>
           <View style={styles.buildingHeaderRow}>
             <Text style={styles.dropdownLabel}>Building</Text>
@@ -947,8 +978,6 @@ export default function MeterReadingPanel({
             </View>
           )}
         </View>
-
-        {/* LIST */}
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
@@ -977,7 +1006,6 @@ export default function MeterReadingPanel({
                   }}
                   style={styles.row}
                 >
-                  {/* LEFT: meter details */}
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={styles.rowTitle}>
                       <Text style={styles.meterLink}>{item.meter_id}</Text> • {item.meter_type.toUpperCase()}{" "}
@@ -988,8 +1016,6 @@ export default function MeterReadingPanel({
                     </Text>
                     <Text style={styles.rowMetaSmall}>Status: {item.meter_status.toUpperCase()}</Text>
                   </View>
-
-                  {/* RIGHT: warning icon */}
                   <View style={styles.rightIconWrap} pointerEvents="none">
                     {warn ? (
                       <Ionicons
@@ -1007,7 +1033,6 @@ export default function MeterReadingPanel({
         )}
       </View>
 
-      {/* FILTERS modal */}
       <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
@@ -1059,7 +1084,6 @@ export default function MeterReadingPanel({
         </View>
       </Modal>
 
-      {/* MOBILE building picker */}
       <Modal visible={buildingPickerVisible} transparent animationType="fade" onRequestClose={() => setBuildingPickerVisible(false)}>
         <View style={styles.overlay}>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ width: "100%" }}>
@@ -1097,7 +1121,6 @@ export default function MeterReadingPanel({
         </View>
       </Modal>
 
-      {/* CREATE modal */}
       <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View
@@ -1261,7 +1284,6 @@ export default function MeterReadingPanel({
         getReadingLockInfoFn={getReadingLockInfo}
       />
 
-      {/* EDIT modal */}
       <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
           <View
@@ -1372,7 +1394,6 @@ export default function MeterReadingPanel({
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* OFFLINE HISTORY */}
       <HistoryModal
         visible={historyVisible}
         onClose={() => setHistoryVisible(false)}
@@ -1384,7 +1405,6 @@ export default function MeterReadingPanel({
         online={online}
       />
 
-      {/* IMAGE ⇄ BASE64 TOOL */}
       <ImageBase64Tool
         visible={imgToolVisible}
         onClose={() => setImgToolVisible(false)}
@@ -1398,7 +1418,6 @@ export default function MeterReadingPanel({
   );
 }
 
-/* ---------- small components ---------- */
 function Chip({ label, active, onPress }: { label: string; active?: boolean; onPress?: () => void }) {
   return (
     <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
@@ -1545,7 +1564,6 @@ function ReadingsModal({
   const start = (safePage - 1) * 30;
   const pageData = readingsForSelected.slice(start, start + 30);
 
-  // ---- Print Proof state ----
   const [printProofVisible, setPrintProofVisible] = useState(false);
   const [printData, setPrintData] = useState<{
     reading: Reading | null;
@@ -1639,8 +1657,6 @@ const handlePrint = () => {
     if (printWindow) {
       const meter = metersById.get(printData.reading?.meter_id || "");
       const meterType = meter?.meter_type || "Unknown";
-
-      // NEW: tenant details coming from updated /meters backend
       const tenantName =
         (meter as any)?.tenant_name ||
         (meter as any)?.tenant ||
@@ -1825,7 +1841,6 @@ const handlePrint = () => {
       return;
     }
 
-    // last reading before range for PRE column
     let lastValue: number | null = null;
     for (const row of allForMeter) {
       const d = new Date(row.lastread_date);
@@ -2188,7 +2203,6 @@ const handlePrint = () => {
             }
           />
 
-          {/* Ledger date range modal */}
           <Modal
             visible={ledgerVisible}
             animationType="fade"
@@ -2228,7 +2242,6 @@ const handlePrint = () => {
             </View>
           </Modal>
 
-          {/* ---- Print Proof Modal ---- */}
           <Modal visible={printProofVisible} transparent animationType="slide" onRequestClose={() => setPrintProofVisible(false)}>
             <View style={styles.modalWrap}>
               <View style={[styles.modalCard, { maxWidth: 800, maxHeight: '90%' }]}>
@@ -2367,7 +2380,6 @@ const handlePrint = () => {
               </View>
             </View>
           </Modal>
-          {/* ---- end Print Proof Modal ---- */}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -2445,7 +2457,6 @@ function HistoryModal({ visible, onClose, scans, approveAll, markPending, approv
   );
 }
 
-/* ---------- Image ⇄ Base64 Tool ---------- */
 function ImageBase64Tool({
   visible,
   onClose,
@@ -2632,19 +2643,13 @@ function ImageBase64Tool({
   );
 }
 
-/* ---------- styles ---------- */
 const styles = StyleSheet.create({
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", alignItems: "center", padding: 16 },
   modalCardWide: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 960, height: "95%" },
-
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-
-  // page + list layout
   pageBar: { marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   pageInfo: { color: "#334e68", fontWeight: "600" },
   pageBtns: { flexDirection: "row", gap: 6, alignItems: "center" },
-
-  // list row
   listRow: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -2661,31 +2666,20 @@ const styles = StyleSheet.create({
   rowTitle: { fontWeight: "700", color: "#0f172a" },
   rowSub: { fontSize: 14, color: "#64748b" },
   rowSubSmall: { fontSize: 12, color: "#94a3b8" },
-
   meterLink: { color: "#2563eb", textDecorationLine: "underline" },
-
   actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#2563eb" },
   actionBtnGhost: { backgroundColor: "#e0ecff" },
   actionBtnDanger: { backgroundColor: "#ef4444" },
   actionBtnText: { fontWeight: "700", color: "#fff" },
   actionBtnGhostText: { color: "#1d4ed8", fontWeight: "700" },
   actionBtnDisabled: { opacity: 0.5, backgroundColor: "#e2e8f0" },
-
-  // page button
   pageBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", backgroundColor: "#fff" },
   pageBtnText: { fontSize: 14, fontWeight: "700", color: "#102a43" },
   pageBtnDisabled: { opacity: 0.5 },
-
-  // input + search bar
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: "#e2e8f0" },
   search: { flex: 1, fontSize: 14, color: "#0b1f33" },
-
   empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
-
-  // loader
   loader: { paddingVertical: 24, alignItems: "center" },
-
-  // chips
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8, alignItems: "center" },
   chip: { borderWidth: 1, borderColor: "#cbd5e1", backgroundColor: "#f8fafc", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
@@ -2694,17 +2688,13 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
-  // page + card
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
-
   infoBar: { padding: 10, borderRadius: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   infoOnline: { backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#10b98155" },
   infoOffline: { backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#f59e0b55" },
   infoText: { fontWeight: "800", color: "#111827" },
   historyBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#082cac" },
   historyBtnText: { color: "#fff", fontWeight: "800" },
-
   card: {
     flex: 1,
     minHeight: 0,
@@ -2717,8 +2707,6 @@ const styles = StyleSheet.create({
   },
   cardHeader: { marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
-
-  // buttons
   btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
@@ -2733,14 +2721,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
-  // toolbar
   filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" },
-
-  // building chips block
   buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-
-  // list rows
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -2753,28 +2735,20 @@ const styles = StyleSheet.create({
   },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
-  // RIGHT warning icon container
   rightIconWrap: {
     width: 28,
     alignItems: "flex-end",
     justifyContent: "center",
   },
-
-  // modal shared
   overlay: { flex: 1, backgroundColor: "rgba(2,6,23,0.45)", justifyContent: "center", alignItems: "center", padding: 16 },
   modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 480, ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" } as any, default: { elevation: 4 } }) as any) },
   modalHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   modalDivider: { height: 1, backgroundColor: "#edf2f7", marginVertical: 8 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
-
-  // small buttons
   smallBtn: { minHeight: 36, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   smallBtnText: { fontSize: 13, fontWeight: "800" },
   ghostBtn: { backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0" },
   ghostBtnText: { color: "#1f2937" },
-
-  // dropdowns / inputs
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
   pickerWrapper: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, overflow: "hidden", backgroundColor: "#fff" },
   picker: { height: 50 },
@@ -2784,8 +2758,6 @@ const styles = StyleSheet.create({
   datePickersRow: { flexDirection: "row", gap: 12 },
   datePickerCol: { flex: 1 },
   input: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#fff", color: "#102a43", marginTop: 6, minWidth: 160 },
-
-  // history
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
   headerActions: { flexDirection: "row", gap: 8 },
 
@@ -2800,12 +2772,8 @@ const styles = StyleSheet.create({
   statusFailed: { backgroundColor: "#fef2f2", color: "#7f1d1d", borderWidth: 1, borderColor: "#ef444455" },
   statusApproved: { backgroundColor: "#ecfdf5", color: "#065f46", borderWidth: 1, borderColor: "#10b98155" },
   statusWarn: { backgroundColor: "#fefce8", color: "#713f12", borderWidth: 1, borderColor: "#facc1555" },
-
-  // links + badges
   badge: { backgroundColor: "#bfbfbfff", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   badgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-
-  // select wrapper used in mobile building picker
   select: {
     borderRadius: 10,
     overflow: "hidden",
@@ -2838,10 +2806,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   smallBtnGhostText: { color: "#1f2937", fontWeight: "800", fontSize: 13 },
-
   helpTxtSmall: { color: "#6b7280", fontSize: 12, marginTop: 4 },
-
-  // 20% guard styles
   warnBox: {
     marginTop: 8,
     padding: 10,
@@ -2860,8 +2825,6 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     marginLeft: 6,
   },
-
-  // prompt styles (for Filters modal)
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -2880,8 +2843,6 @@ const styles = StyleSheet.create({
       default: { elevation: 4 },
     }) as any),
   },
-
-  // Print Proof Styles
   printProofContent: {
     flex: 1,
     gap: 16,
@@ -3008,4 +2969,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#b91c1c",
   },
+  infoSubText: { fontSize: 11, color: "#4b5563", marginTop: 2 },
+
 });
