@@ -5,23 +5,24 @@ import {
   StyleSheet,
   Text,
   View,
+  Alert,
+  Platform,
 } from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 
 import { BASE_API } from "../../constants/api";
 import { useAuth } from "../../contexts/AuthContext";
-import { Card, Button } from "../ui/ProUI";
+import { Card, Button, Input, ModalSheet } from "../ui/ProUI";
 
 type ReaderDevice = {
   device_id: number;
   device_name: string;
+  device_serial?: string | null;
   device_token: string;
   status: "active" | "blocked";
-  user_id?: number;
   device_info?: string | null;
   created_at?: string;
-  last_used_at?: string | null;
 };
 
 export default function ReaderDevicesPanel() {
@@ -33,109 +34,116 @@ export default function ReaderDevicesPanel() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // ---- helpers ----
+  const [createVisible, setCreateVisible] = useState(false);
+  const [cSerial, setCSerial] = useState("");
+  const [cName, setCName] = useState("");
+  const [cInfo, setCInfo] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
   const notify = (title: string, message?: string) => {
-    if (typeof window !== "undefined" && window.alert) {
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
       window.alert(message ? `${title}\n\n${message}` : title);
     } else {
-      console.log(title, message);
+      Alert.alert(title, message);
     }
   };
 
-  const errorText = (err: any, fallback = "Server error.") => {
+  const errorText = (err: any) => {
     const d = err?.response?.data;
     if (typeof d === "string") return d;
-    if (d?.error) return String(d.error);
-    if (d?.message) return String(d.message);
-    if (err?.message) return String(err.message);
-    try {
-      return JSON.stringify(d ?? err);
-    } catch {
-      return fallback;
-    }
+    if (d?.error) return d.error;
+    if (d?.message) return d.message;
+    return err?.message || "Server error.";
   };
 
-  // ---- stable API client ----
-  const authHeader = useMemo(
-    () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token]
-  );
+  // normalize Authorization header (prevents "Bearer Bearer")
+  const headerToken =
+    token && /^Bearer\s/i.test(token.trim())
+      ? token.trim()
+      : token
+      ? `Bearer ${token.trim()}`
+      : "";
 
   const api = useMemo(
     () =>
       axios.create({
         baseURL: BASE_API,
+        headers: headerToken ? { Authorization: headerToken } : {},
         timeout: 15000,
-        headers: authHeader,
       }),
-    [authHeader]
+    [headerToken]
   );
 
   const loadDevices = useCallback(async () => {
-    if (!token || !isAdmin) return;
+    if (!isAdmin) return;
     try {
       setLoading(true);
       setError(null);
-
       const res = await api.get<ReaderDevice[]>("/reader-devices");
       setDevices(res.data || []);
     } catch (err) {
       const msg = errorText(err);
       setError(msg);
-      notify("Failed to load devices", msg);
+      notify("Load failed", msg);
     } finally {
       setLoading(false);
     }
-  }, [api, token, isAdmin]);
+  }, [api, isAdmin]);
 
   useEffect(() => {
-    if (isAdmin) {
-      loadDevices();
+    loadDevices();
+  }, [loadDevices]);
+
+  const createDevice = async () => {
+    const serial = cSerial.trim();
+    if (!serial) {
+      notify("Missing info", "Device serial number is required.");
+      return;
     }
-  }, [isAdmin, loadDevices]);
 
-  const updateStatus = async (
-    device_id: number,
-    status: "active" | "blocked"
-  ) => {
-    if (!token || !isAdmin) return;
     try {
-      setBusyId(device_id);
-      const res = await api.patch<ReaderDevice>(
-        `/reader-devices/${device_id}/status`,
-        { status }
-      );
+      setSubmitting(true);
+      await api.post("/reader-devices", {
+        device_serial: serial,
+        device_name: cName.trim() || `Device ${serial}`,
+        device_info: cInfo.trim() || null,
+      });
 
-      const updated = res.data;
-      setDevices((prev) =>
-        prev.map((d) => (d.device_id === device_id ? updated : d))
-      );
-      notify("Success", `Device is now ${status}.`);
+      setCreateVisible(false);
+      setCSerial("");
+      setCName("");
+      setCInfo("");
+
+      await loadDevices();
+      notify("Success", "Device created (blocked). Activate it when ready.");
     } catch (err) {
-      notify("Failed to update status", errorText(err));
+      notify("Create failed", errorText(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleStatus = async (d: ReaderDevice) => {
+    try {
+      setBusyId(d.device_id);
+      await api.patch(`/reader-devices/${d.device_id}/status`, {
+        status: d.status === "active" ? "blocked" : "active",
+      });
+      await loadDevices();
+    } catch (err) {
+      notify("Update failed", errorText(err));
     } finally {
       setBusyId(null);
     }
   };
 
-  const deleteDevice = async (device_id: number) => {
-    if (!token || !isAdmin) return;
+  const deleteDevice = async (id: number) => {
     try {
-      const ok =
-        typeof window !== "undefined" && window.confirm
-          ? window.confirm(
-              "Are you sure you want to delete this device?\n\nThis cannot be undone."
-            )
-          : true;
-      if (!ok) return;
-
-      setBusyId(device_id);
-      await api.delete(`/reader-devices/${device_id}`);
-
-      setDevices((prev) => prev.filter((d) => d.device_id !== device_id));
-      notify("Deleted", "Device has been removed.");
+      setBusyId(id);
+      await api.delete(`/reader-devices/${id}`);
+      setDevices((prev) => prev.filter((x) => x.device_id !== id));
     } catch (err) {
-      notify("Failed to delete device", errorText(err));
+      notify("Delete failed", errorText(err));
     } finally {
       setBusyId(null);
     }
@@ -145,279 +153,99 @@ export default function ReaderDevicesPanel() {
     return (
       <View style={styles.center}>
         <Ionicons name="lock-closed-outline" size={32} color="#9ca3af" />
-        <Text style={styles.centerTitle}>Admin access only</Text>
-        <Text style={styles.centerText}>
-          Only admin users can manage reader devices.
-        </Text>
+        <Text style={styles.muted}>Admin access only</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.screen}>
-      <Text style={styles.title}>Reader Devices</Text>
-      <Text style={styles.subtitle}>
-        Registered phones for offline meter reading.
-      </Text>
+    <View style={{ gap: 12 }}>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>Reader Devices</Text>
+        <Button onPress={() => setCreateVisible(true)}>+ Add Device</Button>
+      </View>
+
+      {!!error && <Text style={styles.error}>{error}</Text>}
 
       {loading ? (
-        <View style={styles.loader}>
+        <View style={styles.center}>
           <ActivityIndicator />
-        </View>
-      ) : error ? (
-        <View style={styles.center}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Button variant="ghost" onPress={loadDevices}>
-            Retry
-          </Button>
-        </View>
-      ) : devices.length === 0 ? (
-        <View style={styles.center}>
-          <Ionicons name="phone-portrait-outline" size={32} color="#9ca3af" />
-          <Text style={styles.centerTitle}>No reader devices yet</Text>
-          <Text style={styles.centerText}>
-            A device will appear here after a reader logs in on mobile and gets
-            a token.
-          </Text>
         </View>
       ) : (
         <FlatList
           data={devices}
           keyExtractor={(d) => String(d.device_id)}
-          contentContainerStyle={{ paddingVertical: 8 }}
-          renderItem={({ item }) => {
-            const isBusy = busyId === item.device_id;
-            const isActive = item.status === "active";
+          renderItem={({ item }) => (
+            <Card style={{ padding: 12, marginBottom: 10 }}>
+              <Text style={styles.deviceName}>{item.device_name}</Text>
 
-            return (
-              <Card style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    {/* Big line: phone / laptop model */}
-                    <Text style={styles.deviceName}>
-                      {item.device_name || "Unknown device"}
-                    </Text>
+              <Text style={styles.meta}>Serial: {item.device_serial || "—"}</Text>
 
-                    {/* OS / platform info, if available */}
-                    {item.device_info && (
-                      <Text style={styles.deviceMeta}>{item.device_info}</Text>
-                    )}
+              <Text style={styles.meta}>
+                Token: {item.device_token.slice(0, 6)}…{item.device_token.slice(-4)}
+              </Text>
 
-                    {/* Small meta: ID + token info */}
-                    <Text style={styles.deviceMetaSmall}>
-                      ID: {item.device_id} • Token length:{" "}
-                      {(item.device_token || "").length}
-                    </Text>
+              <Text style={styles.meta}>Status: {item.status}</Text>
 
-                    {/* Last used timestamp if present */}
-                    {item.last_used_at && (
-                      <Text style={styles.deviceMetaSmall}>
-                        Last used: {item.last_used_at}
-                      </Text>
-                    )}
-                  </View>
+              <View style={styles.actions}>
+                <Button
+                  disabled={busyId === item.device_id}
+                  onPress={() => toggleStatus(item)}
+                >
+                  {item.status === "active" ? "Block" : "Activate"}
+                </Button>
 
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      isActive ? styles.badgeActive : styles.badgeBlocked,
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.statusDot,
-                        isActive ? styles.dotActive : styles.dotBlocked,
-                      ]}
-                    />
-                    <Text
-                      style={[
-                        styles.statusText,
-                        isActive
-                          ? styles.statusTextActive
-                          : styles.statusTextBlocked,
-                      ]}
-                    >
-                      {isActive ? "Active" : "Blocked"}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.tokenRow}>
-                  <Text style={styles.tokenLabel}>Device Token</Text>
-                  <Text style={styles.tokenText} numberOfLines={1}>
-                    {item.device_token}
-                  </Text>
-                </View>
-
-                <View style={styles.cardFooter}>
-                  <Button
-                    variant={isActive ? "ghost" : "solid"}
-                    onPress={() =>
-                      updateStatus(
-                        item.device_id,
-                        isActive ? "blocked" : "active"
-                      )
-                    }
-                    disabled={isBusy}
-                  >
-                    {isBusy
-                      ? "Working…"
-                      : isActive
-                      ? "Block this device"
-                      : "Activate this device"}
-                  </Button>
-
-                  <View style={{ width: 8 }} />
-
-                  <Button
-                    variant="danger"
-                    onPress={() => deleteDevice(item.device_id)}
-                    disabled={isBusy}
-                  >
-                    {isBusy ? "Working…" : "Delete"}
-                  </Button>
-                </View>
-              </Card>
-            );
-          }}
+                <Button
+                  variant="danger"
+                  disabled={busyId === item.device_id}
+                  onPress={() => deleteDevice(item.device_id)}
+                >
+                  Delete
+                </Button>
+              </View>
+            </Card>
+          )}
         />
       )}
+
+      <ModalSheet
+        visible={createVisible}
+        onClose={() => setCreateVisible(false)}
+        title="Register Device"
+      >
+        <View style={{ gap: 10 }}>
+          <View>
+            <Text style={styles.fieldLabel}>Device Serial Number</Text>
+            <Input value={cSerial} onChangeText={setCSerial} placeholder="e.g. SN-001-XYZ" />
+          </View>
+
+          <View>
+            <Text style={styles.fieldLabel}>Device Name (optional)</Text>
+            <Input value={cName} onChangeText={setCName} placeholder="e.g. Scanner A" />
+          </View>
+
+          <View>
+            <Text style={styles.fieldLabel}>Device Info (optional)</Text>
+            <Input value={cInfo} onChangeText={setCInfo} placeholder="e.g. Zebra TC26" />
+          </View>
+
+          <Button disabled={submitting} onPress={createDevice}>
+            {submitting ? "Saving..." : "Create Device"}
+          </Button>
+        </View>
+      </ModalSheet>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: "#f8fafc",
-    gap: 12,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#64748b",
-    marginBottom: 4,
-  },
-  loader: {
-    flex: 1,
-    paddingVertical: 24,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  center: {
-    flex: 1,
-    padding: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  centerTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginTop: 4,
-  },
-  centerText: {
-    fontSize: 14,
-    color: "#6b7280",
-    textAlign: "center",
-    maxWidth: 320,
-  },
-  errorText: {
-    fontSize: 14,
-    color: "#b91c1c",
-    textAlign: "center",
-  },
-  card: {
-    marginVertical: 6,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: "#ffffff",
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 10,
-  },
-  cardHeaderLeft: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  deviceName: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#0f172a",
-  },
-  deviceMeta: {
-    marginTop: 2,
-    fontSize: 12,
-    color: "#6b7280",
-  },
-  deviceMetaSmall: {
-    marginTop: 2,
-    fontSize: 11,
-    color: "#9ca3af",
-  },
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  badgeActive: {
-    backgroundColor: "#ecfdf5",
-    borderColor: "#22c55e",
-  },
-  badgeBlocked: {
-    backgroundColor: "#fef2f2",
-    borderColor: "#ef4444",
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    marginRight: 6,
-  },
-  dotActive: {
-    backgroundColor: "#16a34a",
-  },
-  dotBlocked: {
-    backgroundColor: "#dc2626",
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  statusTextActive: {
-    color: "#166534",
-  },
-  statusTextBlocked: {
-    color: "#b91c1c",
-  },
-  tokenRow: {
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  tokenLabel: {
-    fontSize: 11,
-    color: "#9ca3af",
-    marginBottom: 2,
-  },
-  tokenText: {
-    fontSize: 13,
-    color: "#111827",
-  },
-  cardFooter: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    marginTop: 4,
-  },
+  center: { padding: 18, alignItems: "center", justifyContent: "center" },
+  muted: { marginTop: 8, color: "#6b7280" },
+  title: { fontSize: 18, fontWeight: "700" },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  error: { color: "#b91c1c" },
+  deviceName: { fontWeight: "700", fontSize: 16, marginBottom: 6 },
+  meta: { color: "#374151", marginBottom: 2 },
+  actions: { flexDirection: "row", gap: 10, marginTop: 10 },
+  fieldLabel: { fontSize: 12, fontWeight: "700", marginBottom: 6, color: "#374151" },
 });

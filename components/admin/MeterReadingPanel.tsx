@@ -4,7 +4,6 @@ import {
   Alert,
   Dimensions,
   FlatList,
-  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,7 +14,6 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
-  Linking,
   Image as RNImage,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -286,65 +284,13 @@ export default function MeterReadingPanel({
     markPending,
     isConnected: ctxConnected,
     deviceToken,
-    registerDevice,
+    setDeviceTokenDirect,
   } = useScanHistory();
 
+
+
   const online = isConnected ?? ctxConnected ?? false;
-
-  useEffect(() => {
-    async function ensureDeviceRegistered() {
-      if (!token) return;
-      if (deviceToken) return;
-
-      try {
-        let deviceName = "Unknown Device";
-
-        if (Device.isDevice) {
-          const brand = Device.brand ?? "";
-          const model = Device.modelName ?? "";
-          const combined = `${brand} ${model}`.trim();
-          if (combined) {
-            deviceName = combined;
-          }
-        } else {
-          if (Platform.OS === "web") {
-            deviceName = "Web Browser";
-          } else {
-            deviceName =
-              Platform.OS === "android"
-                ? "Android Emulator"
-                : Platform.OS === "ios"
-                ? "iOS Simulator"
-                : "Unknown Device";
-          }
-        }
-
-        const osName = Device.osName ?? Platform.OS;
-        const osVersion =
-          Device.osVersion ??
-          (typeof Platform.Version === "string"
-            ? Platform.Version
-            : String(Platform.Version ?? ""));
-        const deviceInfo = `${osName} ${osVersion}`.trim();
-
-        await registerDevice(token, deviceName, deviceInfo);
-      } catch (err: any) {
-        if (Platform.OS === "web") {
-          console.error("Device registration failed", err);
-        }
-        notify(
-          "Device registration failed",
-          errorText(
-            err,
-            "This device cannot register for offline export right now."
-          )
-        );
-      }
-    }
-
-    ensureDeviceRegistered();
-  }, [token, deviceToken, registerDevice]);
-
+  const [pairToken, setPairToken] = useState("");
   const [typeFilter, setTypeFilter] = useState<"" | "electric" | "water" | "lpg">("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "id_desc" | "id_asc">("date_desc");
@@ -913,7 +859,7 @@ export default function MeterReadingPanel({
           <Text style={styles.infoSubText}>
             {deviceToken
               ? `Device token: ${deviceToken.slice(0, 6)}…`
-              : "Device not registered yet"}
+              : "Device not paired yet"}
           </Text>
         </View>
 
@@ -922,6 +868,47 @@ export default function MeterReadingPanel({
         </TouchableOpacity>
       </View>
 
+      {/* ============================= */}
+      {/* Device Token Pairing (ADD HERE) */}
+      {/* ============================= */}
+      <View style={styles.card}>
+        <Text style={{ fontWeight: "800", marginBottom: 6 }}>
+          Device Token
+        </Text>
+
+        <Text style={{ color: "#6b7280", marginBottom: 8 }}>
+          Ask admin for the device token, then paste it here once.
+        </Text>
+
+        <TextInput
+          value={pairToken}
+          onChangeText={setPairToken}
+          placeholder="Paste device token..."
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={styles.input}
+        />
+
+        <TouchableOpacity
+          style={[styles.btn, { marginTop: 10 }]}
+          onPress={async () => {
+            const t = pairToken.trim();
+            if (!t) {
+              notify("Missing token", "Please paste a device token.");
+              return;
+            }
+            await setDeviceTokenDirect(t);
+            setPairToken("");
+            notify("Saved", "Device token paired successfully.");
+          }}
+        >
+          <Text style={styles.btnText}>Save Device Token</Text>
+        </TouchableOpacity>
+
+        <Text style={{ marginTop: 10, fontSize: 12, color: "#4b5563" }}>
+          Current: {deviceToken ? deviceToken : "Not paired"}
+        </Text>
+      </View>
 
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -1403,6 +1390,7 @@ export default function MeterReadingPanel({
         approveOne={(id: string) => approveOne(id, token)}
         removeScan={removeScan}
         online={online}
+        deviceToken={deviceToken}
       />
 
       <ImageBase64Tool
@@ -2386,7 +2374,18 @@ const handlePrint = () => {
   );
 }
 
-function HistoryModal({ visible, onClose, scans, approveAll, markPending, approveOne, removeScan, online }: any) {
+  function HistoryModal({
+    visible,
+    onClose,
+    scans,
+    approveAll,
+    markPending,
+    approveOne,
+    removeScan,
+    online,
+    deviceToken,
+  }: any) {
+    const needsPair = !deviceToken;
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
@@ -2399,18 +2398,28 @@ function HistoryModal({ visible, onClose, scans, approveAll, markPending, approv
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Offline History</Text>
             <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={[styles.actionBtn, scans.length ? null : styles.actionBtnDisabled]}
-                disabled={!scans.length}
-                onPress={approveAll}
-              >
-                <Text style={styles.actionBtnText}>Approve All</Text>
-              </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.actionBtn,
+                scans.length && !needsPair ? null : styles.actionBtnDisabled,
+              ]}
+              disabled={!scans.length || needsPair}
+              onPress={approveAll}
+            >
+              <Text style={styles.actionBtnText}>Approve All</Text>
+            </TouchableOpacity>
               <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={onClose}>
                 <Text style={styles.actionBtnGhostText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
+
+          {needsPair ? (
+            <Text style={styles.pairWarn}>
+              Pair device token first to approve offline readings.
+            </Text>
+          ) : null}
+
           <FlatList
             data={scans}
             keyExtractor={(it) => it.id}
@@ -2441,8 +2450,14 @@ function HistoryModal({ visible, onClose, scans, approveAll, markPending, approv
                   <TouchableOpacity style={[styles.smallBtn, styles.smallBtnGhost]} onPress={() => markPending(item.id)}>
                     <Text style={styles.smallBtnGhostText}>Mark Pending</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.smallBtn]} onPress={() => approveOne(item.id)}>
-                    <Text style={styles.smallBtnText}>{online ? "Approve" : "Queue"}</Text>
+                  <TouchableOpacity
+                    style={[styles.smallBtn, needsPair && styles.smallBtnDisabled]}
+                    disabled={needsPair}
+                    onPress={() => approveOne(item.id)}
+                  >
+                    <Text style={styles.smallBtnText}>
+                      {needsPair ? "Pair Token" : online ? "Approve" : "Queue"}
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.smallBtn, styles.smallBtnDanger]} onPress={() => removeScan(item.id)}>
                     <Text style={styles.smallBtnText}>Delete</Text>
@@ -2970,5 +2985,13 @@ const styles = StyleSheet.create({
     color: "#b91c1c",
   },
   infoSubText: { fontSize: 11, color: "#4b5563", marginTop: 2 },
-
+  pairWarn: {
+    marginTop: 8,
+    marginBottom: 4,
+    color: "#b91c1c",
+    fontSize: 12,
+  },
+  smallBtnDisabled: {
+    opacity: 0.5,
+  },
 });

@@ -24,9 +24,7 @@ export type OfflineScan = {
 type Ctx = {
   scans: OfflineScan[];
   isConnected: boolean | null;
-  queueScan: (
-    s: Omit<OfflineScan, "id" | "createdAt" | "status">
-  ) => Promise<void>;
+  queueScan: (s: Omit<OfflineScan, "id" | "createdAt" | "status">) => Promise<void>;
   removeScan: (id: string) => Promise<void>;
   markPending: (id: string) => Promise<void>;
   markApproved: (id: string) => Promise<void>;
@@ -34,6 +32,11 @@ type Ctx = {
   approveAll: (token: string | null) => Promise<void>;
   reload: () => Promise<void>;
   deviceToken: string | null;
+
+  // ✅ manual pairing (admin provides token)
+  setDeviceTokenDirect: (token: string | null) => Promise<void>;
+
+  // existing self-register (you can keep, but MeterReadingPanel should stop calling it)
   registerDevice: (
     token: string | null,
     deviceName: string,
@@ -99,6 +102,14 @@ export function ScanHistoryProvider({
     }
   }, []);
 
+  // ✅ NEW: allow manual pairing (admin-provided token)
+  const setDeviceTokenDirect: Ctx["setDeviceTokenDirect"] = useCallback(
+    async (token) => {
+      await saveDeviceToken(token);
+    },
+    [saveDeviceToken]
+  );
+
   // queue a new scan
   const queueScan: Ctx["queueScan"] = useCallback(
     async ({ meter_id, reading_value, lastread_date }) => {
@@ -155,7 +166,7 @@ export function ScanHistoryProvider({
     [save, scans]
   );
 
-  // register device and get device_token
+  // register device and get device_token (existing behavior)
   const registerDevice: Ctx["registerDevice"] = useCallback(
     async (token, deviceName, deviceInfo) => {
       if (!token) {
@@ -313,6 +324,7 @@ export function ScanHistoryProvider({
       approveAll,
       reload,
       deviceToken,
+      setDeviceTokenDirect, // ✅ NEW
       registerDevice,
     }),
     [
@@ -326,6 +338,7 @@ export function ScanHistoryProvider({
       approveAll,
       reload,
       deviceToken,
+      setDeviceTokenDirect, // ✅ NEW
       registerDevice,
     ]
   );
