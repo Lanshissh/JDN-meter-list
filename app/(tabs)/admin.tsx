@@ -25,7 +25,10 @@ import TenantsPanel from "../../components/admin/TenantsPanel";
 import AssignTenantPanel from "../../components/admin/AssignTenantPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
-import ReaderDevicesPanel from "../../components/admin/ReaderDevicesPanel"; // ✅ NEW
+import ReaderDevicesPanel from "../../components/admin/ReaderDevicesPanel";
+
+// ✅ NEW: Offline submissions approval UI
+import OfflineSubmissionsPanel from "../../components/admin/OfflineSubmissionsPanel";
 
 export type PageKey =
   | "accounts"
@@ -37,7 +40,8 @@ export type PageKey =
   | "assign"
   | "meters"
   | "readings"
-  | "readerDevices"; // ✅ NEW
+  | "readerDevices"
+  | "offlineSubmissions"; // ✅ NEW
 
 type Page = {
   label: string;
@@ -71,7 +75,11 @@ export default function AdminScreen() {
       { label: "Assign", key: "assign", icon: "person-add" },
       { label: "Meters", key: "meters", icon: "speedometer" },
       { label: "Readings", key: "readings", icon: "analytics" },
-      { label: "Reader Devices", key: "readerDevices", icon: "phone-portrait" }, // ✅ NEW
+
+      { label: "Reader Devices", key: "readerDevices", icon: "phone-portrait" },
+
+      // ✅ NEW: Admin approves offline exports here
+      { label: "Offline Submissions", key: "offlineSubmissions", icon: "cloud-upload" },
     ],
     []
   );
@@ -104,7 +112,8 @@ export default function AdminScreen() {
         "assign",
         "meters",
         "readings",
-        "readerDevices", // ✅ NEW
+        "readerDevices",
+        "offlineSubmissions", // ✅ NEW
       ]),
       operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
       biller: new Set<PageKey>(["buildings", "wt", "vat", "tenants", "readings"]),
@@ -114,10 +123,7 @@ export default function AdminScreen() {
   );
 
   const allowed = roleAllowed[role] ?? roleAllowed.admin;
-  const visiblePages = useMemo(
-    () => pages.filter((p) => allowed.has(p.key)),
-    [pages, allowed]
-  );
+  const visiblePages = useMemo(() => pages.filter((p) => allowed.has(p.key)), [pages, allowed]);
 
   const roleInitial: Record<string, PageKey> = {
     admin: "buildings",
@@ -127,9 +133,7 @@ export default function AdminScreen() {
   };
 
   const resolveInitial = (): PageKey => {
-    const wanted = String(
-      params?.panel || params?.tab || ""
-    ).toLowerCase() as PageKey;
+    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
     if (wanted && allowed.has(wanted)) return wanted;
     return roleInitial[role] ?? "buildings";
   };
@@ -137,9 +141,7 @@ export default function AdminScreen() {
   const [active, setActive] = useState<PageKey>(resolveInitial());
 
   useEffect(() => {
-    const wanted = String(
-      params?.panel || params?.tab || ""
-    ).toLowerCase() as PageKey;
+    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
     const allowedSet = roleAllowed[role] ?? roleAllowed.admin;
 
     if (wanted && allowedSet.has(wanted)) {
@@ -194,8 +196,13 @@ export default function AdminScreen() {
             initialMeterId={params?.meterId ? String(params.meterId) : undefined}
           />
         );
-      case "readerDevices": // ✅ NEW
+      case "readerDevices":
         return <ReaderDevicesPanel />;
+
+      // ✅ NEW: approval screen
+      case "offlineSubmissions":
+        return <OfflineSubmissionsPanel />;
+
       default:
         return null;
     }
@@ -217,8 +224,7 @@ export default function AdminScreen() {
   };
 
   const currentRoleStyle = roleColors[role] || roleColors.admin;
-  const activePageLabel =
-    visiblePages.find((p) => p.key === active)?.label || "Admin";
+  const activePageLabel = visiblePages.find((p) => p.key === active)?.label || "Admin";
 
   // Mobile Menu Drawer
   const MobileMenu = () => (
@@ -235,10 +241,7 @@ export default function AdminScreen() {
           <View style={styles.drawerHeader}>
             <View style={styles.drawerLogoRow}>
               <View style={styles.logoWrap}>
-                <Image
-                  source={require("../../assets/images/jdn.jpg")}
-                  style={styles.logo}
-                />
+                <Image source={require("../../assets/images/jdn.jpg")} style={styles.logo} />
               </View>
               <View>
                 <Text style={styles.drawerTitle}>Admin Portal</Text>
@@ -257,18 +260,8 @@ export default function AdminScreen() {
             </View>
             <View style={styles.drawerUserInfo}>
               <Text style={styles.drawerUserName}>{displayName || "User"}</Text>
-              <View
-                style={[
-                  styles.roleBadge,
-                  { backgroundColor: currentRoleStyle.bg },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.roleText,
-                    { color: currentRoleStyle.text },
-                  ]}
-                >
+              <View style={[styles.roleBadge, { backgroundColor: currentRoleStyle.bg }]}>
+                <Text style={[styles.roleText, { color: currentRoleStyle.text }]}>
                   {role.charAt(0).toUpperCase() + role.slice(1)}
                 </Text>
               </View>
@@ -287,33 +280,17 @@ export default function AdminScreen() {
                   style={[styles.drawerItem, isActive && styles.drawerItemActive]}
                   activeOpacity={0.7}
                 >
-                  <View
-                    style={[
-                      styles.drawerIconWrap,
-                      isActive && styles.drawerIconWrapActive,
-                    ]}
-                  >
+                  <View style={[styles.drawerIconWrap, isActive && styles.drawerIconWrapActive]}>
                     <Ionicons
-                      name={
-                        (isActive
-                          ? page.icon
-                          : (`${page.icon}-outline` as any)) as any
-                      }
+                      name={(isActive ? page.icon : (`${page.icon}-outline` as any)) as any}
                       size={18}
                       color={isActive ? "#fff" : "#64748b"}
                     />
                   </View>
-                  <Text
-                    style={[
-                      styles.drawerItemText,
-                      isActive && styles.drawerItemTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.drawerItemText, isActive && styles.drawerItemTextActive]}>
                     {page.label}
                   </Text>
-                  {isActive && (
-                    <Ionicons name="checkmark-circle" size={18} color="#6366f1" />
-                  )}
+                  {isActive && <Ionicons name="checkmark-circle" size={18} color="#6366f1" />}
                 </TouchableOpacity>
               );
             })}
@@ -321,11 +298,7 @@ export default function AdminScreen() {
 
           {/* Logout */}
           <View style={styles.drawerFooter}>
-            <TouchableOpacity
-              onPress={handleLogout}
-              style={styles.drawerLogout}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity onPress={handleLogout} style={styles.drawerLogout} activeOpacity={0.7}>
               <Ionicons name="log-out-outline" size={20} color="#ef4444" />
               <Text style={styles.drawerLogoutText}>Logout</Text>
             </TouchableOpacity>
@@ -345,10 +318,7 @@ export default function AdminScreen() {
         <View style={styles.headerLeft}>
           {isMobile ? (
             <>
-              <TouchableOpacity
-                onPress={() => setMenuOpen(true)}
-                style={styles.hamburger}
-              >
+              <TouchableOpacity onPress={() => setMenuOpen(true)} style={styles.hamburger}>
                 <Ionicons name="menu" size={24} color="#0f172a" />
               </TouchableOpacity>
               <Text style={styles.mobileTitle}>{activePageLabel}</Text>
@@ -356,10 +326,7 @@ export default function AdminScreen() {
           ) : (
             <>
               <View style={styles.logoWrap}>
-                <Image
-                  source={require("../../assets/images/jdn.jpg")}
-                  style={styles.logo}
-                />
+                <Image source={require("../../assets/images/jdn.jpg")} style={styles.logo} />
               </View>
               <View style={styles.titleWrap}>
                 <Text style={styles.brandTitle}>Admin Portal</Text>
@@ -379,29 +346,15 @@ export default function AdminScreen() {
                 <Text style={styles.userName} numberOfLines={1}>
                   {displayName || "User"}
                 </Text>
-                <View
-                  style={[
-                    styles.roleBadge,
-                    { backgroundColor: currentRoleStyle.bg },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.roleText,
-                      { color: currentRoleStyle.text },
-                    ]}
-                  >
+                <View style={[styles.roleBadge, { backgroundColor: currentRoleStyle.bg }]}>
+                  <Text style={[styles.roleText, { color: currentRoleStyle.text }]}>
                     {role.charAt(0).toUpperCase() + role.slice(1)}
                   </Text>
                 </View>
               </View>
             </View>
             <View style={styles.headerDivider} />
-            <TouchableOpacity
-              onPress={handleLogout}
-              style={styles.logoutBtn}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn} activeOpacity={0.7}>
               <Ionicons name="log-out-outline" size={18} color="#64748b" />
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
@@ -435,20 +388,11 @@ export default function AdminScreen() {
                   activeOpacity={0.7}
                 >
                   <Ionicons
-                    name={
-                      (isActive
-                        ? page.icon
-                        : (`${page.icon}-outline` as any)) as any
-                    }
+                    name={(isActive ? page.icon : (`${page.icon}-outline` as any)) as any}
                     size={16}
                     color={isActive ? "#6366f1" : "#64748b"}
                   />
-                  <Text
-                    style={[
-                      styles.tabText,
-                      isActive && styles.tabTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
                     {page.label}
                   </Text>
                   {isActive && <View style={styles.tabIndicator} />}
@@ -460,9 +404,7 @@ export default function AdminScreen() {
       )}
 
       {/* Content */}
-      <View style={[styles.content, isMobile && styles.contentMobile]}>
-        {renderContent()}
-      </View>
+      <View style={[styles.content, isMobile && styles.contentMobile]}>{renderContent()}</View>
     </SafeAreaView>
   );
 }

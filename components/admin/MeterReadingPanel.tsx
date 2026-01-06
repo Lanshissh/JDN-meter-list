@@ -23,7 +23,7 @@ import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
-import * as Device from "expo-device";
+import * as ImageManipulator from "expo-image-manipulator";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 function notify(title: string, message?: string) {
@@ -197,6 +197,27 @@ async function ensureSizedBase64(input: string, mime = "image/jpeg"): Promise<st
   throw new Error(`Image is still too large (${(base64Bytes(c2)/1024).toFixed(0)} KB). Please choose a smaller image.`);
 }
 
+async function compressNativeImageToBase64(uriOrData: string): Promise<string> {
+  const s = (uriOrData || "").trim();
+  if (!s) return "";
+
+  if (!s.startsWith("file:") && !s.startsWith("content:") && !s.startsWith("ph:")) {
+    return s;
+  }
+
+  const result = await ImageManipulator.manipulateAsync(
+    s,
+    [{ resize: { width: 900 } }],
+    {
+      compress: 0.6,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,
+    }
+  );
+
+  return result.base64 ? result.base64 : "";
+}
+
 function ts(d: string) {
   const t = Date.parse(d);
   return Number.isFinite(t) ? t : 0;
@@ -284,13 +305,10 @@ export default function MeterReadingPanel({
     markPending,
     isConnected: ctxConnected,
     deviceToken,
-    setDeviceTokenDirect,
+    deviceName,
   } = useScanHistory();
 
-
-
   const online = isConnected ?? ctxConnected ?? false;
-  const [pairToken, setPairToken] = useState("");
   const [typeFilter, setTypeFilter] = useState<"" | "electric" | "water" | "lpg">("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "id_desc" | "id_asc">("date_desc");
@@ -700,7 +718,12 @@ export default function MeterReadingPanel({
 
     let imageB64: string;
     try {
-      imageB64 = await ensureSizedBase64(formImage);
+      if (Platform.OS !== "web") {
+        const compressed = await compressNativeImageToBase64(formImage);
+        imageB64 = await ensureSizedBase64(compressed || formImage);
+      } else {
+        imageB64 = await ensureSizedBase64(formImage);
+      }
     } catch (e: any) {
       notify("Image too large", e?.message || "Please choose a smaller image.");
       return;
@@ -710,11 +733,19 @@ export default function MeterReadingPanel({
       meter_id: formMeterId,
       reading_value: valueNum,
       lastread_date: formDate || todayStr(),
-      remarks: formRemarks.trim() || null,
+      remarks: formRemarks.trim() || undefined,
       image: imageB64,
     };
 
     if (!online) {
+      if (!deviceToken) {
+        notify(
+          "Device not registered",
+          "This device cannot save offline readings yet. Ask the admin to register this device serial, then log in again to receive a device token."
+        );
+        return;
+      }
+
       await queueScan(payload);
       setFormValue("");
       setFormDate(todayStr());
@@ -770,7 +801,12 @@ export default function MeterReadingPanel({
     let newImageB64: string | undefined;
     if (editImage.trim()) {
       try {
-        newImageB64 = await ensureSizedBase64(editImage);
+        if (Platform.OS !== "web") {
+          const compressed = await compressNativeImageToBase64(editImage);
+          newImageB64 = await ensureSizedBase64(compressed || editImage);
+        } else {
+          newImageB64 = await ensureSizedBase64(editImage);
+        }
       } catch (e: any) {
         notify("Image too large", e?.message || "Please choose a smaller image.");
         return;
@@ -857,57 +893,13 @@ export default function MeterReadingPanel({
         <View>
           <Text style={styles.infoText}>{online ? "Online" : "Offline"}</Text>
           <Text style={styles.infoSubText}>
-            {deviceToken
-              ? `Device token: ${deviceToken.slice(0, 6)}…`
-              : "Device not paired yet"}
+            {deviceToken ? `Device token: OK${deviceName ? ` • ${deviceName}` : ""}` : "Device token: NOT REGISTERED"}
           </Text>
         </View>
 
         <TouchableOpacity style={styles.historyBtn} onPress={() => setHistoryVisible(true)}>
           <Text style={styles.historyBtnText}>Offline History ({scans.length})</Text>
         </TouchableOpacity>
-      </View>
-
-      {/* ============================= */}
-      {/* Device Token Pairing (ADD HERE) */}
-      {/* ============================= */}
-      <View style={styles.card}>
-        <Text style={{ fontWeight: "800", marginBottom: 6 }}>
-          Device Token
-        </Text>
-
-        <Text style={{ color: "#6b7280", marginBottom: 8 }}>
-          Ask admin for the device token, then paste it here once.
-        </Text>
-
-        <TextInput
-          value={pairToken}
-          onChangeText={setPairToken}
-          placeholder="Paste device token..."
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.input}
-        />
-
-        <TouchableOpacity
-          style={[styles.btn, { marginTop: 10 }]}
-          onPress={async () => {
-            const t = pairToken.trim();
-            if (!t) {
-              notify("Missing token", "Please paste a device token.");
-              return;
-            }
-            await setDeviceTokenDirect(t);
-            setPairToken("");
-            notify("Saved", "Device token paired successfully.");
-          }}
-        >
-          <Text style={styles.btnText}>Save Device Token</Text>
-        </TouchableOpacity>
-
-        <Text style={{ marginTop: 10, fontSize: 12, color: "#4b5563" }}>
-          Current: {deviceToken ? deviceToken : "Not paired"}
-        </Text>
       </View>
 
       <View style={styles.card}>
@@ -1390,7 +1382,6 @@ export default function MeterReadingPanel({
         approveOne={(id: string) => approveOne(id, token)}
         removeScan={removeScan}
         online={online}
-        deviceToken={deviceToken}
       />
 
       <ImageBase64Tool
@@ -2374,18 +2365,16 @@ const handlePrint = () => {
   );
 }
 
-  function HistoryModal({
-    visible,
-    onClose,
-    scans,
-    approveAll,
-    markPending,
-    approveOne,
-    removeScan,
-    online,
-    deviceToken,
-  }: any) {
-    const needsPair = !deviceToken;
+function HistoryModal({
+  visible,
+  onClose,
+  scans,
+  approveAll,
+  markPending,
+  approveOne,
+  removeScan,
+  online,
+}: any) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
@@ -2395,31 +2384,29 @@ const handlePrint = () => {
             Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.9) },
           ]}
         >
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Offline History</Text>
-            <View style={styles.headerActions}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Offline History</Text>
+
+          <View style={styles.headerActions}>
             <TouchableOpacity
               style={[
                 styles.actionBtn,
-                scans.length && !needsPair ? null : styles.actionBtnDisabled,
+                scans.length ? null : styles.actionBtnDisabled,
               ]}
-              disabled={!scans.length || needsPair}
+              disabled={!scans.length}
               onPress={approveAll}
             >
               <Text style={styles.actionBtnText}>Approve All</Text>
             </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={onClose}>
-                <Text style={styles.actionBtnGhostText}>Close</Text>
-              </TouchableOpacity>
-            </View>
+
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.actionBtnGhost]}
+              onPress={onClose}
+            >
+              <Text style={styles.actionBtnGhostText}>Close</Text>
+            </TouchableOpacity>
           </View>
-
-          {needsPair ? (
-            <Text style={styles.pairWarn}>
-              Pair device token first to approve offline readings.
-            </Text>
-          ) : null}
-
+        </View>
           <FlatList
             data={scans}
             keyExtractor={(it) => it.id}
@@ -2447,19 +2434,23 @@ const handlePrint = () => {
                   </View>
                 </View>
                 <View style={styles.rowRight}>
-                  <TouchableOpacity style={[styles.smallBtn, styles.smallBtnGhost]} onPress={() => markPending(item.id)}>
+                  <TouchableOpacity
+                    style={[styles.smallBtn, styles.smallBtnGhost]}
+                    onPress={() => markPending(item.id)}
+                  >
                     <Text style={styles.smallBtnGhostText}>Mark Pending</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.smallBtn, needsPair && styles.smallBtnDisabled]}
-                    disabled={needsPair}
-                    onPress={() => approveOne(item.id)}
-                  >
-                    <Text style={styles.smallBtnText}>
-                      {needsPair ? "Pair Token" : online ? "Approve" : "Queue"}
+
+                  <TouchableOpacity style={[styles.smallBtn, styles.smallBtnGhost]} onPress={() => approveOne(item.id)}>
+                    <Text style={styles.smallBtnGhostText}>
+                      {online ? "Approve" : "Queue"}
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.smallBtn, styles.smallBtnDanger]} onPress={() => removeScan(item.id)}>
+
+                  <TouchableOpacity
+                    style={[styles.smallBtn, styles.smallBtnDanger]}
+                    onPress={() => removeScan(item.id)}
+                  >
                     <Text style={styles.smallBtnText}>Delete</Text>
                   </TouchableOpacity>
                 </View>

@@ -12,64 +12,91 @@ import React, {
 import { BASE_API } from "../constants/api";
 
 export type OfflineScan = {
-  id: string; // local id
+  id: string;
   meter_id: string;
   reading_value: number;
-  lastread_date: string; // YYYY-MM-DD
-  createdAt: string; // ISO when queued
+  lastread_date: string;
+  createdAt: string;
   status: "pending" | "approved" | "failed";
   error?: string;
+  remarks?: string;
+
+  // ✅ Added: support storing compressed image base64 (hybrid offline)
+  image?: string;
+};
+
+type ResolveDeviceResult = {
+  device_id: number;
+  device_serial: string;
+  device_name: string;
+  device_token: string;
+  status: "active" | "blocked";
+};
+
+type OfflineImportResult = {
+  device: { device_id: number; device_name: string; device_serial: string };
+  data: { meters: any[]; tenants: any[]; stalls: any[] };
+  generated_at: string;
 };
 
 type Ctx = {
   scans: OfflineScan[];
   isConnected: boolean | null;
+
+  // ✅ Updated: include image in queue payload type support
   queueScan: (s: Omit<OfflineScan, "id" | "createdAt" | "status">) => Promise<void>;
   removeScan: (id: string) => Promise<void>;
   markPending: (id: string) => Promise<void>;
   markApproved: (id: string) => Promise<void>;
+
   approveOne: (id: string, token: string | null) => Promise<void>;
   approveAll: (token: string | null) => Promise<void>;
   reload: () => Promise<void>;
+
   deviceToken: string | null;
+  deviceName: string | null;
 
-  // ✅ manual pairing (admin provides token)
-  setDeviceTokenDirect: (token: string | null) => Promise<void>;
+  clearDevice: () => Promise<void>;
 
-  // existing self-register (you can keep, but MeterReadingPanel should stop calling it)
-  registerDevice: (
-    token: string | null,
-    deviceName: string,
+  // resolve device token by serial (after login)
+  resolveDevice: (
+    authToken: string | null,
+    deviceSerial: string,
     deviceInfo?: string
-  ) => Promise<{ device_token: string; status: string }>;
+  ) => Promise<ResolveDeviceResult>;
+
+  // import offline dataset (token gated)
+  importOfflineData: (authToken: string | null) => Promise<OfflineImportResult>;
+
+  // export offline readings to staging (token gated)
+  exportOfflineReadings: (
+    authToken: string | null,
+    readings?: OfflineScan[]
+  ) => Promise<{ submission_id?: number; received: number }>;
 };
 
 const ScanHistoryContext = createContext<Ctx | null>(null);
 
 const STORAGE_KEY = "offline_scans_v1";
 const DEVICE_TOKEN_KEY = "offline_device_token_v1";
+const DEVICE_NAME_KEY = "offline_device_name_v1";
 
-export function ScanHistoryProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export function ScanHistoryProvider({ children }: { children: React.ReactNode }) {
   const [scans, setScans] = useState<OfflineScan[]>([]);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
+
   const [deviceToken, setDeviceToken] = useState<string | null>(null);
+  const [deviceName, setDeviceName] = useState<string | null>(null);
 
   // network status
   useEffect(() => {
-    const sub = NetInfo.addEventListener((state) =>
-      setIsConnected(!!state.isConnected)
-    );
+    const sub = NetInfo.addEventListener((state) => setIsConnected(!!state.isConnected));
     NetInfo.fetch().then((s) => setIsConnected(!!s.isConnected));
     return () => {
       if (sub) sub();
     };
   }, []);
 
-  // load scans
   const reload = useCallback(async () => {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     setScans(raw ? (JSON.parse(raw) as OfflineScan[]) : []);
@@ -79,40 +106,38 @@ export function ScanHistoryProvider({
     reload();
   }, [reload]);
 
-  // save scans helper
   const save = useCallback(async (items: OfflineScan[]) => {
     setScans(items);
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, []);
 
-  // load device token on startup
+  // load token + name on startup
   useEffect(() => {
     (async () => {
-      const stored = await AsyncStorage.getItem(DEVICE_TOKEN_KEY);
-      if (stored) setDeviceToken(stored);
+      const t = await AsyncStorage.getItem(DEVICE_TOKEN_KEY);
+      const n = await AsyncStorage.getItem(DEVICE_NAME_KEY);
+      if (t) setDeviceToken(t);
+      if (n) setDeviceName(n);
     })();
   }, []);
 
-  const saveDeviceToken = useCallback(async (token: string | null) => {
+  const saveDevice = useCallback(async (token: string | null, name: string | null) => {
     setDeviceToken(token);
-    if (token) {
-      await AsyncStorage.setItem(DEVICE_TOKEN_KEY, token);
-    } else {
-      await AsyncStorage.removeItem(DEVICE_TOKEN_KEY);
-    }
+    setDeviceName(name);
+
+    if (token) await AsyncStorage.setItem(DEVICE_TOKEN_KEY, token);
+    else await AsyncStorage.removeItem(DEVICE_TOKEN_KEY);
+
+    if (name) await AsyncStorage.setItem(DEVICE_NAME_KEY, name);
+    else await AsyncStorage.removeItem(DEVICE_NAME_KEY);
   }, []);
 
-  // ✅ NEW: allow manual pairing (admin-provided token)
-  const setDeviceTokenDirect: Ctx["setDeviceTokenDirect"] = useCallback(
-    async (token) => {
-      await saveDeviceToken(token);
-    },
-    [saveDeviceToken]
-  );
+  const clearDevice = useCallback(async () => {
+    await saveDevice(null, null);
+  }, [saveDevice]);
 
-  // queue a new scan
   const queueScan: Ctx["queueScan"] = useCallback(
-    async ({ meter_id, reading_value, lastread_date }) => {
+    async ({ meter_id, reading_value, lastread_date, remarks, image }) => {
       const item: OfflineScan = {
         id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         meter_id,
@@ -120,6 +145,8 @@ export function ScanHistoryProvider({
         lastread_date,
         createdAt: new Date().toISOString(),
         status: "pending",
+        remarks,
+        image, // ✅ store compressed base64 (or empty string)
       };
       await save([item, ...scans]);
     },
@@ -128,7 +155,7 @@ export function ScanHistoryProvider({
 
   const removeScan: Ctx["removeScan"] = useCallback(
     async (id) => {
-      const updated: OfflineScan[] = scans.filter((s) => s.id !== id);
+      const updated = scans.filter((s) => s.id !== id);
       await save(updated);
     },
     [save, scans]
@@ -136,14 +163,8 @@ export function ScanHistoryProvider({
 
   const markPending: Ctx["markPending"] = useCallback(
     async (id) => {
-      const updated: OfflineScan[] = scans.map((s) =>
-        s.id === id
-          ? ({
-              ...s,
-              status: "pending" as const,
-              error: undefined,
-            } as OfflineScan)
-          : s
+      const updated = scans.map((s) =>
+        s.id === id ? { ...s, status: "pending" as const, error: undefined } : s
       );
       await save(updated);
     },
@@ -152,85 +173,107 @@ export function ScanHistoryProvider({
 
   const markApproved: Ctx["markApproved"] = useCallback(
     async (id) => {
-      const updated: OfflineScan[] = scans.map((s) =>
-        s.id === id
-          ? ({
-              ...s,
-              status: "approved" as const,
-              error: undefined,
-            } as OfflineScan)
-          : s
+      const updated = scans.map((s) =>
+        s.id === id ? { ...s, status: "approved" as const, error: undefined } : s
       );
       await save(updated);
     },
     [save, scans]
   );
 
-  // register device and get device_token (existing behavior)
-  const registerDevice: Ctx["registerDevice"] = useCallback(
-    async (token, deviceName, deviceInfo) => {
-      if (!token) {
-        throw new Error("Missing auth token");
-      }
+  const makeApi = (authToken: string) =>
+    axios.create({
+      baseURL: BASE_API,
+      timeout: 20000,
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
 
-      const api = axios.create({
-        baseURL: BASE_API,
-        timeout: 15000,
-        headers: { Authorization: `Bearer ${token}` },
-      });
+  // resolve device by serial (reader after login)
+  const resolveDevice: Ctx["resolveDevice"] = useCallback(
+    async (authToken, deviceSerial, deviceInfo) => {
+      if (!authToken) throw new Error("Missing auth token");
+      const api = makeApi(authToken);
 
-      const res = await api.post("/reader-devices/register", {
-        device_name: deviceName,
+      const res = await api.post<ResolveDeviceResult>("/reader-devices/resolve", {
+        device_serial: deviceSerial,
         device_info: deviceInfo,
       });
 
-      const newToken: string | undefined = res?.data?.device_token;
-      if (newToken) {
-        await saveDeviceToken(newToken);
-      }
+      const dt = res.data?.device_token || null;
+      const dn = res.data?.device_name || null;
+
+      await saveDevice(dt, dn);
+      return res.data;
+    },
+    [saveDevice]
+  );
+
+  // ✅ UPDATED: import offline dataset (token gated) -> offlineExport prefix
+  const importOfflineData: Ctx["importOfflineData"] = useCallback(
+    async (authToken) => {
+      if (!authToken) throw new Error("Missing auth token");
+      if (!deviceToken) throw new Error("Device not registered. Ask admin to register serial.");
+
+      const api = makeApi(authToken);
+
+      // IMPORTANT: your API prefix is /offlineExport
+      const res = await api.post<OfflineImportResult>("/offlineExport/import", {
+        device_token: deviceToken,
+      });
 
       return res.data;
     },
-    [saveDeviceToken]
+    [deviceToken]
   );
 
-  // export a single scan
+  // ✅ UPDATED: export offline readings to staging -> offlineExport prefix
+  const exportOfflineReadings: Ctx["exportOfflineReadings"] = useCallback(
+    async (authToken, readingsOpt) => {
+      const readings =
+        readingsOpt ??
+        scans.filter((x) => x.status === "pending" || x.status === "failed");
+
+      if (!readings.length) return { received: 0 };
+
+      if (!authToken) throw new Error("Missing auth token");
+      if (!deviceToken) throw new Error("Device not registered for offline sync.");
+
+      const api = makeApi(authToken);
+
+      // IMPORTANT: your API prefix is /offlineExport
+      const res = await api.post("/offlineExport/export", {
+        device_token: deviceToken,
+        readings: readings.map((s) => ({
+          meter_id: s.meter_id,
+          reading_value: s.reading_value,
+          lastread_date: s.lastread_date,
+          remarks: s.remarks,
+          image: s.image, // ✅ keep in payload_json for audit if you want
+        })),
+      });
+
+      // mark exported ones as approved locally (server accepted)
+      const updated = scans.map((s) =>
+        readings.some((p) => p.id === s.id)
+          ? ({ ...s, status: "approved" as const, error: undefined } as OfflineScan)
+          : s
+      );
+
+      await save(updated);
+
+      return { submission_id: res?.data?.submission_id, received: readings.length };
+    },
+    [scans, deviceToken, save]
+  );
+
+  // approveOne/approveAll call exportOfflineReadings with 1 or many.
   const approveOne: Ctx["approveOne"] = useCallback(
     async (id, token) => {
       const target = scans.find((s) => s.id === id);
       if (!target) return;
 
-      if (!token) throw new Error("Missing auth token");
-      if (!deviceToken) throw new Error("Device not registered for offline sync.");
-
       try {
-        const api = axios.create({
-          baseURL: BASE_API,
-          timeout: 15000,
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        await api.post("/offline/export", {
-          device_token: deviceToken,
-          readings: [
-            {
-              meter_id: target.meter_id,
-              reading_value: target.reading_value,
-              lastread_date: target.lastread_date,
-            },
-          ],
-        });
-
-        const updated: OfflineScan[] = scans.map((s) =>
-          s.id === id
-            ? ({
-                ...s,
-                status: "approved" as const,
-                error: undefined,
-              } as OfflineScan)
-            : s
-        );
-        await save(updated);
+        await exportOfflineReadings(token, [target]);
       } catch (e: any) {
         const errMsg =
           e?.response?.data?.error ||
@@ -238,58 +281,19 @@ export function ScanHistoryProvider({
           e?.message ||
           String(e);
 
-        const updated: OfflineScan[] = scans.map((s) =>
-          s.id === id
-            ? ({
-                ...s,
-                status: "failed" as const,
-                error: errMsg,
-              } as OfflineScan)
-            : s
+        const updated = scans.map((s) =>
+          s.id === id ? ({ ...s, status: "failed" as const, error: errMsg } as OfflineScan) : s
         );
         await save(updated);
       }
     },
-    [scans, deviceToken, save]
+    [exportOfflineReadings, scans, save]
   );
 
-  // export all pending/failed scans
   const approveAll: Ctx["approveAll"] = useCallback(
     async (token) => {
-      const pending = scans.filter(
-        (x) => x.status === "pending" || x.status === "failed"
-      );
-      if (!pending.length) return;
-
-      if (!token) throw new Error("Missing auth token");
-      if (!deviceToken) throw new Error("Device not registered for offline sync.");
-
       try {
-        const api = axios.create({
-          baseURL: BASE_API,
-          timeout: 15000,
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        await api.post("/offline/export", {
-          device_token: deviceToken,
-          readings: pending.map((s) => ({
-            meter_id: s.meter_id,
-            reading_value: s.reading_value,
-            lastread_date: s.lastread_date,
-          })),
-        });
-
-        const updated: OfflineScan[] = scans.map((s) =>
-          pending.some((p) => p.id === s.id)
-            ? ({
-                ...s,
-                status: "approved" as const,
-                error: undefined,
-              } as OfflineScan)
-            : s
-        );
-        await save(updated);
+        await exportOfflineReadings(token);
       } catch (e: any) {
         const errMsg =
           e?.response?.data?.error ||
@@ -297,19 +301,16 @@ export function ScanHistoryProvider({
           e?.message ||
           String(e);
 
-        const updated: OfflineScan[] = scans.map((s) =>
+        const pending = scans.filter((x) => x.status === "pending" || x.status === "failed");
+        const updated = scans.map((s) =>
           pending.some((p) => p.id === s.id)
-            ? ({
-                ...s,
-                status: "failed" as const,
-                error: errMsg,
-              } as OfflineScan)
+            ? ({ ...s, status: "failed" as const, error: errMsg } as OfflineScan)
             : s
         );
         await save(updated);
       }
     },
-    [scans, deviceToken, save]
+    [exportOfflineReadings, scans, save]
   );
 
   const value: Ctx = useMemo(
@@ -324,8 +325,11 @@ export function ScanHistoryProvider({
       approveAll,
       reload,
       deviceToken,
-      setDeviceTokenDirect, // ✅ NEW
-      registerDevice,
+      deviceName,
+      clearDevice,
+      resolveDevice,
+      importOfflineData,
+      exportOfflineReadings,
     }),
     [
       scans,
@@ -338,21 +342,19 @@ export function ScanHistoryProvider({
       approveAll,
       reload,
       deviceToken,
-      setDeviceTokenDirect, // ✅ NEW
-      registerDevice,
+      deviceName,
+      clearDevice,
+      resolveDevice,
+      importOfflineData,
+      exportOfflineReadings,
     ]
   );
 
-  return (
-    <ScanHistoryContext.Provider value={value}>
-      {children}
-    </ScanHistoryContext.Provider>
-  );
+  return <ScanHistoryContext.Provider value={value}>{children}</ScanHistoryContext.Provider>;
 }
 
 export function useScanHistory() {
   const ctx = useContext(ScanHistoryContext);
-  if (!ctx)
-    throw new Error("useScanHistory must be used inside <ScanHistoryProvider>");
+  if (!ctx) throw new Error("useScanHistory must be used inside <ScanHistoryProvider>");
   return ctx;
 }
