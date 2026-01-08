@@ -35,39 +35,19 @@ export default function ReaderDevicesPanel() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // create form
   const [serial, setSerial] = useState("");
   const [name, setName] = useState("");
   const [info, setInfo] = useState("");
-
-  // search/filter
   const [query, setQuery] = useState("");
 
-  const notify = (title: string, message?: string) => {
-    if (typeof window !== "undefined" && window.alert) {
-      window.alert(message ? `${title}\n\n${message}` : title);
-    } else {
-      console.log(title, message);
-    }
-  };
-
-  const errorText = (err: any, fallback = "Server error.") => {
-    const d = err?.response?.data;
-    if (typeof d === "string") return d;
-    if (d?.error) return String(d.error);
-    if (d?.message) return String(d.message);
-    if (err?.message) return String(err.message);
-    try {
-      return JSON.stringify(d ?? err);
-    } catch {
-      return fallback;
-    }
-  };
-
-  const authHeader = useMemo(
-    () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token]
-  );
+  /* ✅ FIX: normalize token (no "Bearer Bearer") */
+  const authHeader = useMemo(() => {
+    const raw = String(token || "").trim();
+    if (!raw) return {};
+    return {
+      Authorization: /^Bearer\s/i.test(raw) ? raw : `Bearer ${raw}`,
+    };
+  }, [token]);
 
   const api = useMemo(
     () =>
@@ -84,12 +64,21 @@ export default function ReaderDevicesPanel() {
     try {
       setLoading(true);
       setError(null);
-      const res = await api.get<ReaderDevice[]>("/reader-devices");
-      setDevices(res.data || []);
-    } catch (err) {
-      const msg = errorText(err);
-      setError(msg);
-      notify("Failed to load devices", msg);
+
+      const res = await api.get("/reader-devices", {
+        validateStatus: () => true,
+      });
+
+      if (res.status !== 200 || !Array.isArray(res.data)) {
+        setError(`Failed to load devices (${res.status})`);
+        setDevices([]);
+        return;
+      }
+
+      setDevices(res.data);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load devices");
+      setDevices([]);
     } finally {
       setLoading(false);
     }
@@ -100,291 +89,145 @@ export default function ReaderDevicesPanel() {
   }, [isAdmin, loadDevices]);
 
   const createDevice = async () => {
-    if (!token || !isAdmin) return;
-    const s = serial.trim();
-    const n = name.trim();
-    if (!s || !n) {
-      notify("Missing fields", "device_serial and device_name are required.");
-      return;
-    }
+    if (!serial.trim() || !name.trim()) return;
 
     try {
       setLoading(true);
-      const res = await api.post<ReaderDevice>("/reader-devices", {
-        device_serial: s,
-        device_name: n,
+      await api.post("/reader-devices", {
+        device_serial: serial.trim(),
+        device_name: name.trim(),
         device_info: info.trim() || null,
       });
 
       setSerial("");
       setName("");
       setInfo("");
-      setDevices((prev) => [res.data, ...prev]);
-      notify("Registered", "Device serial is now registered and token generated.");
-    } catch (err) {
-      notify("Failed to register device", errorText(err));
+      await loadDevices();
     } finally {
       setLoading(false);
     }
   };
 
-  const updateStatus = async (device_id: number, status: "active" | "blocked") => {
-    if (!token || !isAdmin) return;
-    try {
-      setBusyId(device_id);
-      const res = await api.patch<ReaderDevice>(
-        `/reader-devices/${device_id}/status`,
-        { status }
-      );
-      const updated = res.data;
-      setDevices((prev) => prev.map((d) => (d.device_id === device_id ? updated : d)));
-      notify("Success", `Device is now ${status}.`);
-    } catch (err) {
-      notify("Failed to update status", errorText(err));
-    } finally {
-      setBusyId(null);
-    }
+  const updateStatus = async (id: number, status: "active" | "blocked") => {
+    setBusyId(id);
+    await api.patch(`/reader-devices/${id}/status`, { status });
+    setBusyId(null);
+    await loadDevices();
   };
 
-  const deleteDevice = async (device_id: number) => {
-    if (!token || !isAdmin) return;
-    try {
-      const ok =
-        typeof window !== "undefined" && window.confirm
-          ? window.confirm("Delete this device?\n\nThis cannot be undone.")
-          : true;
-      if (!ok) return;
-
-      setBusyId(device_id);
-      await api.delete(`/reader-devices/${device_id}`);
-      setDevices((prev) => prev.filter((d) => d.device_id !== device_id));
-      notify("Deleted", "Device has been removed.");
-    } catch (err) {
-      notify("Failed to delete device", errorText(err));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const copyToken = async (device_token: string) => {
-    try {
-      // Web copy support
-      if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard) {
-        await navigator.clipboard.writeText(device_token);
-        notify("Copied", "Device token copied to clipboard.");
-        return;
-      }
-
-      // Native fallback (no dependency added)
-      notify(
-        "Copy token",
-        "On mobile: tap and hold the token text to copy (or add expo-clipboard if you want one-tap copy)."
-      );
-    } catch (err) {
-      notify("Copy failed", errorText(err, "Unable to copy token."));
-    }
+  const deleteDevice = async (id: number) => {
+    setBusyId(id);
+    await api.delete(`/reader-devices/${id}`);
+    setBusyId(null);
+    await loadDevices();
   };
 
   const filteredDevices = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return devices;
-
-    return devices.filter((d) => {
-      const hay = [
-        d.device_name,
-        d.device_serial,
-        d.device_token,
-        d.device_info ?? "",
-        d.status,
-        String(d.device_id),
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return hay.includes(q);
-    });
+    const q = query.toLowerCase();
+    return devices.filter((d) =>
+      `${d.device_name} ${d.device_serial} ${d.device_token} ${d.status}`
+        .toLowerCase()
+        .includes(q)
+    );
   }, [devices, query]);
 
   if (!isAdmin) {
     return (
       <View style={styles.center}>
         <Ionicons name="lock-closed-outline" size={32} color="#9ca3af" />
-        <Text style={styles.centerTitle}>Admin access only</Text>
-        <Text style={styles.centerText}>Only admin users can manage reader devices.</Text>
+        <Text>Admin only</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.screen}>
+      {/* Header */}
       <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Reader Devices</Text>
-          <Text style={styles.subtitle}>Register device serials and manage tokens.</Text>
-        </View>
-
-        <Button variant="ghost" onPress={loadDevices} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
+        <Text style={styles.title}>Reader Devices</Text>
+        <Button variant="ghost" onPress={loadDevices}>
+          Refresh
         </Button>
       </View>
 
-      <Card style={styles.createCard}>
-        <Text style={styles.sectionTitle}>Register Device (Admin)</Text>
+      {/* Register */}
+      <Card style={styles.card}>
+        <Text style={styles.sectionTitle}>Register Device</Text>
 
-        <Text style={styles.label}>Device Serial</Text>
         <TextInput
+          style={styles.input}
+          placeholder="Device Serial"
           value={serial}
           onChangeText={setSerial}
-          placeholder="e.g. ANDROID-ABC123 / IMEI / your serial"
-          style={styles.input}
-          autoCapitalize="none"
         />
-
-        <Text style={styles.label}>Device Name</Text>
         <TextInput
+          style={styles.input}
+          placeholder="Device Name"
           value={name}
           onChangeText={setName}
-          placeholder="e.g. Juan’s Phone"
-          style={styles.input}
         />
-
-        <Text style={styles.label}>Device Info (optional)</Text>
         <TextInput
+          style={styles.input}
+          placeholder="Device Info (optional)"
           value={info}
           onChangeText={setInfo}
-          placeholder="e.g. Android 14 • Samsung A54"
-          style={styles.input}
         />
 
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 10 }}>
-          <Button variant="solid" onPress={createDevice} disabled={loading}>
-            {loading ? "Working…" : "Register"}
-          </Button>
-        </View>
+        <Button onPress={createDevice} disabled={loading}>
+          Register
+        </Button>
       </Card>
 
-      <Card style={styles.searchCard}>
-        <Text style={styles.sectionTitle}>Search</Text>
+      {/* Search */}
+      <Card style={styles.card}>
         <TextInput
+          style={styles.input}
+          placeholder="Search..."
           value={query}
           onChangeText={setQuery}
-          placeholder="Search by name, serial, token, status…"
-          style={styles.input}
-          autoCapitalize="none"
         />
         <Text style={styles.countText}>
           Showing {filteredDevices.length} of {devices.length}
         </Text>
       </Card>
 
-      {loading && devices.length === 0 ? (
-        <View style={styles.loader}>
-          <ActivityIndicator />
-        </View>
-      ) : error ? (
-        <View style={styles.center}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Button variant="ghost" onPress={loadDevices}>
-            Retry
-          </Button>
-        </View>
-      ) : filteredDevices.length === 0 ? (
-        <View style={styles.center}>
-          <Ionicons name="phone-portrait-outline" size={32} color="#9ca3af" />
-          <Text style={styles.centerTitle}>No devices found</Text>
-          <Text style={styles.centerText}>
-            Register a serial above, or clear the search filter.
-          </Text>
-        </View>
+      {/* ✅ FIXED LIST (THIS WAS THE BUG) */}
+      {loading ? (
+        <ActivityIndicator />
       ) : (
         <FlatList
+          style={{ flex: 1, minHeight: 240 }} // ✅ REQUIRED
           data={filteredDevices}
           keyExtractor={(d) => String(d.device_id)}
-          contentContainerStyle={{ paddingVertical: 8 }}
+          contentContainerStyle={{ paddingBottom: 24 }}
           renderItem={({ item }) => {
-            const isBusy = busyId === item.device_id;
-            const isActive = item.status === "active";
-
+            const active = item.status === "active";
             return (
               <Card style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <Text style={styles.deviceName}>
-                      {item.device_name || "Unknown device"}
-                    </Text>
+                <Text style={styles.deviceName}>{item.device_name}</Text>
+                <Text style={styles.meta}>Serial: {item.device_serial}</Text>
+                <Text style={styles.meta}>Token: {item.device_token}</Text>
 
-                    <Text style={styles.deviceMeta}>Serial: {item.device_serial}</Text>
-
-                    {item.device_info ? (
-                      <Text style={styles.deviceMeta}>{item.device_info}</Text>
-                    ) : null}
-
-                    <Text style={styles.deviceMetaSmall}>
-                      ID: {item.device_id} • Token length: {(item.device_token || "").length}
-                    </Text>
-
-                    {item.created_at ? (
-                      <Text style={styles.deviceMetaSmall}>Created: {item.created_at}</Text>
-                    ) : null}
-
-                    {item.last_used_at ? (
-                      <Text style={styles.deviceMetaSmall}>Last used: {item.last_used_at}</Text>
-                    ) : null}
-                  </View>
-
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      isActive ? styles.badgeActive : styles.badgeBlocked,
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.statusDot,
-                        isActive ? styles.dotActive : styles.dotBlocked,
-                      ]}
-                    />
-                    <Text
-                      style={[
-                        styles.statusText,
-                        isActive ? styles.statusTextActive : styles.statusTextBlocked,
-                      ]}
-                    >
-                      {isActive ? "Active" : "Blocked"}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.tokenRow}>
-                  <Text style={styles.tokenLabel}>Device Token</Text>
-                  <Text style={styles.tokenText} selectable numberOfLines={1}>
-                    {item.device_token}
-                  </Text>
-
-                  <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 8 }}>
-                    <Button variant="ghost" onPress={() => copyToken(item.device_token)}>
-                      Copy token
-                    </Button>
-                  </View>
-                </View>
-
-                <View style={styles.cardFooter}>
+                <View style={styles.row}>
                   <Button
-                    variant={isActive ? "ghost" : "solid"}
-                    onPress={() => updateStatus(item.device_id, isActive ? "blocked" : "active")}
-                    disabled={isBusy}
+                    variant={active ? "ghost" : "solid"}
+                    onPress={() =>
+                      updateStatus(
+                        item.device_id,
+                        active ? "blocked" : "active"
+                      )
+                    }
+                    disabled={busyId === item.device_id}
                   >
-                    {isBusy ? "Working…" : isActive ? "Block this device" : "Activate this device"}
+                    {active ? "Block" : "Activate"}
                   </Button>
-
-                  <View style={{ width: 8 }} />
 
                   <Button
                     variant="danger"
                     onPress={() => deleteDevice(item.device_id)}
-                    disabled={isBusy}
+                    disabled={busyId === item.device_id}
                   >
-                    {isBusy ? "Working…" : "Delete"}
+                    Delete
                   </Button>
                 </View>
               </Card>
@@ -392,184 +235,38 @@ export default function ReaderDevicesPanel() {
           }}
         />
       )}
+
+      {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: "#f8fafc",
-    gap: 12,
-  },
+  screen: { flex: 1, padding: 16, backgroundColor: "#f8fafc" },
   headerRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#64748b",
-    marginBottom: 4,
-  },
-  loader: {
-    flex: 1,
-    paddingVertical: 24,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  center: {
-    flex: 1,
-    padding: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  centerTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginTop: 4,
-  },
-  centerText: {
-    fontSize: 14,
-    color: "#6b7280",
-    textAlign: "center",
-    maxWidth: 320,
-  },
-  errorText: {
-    fontSize: 14,
-    color: "#b91c1c",
-    textAlign: "center",
-  },
-  createCard: {
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: "#ffffff",
-  },
-  searchCard: {
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: "#ffffff",
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0f172a",
+    justifyContent: "space-between",
     marginBottom: 8,
   },
-  label: {
-    fontSize: 12,
-    color: "#64748b",
-    marginTop: 8,
-    marginBottom: 4,
-  },
+  title: { fontSize: 22, fontWeight: "700" },
+  sectionTitle: { fontWeight: "700", marginBottom: 8 },
   input: {
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#fff",
-    fontSize: 14,
-    color: "#111827",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
   },
-  countText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#6b7280",
-  },
-  card: {
-    marginVertical: 6,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: "#ffffff",
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 10,
-  },
-  cardHeaderLeft: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  deviceName: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#0f172a",
-  },
-  deviceMeta: {
-    marginTop: 2,
-    fontSize: 12,
-    color: "#6b7280",
-  },
-  deviceMetaSmall: {
-    marginTop: 2,
-    fontSize: 11,
-    color: "#9ca3af",
-  },
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  badgeActive: {
-    backgroundColor: "#ecfdf5",
-    borderColor: "#22c55e",
-  },
-  badgeBlocked: {
-    backgroundColor: "#fef2f2",
-    borderColor: "#ef4444",
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    marginRight: 6,
-  },
-  dotActive: {
-    backgroundColor: "#16a34a",
-  },
-  dotBlocked: {
-    backgroundColor: "#dc2626",
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  statusTextActive: {
-    color: "#166534",
-  },
-  statusTextBlocked: {
-    color: "#b91c1c",
-  },
-  tokenRow: {
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  tokenLabel: {
-    fontSize: 11,
-    color: "#9ca3af",
-    marginBottom: 2,
-  },
-  tokenText: {
-    fontSize: 13,
-    color: "#111827",
-  },
-  cardFooter: {
+  card: { padding: 14, marginBottom: 12 },
+  deviceName: { fontWeight: "600" },
+  meta: { fontSize: 12, color: "#6b7280" },
+  row: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    marginTop: 4,
+    gap: 8,
+    marginTop: 8,
   },
+  countText: { fontSize: 12, color: "#6b7280" },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  error: { color: "red", textAlign: "center" },
 });
