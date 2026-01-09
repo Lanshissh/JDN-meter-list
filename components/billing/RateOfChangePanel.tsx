@@ -264,7 +264,6 @@ function CalendarDatePicker({
       fullDate: Date | null;
     }> = [];
 
-    // Previous month's days
     const prevMonthLastDay = new Date(year, month, 0).getDate();
     for (let i = startingDayOfWeek - 1; i >= 0; i--) {
       days.push({
@@ -274,7 +273,6 @@ function CalendarDatePicker({
       });
     }
 
-    // Current month's days
     for (let i = 1; i <= daysInMonth; i++) {
       days.push({
         date: i,
@@ -283,7 +281,6 @@ function CalendarDatePicker({
       });
     }
 
-    // Next month's days
     const remainingDays = 42 - days.length;
     for (let i = 1; i <= remainingDays; i++) {
       days.push({
@@ -383,7 +380,6 @@ function CalendarDatePicker({
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
           >
-            {/* Header */}
             <View style={calendarStyles.calendarHeader}>
               <Text style={calendarStyles.monthYear}>
                 {MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}
@@ -404,7 +400,6 @@ function CalendarDatePicker({
               </View>
             </View>
 
-            {/* Quick Today Button */}
             <TouchableOpacity
               style={calendarStyles.todayButton}
               onPress={handleToday}
@@ -413,7 +408,6 @@ function CalendarDatePicker({
               <Text style={calendarStyles.todayText}>Today</Text>
             </TouchableOpacity>
 
-            {/* Day Headers */}
             <View style={calendarStyles.dayHeaders}>
               {DAYS.map((day) => (
                 <Text key={day} style={calendarStyles.dayHeader}>
@@ -422,7 +416,6 @@ function CalendarDatePicker({
               ))}
             </View>
 
-            {/* Calendar Grid */}
             <View style={calendarStyles.calendarGrid}>
               {days.map((day, index) => (
                 <TouchableOpacity
@@ -456,7 +449,6 @@ function CalendarDatePicker({
               ))}
             </View>
 
-            {/* Footer */}
             <View style={calendarStyles.calendarFooter}>
               <TouchableOpacity
                 style={calendarStyles.cancelButton}
@@ -523,7 +515,6 @@ function RateOfChangePanel() {
 
   const [buildings, setBuildings] = useState<BuildingOption[]>([]);
 
-  // Load buildings for dropdown
   useEffect(() => {
     if (!token) return;
     const loadBuildings = async () => {
@@ -884,7 +875,6 @@ function RateOfChangePanel() {
         </Text>
       </View>
 
-      {/* Tabs */}
       <View
         style={[styles.tabContainer, isMobile && styles.tabContainerMobile]}
       >
@@ -924,7 +914,6 @@ function RateOfChangePanel() {
         </View>
       )}
 
-      {/* Parameters */}
       <View style={[styles.inputCard, isMobile && styles.inputCardMobile]}>
         <Text style={styles.sectionTitle}>Parameters</Text>
 
@@ -1086,14 +1075,12 @@ function RateOfChangePanel() {
         </View>
       </View>
 
-      {/* Results */}
       <View
         style={[
           styles.resultsSection,
           isMobile && styles.resultsSectionMobile,
         ]}
       >
-        {/* Meter */}
         {mode === "meter" && meterRoc && (
           <ResultsCard title="Meter Analysis" icon="speedometer">
             <View style={styles.meterHeader}>
@@ -1132,7 +1119,6 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {/* Tenant */}
         {mode === "tenant" && tenantRoc && (
           <ResultsCard title="Tenant Analysis" icon="person">
             <Text style={styles.tenantId}>Tenant: {tenantRoc.tenant_id}</Text>
@@ -1171,7 +1157,6 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {/* Building */}
         {mode === "building" && buildingRoc && (
           <ResultsCard title="Building Analysis" icon="business">
             <View style={styles.buildingHeader}>
@@ -1218,7 +1203,6 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {/* Comparison */}
         {mode === "comparison" && (
           <>
             {cmpMonthly && (

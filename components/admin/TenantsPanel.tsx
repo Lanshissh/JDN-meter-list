@@ -198,7 +198,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const mergedToken = token || ctxToken || null;
   const jwt = useMemo(() => decodeJwtPayload(mergedToken), [mergedToken]);
 
-  // Role flags (from AuthContext)
   const isAdmin = !!(hasRole && hasRole("admin"));
   const isBiller = !!(hasRole && hasRole("biller"));
   const isOperator = !!(hasRole && hasRole("operator"));
@@ -249,7 +248,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergedToken, statusFilter, isAdmin, buildingFilter]);
 
   const loadAll = async () => {
@@ -489,7 +487,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                       const bRes = await api.get<Building[]>("/buildings");
                       setBuildings(bRes.data || []);
                     } catch {
-                      // ignore
                     }
                   }
                 }}

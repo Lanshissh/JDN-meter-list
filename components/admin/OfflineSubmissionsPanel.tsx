@@ -43,7 +43,6 @@ export default function OfflineSubmissionsPanel() {
     "submitted"
   );
 
-  // Reject UI
   const [rejectingId, setRejectingId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
@@ -320,7 +319,6 @@ export default function OfflineSubmissionsPanel() {
         />
       )}
 
-      {/* Simple inline “modal” (no extra deps) */}
       {rejectingId !== null ? (
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>

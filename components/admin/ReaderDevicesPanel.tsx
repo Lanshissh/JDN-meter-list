@@ -40,7 +40,6 @@ export default function ReaderDevicesPanel() {
   const [info, setInfo] = useState("");
   const [query, setQuery] = useState("");
 
-  /* ✅ FIX: normalize token (no "Bearer Bearer") */
   const authHeader = useMemo(() => {
     const raw = String(token || "").trim();
     if (!raw) return {};
@@ -142,7 +141,6 @@ export default function ReaderDevicesPanel() {
 
   return (
     <View style={styles.screen}>
-      {/* Header */}
       <View style={styles.headerRow}>
         <Text style={styles.title}>Reader Devices</Text>
         <Button variant="ghost" onPress={loadDevices}>
@@ -150,7 +148,6 @@ export default function ReaderDevicesPanel() {
         </Button>
       </View>
 
-      {/* Register */}
       <Card style={styles.card}>
         <Text style={styles.sectionTitle}>Register Device</Text>
 
@@ -178,7 +175,6 @@ export default function ReaderDevicesPanel() {
         </Button>
       </Card>
 
-      {/* Search */}
       <Card style={styles.card}>
         <TextInput
           style={styles.input}
@@ -191,12 +187,11 @@ export default function ReaderDevicesPanel() {
         </Text>
       </Card>
 
-      {/* ✅ FIXED LIST (THIS WAS THE BUG) */}
       {loading ? (
         <ActivityIndicator />
       ) : (
         <FlatList
-          style={{ flex: 1, minHeight: 240 }} // ✅ REQUIRED
+          style={{ flex: 1, minHeight: 240 }}
           data={filteredDevices}
           keyExtractor={(d) => String(d.device_id)}
           contentContainerStyle={{ paddingBottom: 24 }}

@@ -43,14 +43,12 @@ const resolveBaseApiForDevice = (base: string) => {
 const BASE_API = resolveBaseApiForDevice(BASE_API_CONST);
 const API_URL = `${BASE_API}/auth/login`;
 
-// ✅ Stable device serial key saved on the phone (so admin can register it once)
 const DEVICE_SERIAL_KEY = "reader_device_serial_v1";
 
 async function getOrCreateDeviceSerial(): Promise<string> {
   const existing = await AsyncStorage.getItem(DEVICE_SERIAL_KEY);
   if (existing && existing.trim()) return existing.trim();
 
-  // Create a stable, unique-ish serial and persist it
   const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
   const serial = `JDN-${Platform.OS.toUpperCase()}-${Date.now()}-${rand}`;
 
@@ -79,7 +77,6 @@ export default function LoginScreen() {
   const [error, setError] = useState("");
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
 
-  // show the device serial on screen (so admin can register it)
   const [deviceSerial, setDeviceSerial] = useState<string>("");
 
   const usernameLabelAnim = useRef(new Animated.Value(0)).current;
@@ -128,16 +125,11 @@ export default function LoginScreen() {
         throw new Error("Logged in but no token returned by server.");
       }
 
-      // ✅ Store auth session first
       await login(token);
 
-      // ✅ Auto-resolve device token (non-blocking; login should still succeed)
       try {
         const serial = deviceSerial || (await getOrCreateDeviceSerial());
         const info = getDeviceInfo();
-
-        // If the device is not registered, resolveDevice will throw "Device not registered"
-        // We do NOT block login; we just log it.
         await resolveDevice(token, serial, info);
       } catch (e: any) {
         console.log("DEVICE RESOLVE SKIPPED/FAILED:", {
@@ -145,8 +137,7 @@ export default function LoginScreen() {
           status: e?.response?.status,
           data: e?.response?.data,
         });
-        // Optional: you can show this to user, but I recommend keeping it quiet:
-        // setError("Device not registered. Ask admin to register this device serial.");
+
       }
 
       router.replace("/(tabs)/dashboard");
@@ -242,7 +233,6 @@ export default function LoginScreen() {
               <Text style={styles.subtitle}>Please sign in to your account</Text>
 
               <View style={styles.formContainer}>
-                {/* Username */}
                 <View style={styles.inputContainer}>
                   <Animated.Text
                     style={[
@@ -283,7 +273,6 @@ export default function LoginScreen() {
                   <View style={[styles.inputUnderline, focusedInput === "username" && styles.inputUnderlineFocused]} />
                 </View>
 
-                {/* Password */}
                 <View style={styles.inputContainer}>
                   <Animated.Text
                     style={[
@@ -332,7 +321,6 @@ export default function LoginScreen() {
                 </View>
               </View>
 
-              {/* Device serial shown for admin registration */}
               {deviceSerial ? (
                 <View style={styles.deviceBox}>
                   <Ionicons name="phone-portrait-outline" size={16} color="#47578bff" />
@@ -510,7 +498,6 @@ const styles = StyleSheet.create({
   inputUnderline: { height: 2, backgroundColor: "#e0e0e0ff", marginTop: 2, borderRadius: 1 },
   inputUnderlineFocused: { height: 2, backgroundColor: "#474a8bff", ...(Platform.select({ web: { boxShadow: "0 0 8px rgba(73, 71, 139, 0.3)" as any } }) as any) },
 
-  // ✅ device serial display
   deviceBox: {
     marginTop: 6,
     marginBottom: 16,

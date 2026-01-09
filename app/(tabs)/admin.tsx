@@ -26,8 +26,6 @@ import AssignTenantPanel from "../../components/admin/AssignTenantPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
 import ReaderDevicesPanel from "../../components/admin/ReaderDevicesPanel";
-
-// ✅ NEW: Offline submissions approval UI
 import OfflineSubmissionsPanel from "../../components/admin/OfflineSubmissionsPanel";
 
 export type PageKey =
@@ -41,7 +39,7 @@ export type PageKey =
   | "meters"
   | "readings"
   | "readerDevices"
-  | "offlineSubmissions"; // ✅ NEW
+  | "offlineSubmissions";
 
 type Page = {
   label: string;
@@ -78,13 +76,11 @@ export default function AdminScreen() {
 
       { label: "Reader Devices", key: "readerDevices", icon: "phone-portrait" },
 
-      // ✅ NEW: Admin approves offline exports here
       { label: "Offline Submissions", key: "offlineSubmissions", icon: "cloud-upload" },
     ],
     []
   );
 
-  // Normalize roles (handles array or comma-separated string)
   const role: string = useMemo(() => {
     const rawRoles: any = user?.user_roles;
     const roles: string[] = Array.isArray(rawRoles)
@@ -113,7 +109,7 @@ export default function AdminScreen() {
         "meters",
         "readings",
         "readerDevices",
-        "offlineSubmissions", // ✅ NEW
+        "offlineSubmissions",
       ]),
       operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
       biller: new Set<PageKey>(["buildings", "wt", "vat", "tenants", "readings"]),
@@ -155,7 +151,6 @@ export default function AdminScreen() {
     try {
       router.setParams?.({ panel: key });
     } catch {
-      // ignore
     }
   };
 
@@ -199,7 +194,6 @@ export default function AdminScreen() {
       case "readerDevices":
         return <ReaderDevicesPanel />;
 
-      // ✅ NEW: approval screen
       case "offlineSubmissions":
         return <OfflineSubmissionsPanel />;
 
@@ -226,7 +220,6 @@ export default function AdminScreen() {
   const currentRoleStyle = roleColors[role] || roleColors.admin;
   const activePageLabel = visiblePages.find((p) => p.key === active)?.label || "Admin";
 
-  // Mobile Menu Drawer
   const MobileMenu = () => (
     <Modal
       visible={menuOpen}
@@ -237,7 +230,6 @@ export default function AdminScreen() {
       <View style={styles.modalOverlay}>
         <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)} />
         <View style={styles.drawer}>
-          {/* Drawer Header */}
           <View style={styles.drawerHeader}>
             <View style={styles.drawerLogoRow}>
               <View style={styles.logoWrap}>
@@ -253,7 +245,6 @@ export default function AdminScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* User Info */}
           <View style={styles.drawerUser}>
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>{initials || "U"}</Text>
@@ -268,7 +259,6 @@ export default function AdminScreen() {
             </View>
           </View>
 
-          {/* Nav Items */}
           <ScrollView style={styles.drawerNav} showsVerticalScrollIndicator={false}>
             <Text style={styles.drawerLabel}>NAVIGATION</Text>
             {visiblePages.map((page) => {
@@ -296,7 +286,6 @@ export default function AdminScreen() {
             })}
           </ScrollView>
 
-          {/* Logout */}
           <View style={styles.drawerFooter}>
             <TouchableOpacity onPress={handleLogout} style={styles.drawerLogout} activeOpacity={0.7}>
               <Ionicons name="log-out-outline" size={20} color="#ef4444" />
@@ -310,10 +299,8 @@ export default function AdminScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      {/* Mobile Menu */}
       {isMobile && <MobileMenu />}
 
-      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           {isMobile ? (
@@ -370,7 +357,6 @@ export default function AdminScreen() {
         )}
       </View>
 
-      {/* Tab Navigation - Desktop Only */}
       {!isMobile && (
         <View style={styles.tabBar}>
           <ScrollView
@@ -403,7 +389,6 @@ export default function AdminScreen() {
         </View>
       )}
 
-      {/* Content */}
       <View style={[styles.content, isMobile && styles.contentMobile]}>{renderContent()}</View>
     </SafeAreaView>
   );
@@ -414,7 +399,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#f8fafc",
   },
-  // Header
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -569,7 +553,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: "#64748b",
   },
-  // Tab Bar
   tabBar: {
     backgroundColor: "#ffffff",
     borderBottomWidth: 1,
@@ -607,7 +590,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 2,
     borderTopRightRadius: 2,
   },
-  // Content
   content: {
     flex: 1,
     padding: 20,
@@ -615,7 +597,6 @@ const styles = StyleSheet.create({
   contentMobile: {
     padding: 12,
   },
-  // Mobile Drawer
   modalOverlay: {
     flex: 1,
     flexDirection: "row",

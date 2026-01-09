@@ -1,4 +1,3 @@
-// app/(tabs)/billing.tsx - Mobile Optimized Version
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,7 +19,6 @@ import { useAuth } from "../../contexts/AuthContext";
 import { BASE_API } from "../../constants/api";
 import RateOfChangePanel from "../../components/billing/RateOfChangePanel";
 
-/* ========================= Types ========================= */
 type BillingRow = {
   stall_no: string | null;
   stall_sn: string | null;
@@ -86,7 +84,6 @@ type StoredBilling = {
 
 type BuildingOption = { building_id: string; building_name: string | null };
 
-/* ========================= Helpers ========================= */
 const notify = (title: string, message?: string) => {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -257,7 +254,6 @@ const saveCsv = (filename: string, csv: string) => {
   }
 };
 
-/* ========================= Calendar Date Picker ========================= */
 function CalendarDatePicker({
   label,
   value,
@@ -508,7 +504,6 @@ function CalendarDatePicker({
   );
 }
 
-/* ========================= Mobile Row Card Component ========================= */
 function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const rocIsPositive =
@@ -631,7 +626,6 @@ function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
   );
 }
 
-/* ========================= Component ========================= */
 export default function BillingScreen() {
   const { token, user } = useAuth();
   const { width } = useWindowDimensions();
@@ -829,7 +823,6 @@ export default function BillingScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      {/* Header */}
       <View style={[styles.header, isMobile && mobileStyles.header]}>
         <Text style={[styles.title, isMobile && mobileStyles.title]}>
           Billing & Statements
@@ -843,7 +836,6 @@ export default function BillingScreen() {
         </Text>
       </View>
 
-      {/* Tabs */}
       <View style={[styles.tabContainer, isMobile && mobileStyles.tabContainer]}>
         <TouchableOpacity
           style={[
@@ -896,7 +888,6 @@ export default function BillingScreen() {
       <View style={[styles.content, isMobile && mobileStyles.content]}>
         {viewTab === "billing" ? (
           <View>
-            {/* Mode Toggle */}
             <View
               style={[styles.modeToggle, isMobile && mobileStyles.modeToggle]}
             >
@@ -939,7 +930,6 @@ export default function BillingScreen() {
 
             {modeTab === "generate" ? (
               <>
-                {/* Input Card */}
                 <View
                   style={[styles.inputCard, isMobile && mobileStyles.inputCard]}
                 >
@@ -951,9 +941,7 @@ export default function BillingScreen() {
                   </View>
 
                   {isMobile ? (
-                    /* Mobile Layout - Clean Stacked Form */
                     <View style={mobileStyles.formContainer}>
-                      {/* Building Select */}
                       <View style={mobileStyles.formGroup}>
                         <Text style={mobileStyles.formLabel}>Building *</Text>
                         <View style={mobileStyles.formInputWrapper}>
@@ -1005,7 +993,6 @@ export default function BillingScreen() {
                         </View>
                       </View>
 
-                      {/* Date Range Row */}
                       <View style={mobileStyles.dateRow}>
                         <View style={mobileStyles.dateField}>
                           <CalendarDatePicker
@@ -1029,7 +1016,6 @@ export default function BillingScreen() {
                         </View>
                       </View>
 
-                      {/* Penalty Rate */}
                       <View style={mobileStyles.formGroup}>
                         <Text style={mobileStyles.formLabel}>
                           Penalty Rate (%) *
@@ -1053,7 +1039,6 @@ export default function BillingScreen() {
                       </View>
                     </View>
                   ) : (
-                    /* Desktop Layout */
                     <View style={styles.inputGrid}>
                       <View style={styles.inputGroup}>
                         <Text style={styles.inputLabel}>Building *</Text>
@@ -1148,7 +1133,6 @@ export default function BillingScreen() {
                     </View>
                   )}
 
-                  {/* Action Buttons */}
                   {isMobile ? (
                     <View style={mobileStyles.actionRow}>
                       <TouchableOpacity
@@ -1229,7 +1213,6 @@ export default function BillingScreen() {
                   ) : null}
                 </View>
 
-                {/* Billing Summary & Details */}
                 <View
                   style={[
                     styles.billingCard,
@@ -1359,7 +1342,6 @@ export default function BillingScreen() {
                     </View>
                   )}
 
-                  {/* Tenant Details */}
                   {payload && (
                     <View style={{ marginTop: 16, gap: 16 }}>
                       {payload.tenants.map((tenant, tenantIndex) => (
@@ -1397,7 +1379,6 @@ export default function BillingScreen() {
                             </View>
                           </View>
 
-                          {/* Mobile: Card-based layout */}
                           {isMobile ? (
                             <View style={mobileStyles.rowCardContainer}>
                               {tenant.rows.map((row, rowIndex) => (
@@ -1409,7 +1390,6 @@ export default function BillingScreen() {
                               ))}
                             </View>
                           ) : (
-                            /* Desktop: Table layout */
                             <View style={styles.compactTable}>
                               <View style={styles.compactTableHeader}>
                                 <View
@@ -1668,7 +1648,6 @@ export default function BillingScreen() {
                 </View>
               </>
             ) : (
-              /* Stored Billings */
               <View
                 style={[
                   styles.storedBillingsCard,
@@ -1770,7 +1749,6 @@ export default function BillingScreen() {
   );
 }
 
-/* ========================= Desktop Styles ========================= */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F8FAFC" },
   noAccessContainer: {
@@ -2114,7 +2092,6 @@ const styles = StyleSheet.create({
   billingId: { marginLeft: "auto", fontSize: 12, color: "#6B7280" },
 });
 
-/* ========================= Mobile Styles ========================= */
 const mobileStyles = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingVertical: 16 },
   title: { fontSize: 22 },
@@ -2255,7 +2232,6 @@ const mobileStyles = StyleSheet.create({
   billingItem: { paddingVertical: 8, paddingHorizontal: 10 },
   tenantTotalAmount: { fontSize: 13, fontWeight: "600", color: "#111827" },
 
-  /* Calendar modal */
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.5)",

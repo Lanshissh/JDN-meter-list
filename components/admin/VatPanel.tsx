@@ -118,12 +118,11 @@ export default function VatPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
 
-  // --- roles from AuthContext ---
   const { hasRole } = useAuth();
   const isAdmin = hasRole("admin");
   const isBiller = hasRole("biller");
   const isOperator = hasRole("operator");
-  const canEdit = isAdmin || isBiller; // ONLY admin + biller can edit VAT
+  const canEdit = isAdmin || isBiller;
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -136,14 +135,12 @@ export default function VatPanel({ token }: { token: string | null }) {
   const [onlyNonZero, setOnlyNonZero] = useState(false);
   const [hasAnyRate, setHasAnyRate] = useState(false);
 
-  // create form
   const [c_code, setC_code] = useState("");
   const [c_desc, setC_desc] = useState("");
   const [c_e, setC_e] = useState("");
   const [c_w, setC_w] = useState("");
   const [c_l, setC_l] = useState("");
 
-  // edit form
   const [editRow, setEditRow] = useState<VatCode | null>(null);
   const [e_code, setE_code] = useState("");
   const [e_desc, setE_desc] = useState("");
@@ -249,7 +246,7 @@ export default function VatPanel({ token }: { token: string | null }) {
   }, [filtered, sortMode]);
 
   const onCreate = async () => {
-    if (!canEdit) return; // safety
+    if (!canEdit) return;
     const code = c_code.trim();
     if (!code) {
       notify("Missing info", "VAT Code is required.");
@@ -280,7 +277,7 @@ export default function VatPanel({ token }: { token: string | null }) {
   };
 
   const openEdit = (r: VatCode) => {
-    if (!canEdit) return; // safety
+    if (!canEdit) return;
     setEditRow(r);
     setE_code(r.vat_code ?? "");
     setE_desc(r.vat_description ?? "");
@@ -470,7 +467,6 @@ export default function VatPanel({ token }: { token: string | null }) {
         </View>
       </View>
 
-      {/* Filters */}
       {filtersVisible && (
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
@@ -567,7 +563,6 @@ export default function VatPanel({ token }: { token: string | null }) {
         </View>
       )}
 
-      {/* Create modal (admin + biller only) */}
       {canEdit && createVisible && (
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
@@ -663,7 +658,6 @@ export default function VatPanel({ token }: { token: string | null }) {
         </View>
       )}
 
-      {/* Edit modal (admin + biller only) */}
       {canEdit && editVisible && (
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>

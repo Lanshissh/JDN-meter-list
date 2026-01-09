@@ -343,7 +343,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
           `);
           printWindow.document.close();
         } else {
-          // Native apps: just show a hint for now
           notify("Print QR", "Direct printing is only available on web. On mobile, please download or screenshot the QR.");
         }
       });

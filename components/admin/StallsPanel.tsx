@@ -132,8 +132,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
       await api.post("/stalls", {
         stall_sn,
         building_id: c_buildingId,
-        stall_status: "available", // Always set to "available" for new stalls
-        tenant_id: null, // Always null for new stalls
+        stall_status: "available",
+        tenant_id: null,
       });
       setCreateVisible(false);
       setC_stallSn("");
@@ -368,7 +368,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     style={styles.input}
                   />
                 </View>
-                {/* Show locked status field */}
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Status</Text>
                   <View style={[styles.pickerWrapper, styles.disabledField]}>
@@ -704,7 +703,6 @@ const styles = StyleSheet.create({
     }) as any),
   },
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
-  // New styles for locked status field
   disabledField: {
     backgroundColor: "#f1f5f9",
     borderColor: "#cbd5e1",
