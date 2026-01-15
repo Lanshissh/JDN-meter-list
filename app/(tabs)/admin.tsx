@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -25,6 +25,8 @@ import TenantsPanel from "../../components/admin/TenantsPanel";
 import AssignTenantPanel from "../../components/admin/AssignTenantPanel";
 import MeterPanel from "../../components/admin/MeterPanel";
 import MeterReadingPanel from "../../components/admin/MeterReadingPanel";
+import ReaderDevicesPanel from "../../components/admin/ReaderDevicesPanel";
+import OfflineSubmissionsPanel from "../../components/admin/OfflineSubmissionsPanel";
 
 export type PageKey =
   | "accounts"
@@ -35,7 +37,9 @@ export type PageKey =
   | "tenants"
   | "assign"
   | "meters"
-  | "readings";
+  | "readings"
+  | "readerDevices"
+  | "offlineSubmissions";
 
 type Page = {
   label: string;
@@ -53,33 +57,44 @@ export default function AdminScreen() {
     tab?: string;
     meterId?: string;
   }>();
+
   const { width } = useWindowDimensions();
   const isMobile = width < MOBILE_BREAKPOINT;
 
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const pages: Page[] = useMemo(
-    () => [
-      { label: "Accounts", key: "accounts", icon: "people" },
-      { label: "Buildings", key: "buildings", icon: "business" },
-      { label: "Stalls", key: "stalls", icon: "storefront" },
-      { label: "Withholding", key: "wt", icon: "receipt" },
-      { label: "VAT", key: "vat", icon: "calculator" },
-      { label: "Tenants", key: "tenants", icon: "person" },
-      { label: "Assign", key: "assign", icon: "person-add" },
-      { label: "Meters", key: "meters", icon: "speedometer" },
-      { label: "Readings", key: "readings", icon: "analytics" },
-    ],
-    []
-  );
+  // Desktop TAX dropdown open state (now controlled by modal)
+  const [taxOpen, setTaxOpen] = useState(false);
+  // Mobile TAX collapsible state
+  const [taxMobileOpen, setTaxMobileOpen] = useState(false);
 
-  // Normalize roles (handles array or comma-separated string)
+  // ✅ Anchor the TAX menu to the TAX button (fix for web ScrollView clipping)
+  const taxBtnRef = useRef<any>(null);
+  const [taxAnchor, setTaxAnchor] = useState({ x: 0, y: 0, w: 0, h: 0 });
+
+  const openTaxMenu = () => {
+    requestAnimationFrame(() => {
+      taxBtnRef.current?.measureInWindow?.(
+        (x: number, y: number, w: number, h: number) => {
+          setTaxAnchor({ x, y, w, h });
+          setTaxOpen(true);
+        }
+      );
+    });
+  };
+
+  const toggleTaxMenu = () => {
+    if (taxOpen) setTaxOpen(false);
+    else openTaxMenu();
+  };
+
+  // Normalize roles (handles array or comma)
   const role: string = useMemo(() => {
     const rawRoles: any = user?.user_roles;
     const roles: string[] = Array.isArray(rawRoles)
-      ? rawRoles
+      ? rawRoles.map((r: any) => String(r).trim().toLowerCase())
       : typeof rawRoles === "string"
-      ? rawRoles.split(",").map((r) => r.trim())
+      ? rawRoles.split(",").map((r) => r.trim().toLowerCase())
       : [];
 
     if (roles.includes("admin")) return "admin";
@@ -101,6 +116,8 @@ export default function AdminScreen() {
         "assign",
         "meters",
         "readings",
+        "readerDevices",
+        "offlineSubmissions",
       ]),
       operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
       biller: new Set<PageKey>(["buildings", "wt", "vat", "tenants", "readings"]),
@@ -110,10 +127,37 @@ export default function AdminScreen() {
   );
 
   const allowed = roleAllowed[role] ?? roleAllowed.admin;
+
+  const pages: Page[] = useMemo(
+    () => [
+      { label: "Accounts", key: "accounts", icon: "people" },
+      { label: "Buildings", key: "buildings", icon: "business" },
+      { label: "Stalls", key: "stalls", icon: "storefront" },
+      { label: "Tenants", key: "tenants", icon: "person" },
+      { label: "Assign", key: "assign", icon: "person-add" },
+      { label: "Meters", key: "meters", icon: "speedometer" },
+      { label: "Readings", key: "readings", icon: "analytics" },
+      { label: "Reader Devices", key: "readerDevices", icon: "phone-portrait" },
+      { label: "Offline Submissions", key: "offlineSubmissions", icon: "cloud-upload" },
+    ],
+    []
+  );
+
+  // Visible primary pages (VAT/WT removed from this list)
   const visiblePages = useMemo(
     () => pages.filter((p) => allowed.has(p.key)),
     [pages, allowed]
   );
+
+  // TAX children, if allowed
+  const taxChildren = useMemo(() => {
+    const children: Page[] = [];
+    if (allowed.has("vat")) children.push({ label: "VAT", key: "vat", icon: "calculator" });
+    if (allowed.has("wt")) children.push({ label: "Withholding", key: "wt", icon: "receipt" });
+    return children;
+  }, [allowed]);
+
+  const hasTax = taxChildren.length > 0;
 
   const roleInitial: Record<string, PageKey> = {
     admin: "buildings",
@@ -123,19 +167,18 @@ export default function AdminScreen() {
   };
 
   const resolveInitial = (): PageKey => {
-    const wanted = String(
-      params?.panel || params?.tab || ""
-    ).toLowerCase() as PageKey;
+    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
     if (wanted && allowed.has(wanted)) return wanted;
     return roleInitial[role] ?? "buildings";
   };
 
   const [active, setActive] = useState<PageKey>(resolveInitial());
 
+  // ✅ TAX highlights as active whenever inside VAT/WT
+  const isTaxActive = active === "vat" || active === "wt";
+
   useEffect(() => {
-    const wanted = String(
-      params?.panel || params?.tab || ""
-    ).toLowerCase() as PageKey;
+    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
     const allowedSet = roleAllowed[role] ?? roleAllowed.admin;
 
     if (wanted && allowedSet.has(wanted)) {
@@ -143,7 +186,8 @@ export default function AdminScreen() {
     } else if (!allowedSet.has(active)) {
       setActive(roleInitial[role] ?? "buildings");
     }
-  }, [role, params?.panel, params?.tab, allowed, active, roleAllowed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, params?.panel, params?.tab]);
 
   const applyRouteParam = (key: PageKey) => {
     try {
@@ -157,6 +201,9 @@ export default function AdminScreen() {
     setActive(key);
     applyRouteParam(key);
     setMenuOpen(false);
+
+    // close dropdowns when selecting
+    setTaxOpen(false);
   };
 
   const handleLogout = async () => {
@@ -187,11 +234,13 @@ export default function AdminScreen() {
         return (
           <MeterReadingPanel
             token={token}
-            initialMeterId={
-              params?.meterId ? String(params.meterId) : undefined
-            }
+            initialMeterId={params?.meterId ? String(params.meterId) : undefined}
           />
         );
+      case "readerDevices":
+        return <ReaderDevicesPanel />;
+      case "offlineSubmissions":
+        return <OfflineSubmissionsPanel />;
       default:
         return null;
     }
@@ -213,10 +262,41 @@ export default function AdminScreen() {
   };
 
   const currentRoleStyle = roleColors[role] || roleColors.admin;
-  const activePageLabel =
-    visiblePages.find((p) => p.key === active)?.label || "Admin";
 
-  // Mobile Menu Drawer
+  const activePageLabel =
+    active === "vat"
+      ? "VAT"
+      : active === "wt"
+      ? "Withholding"
+      : visiblePages.find((p) => p.key === active)?.label || "Admin";
+
+  // ✅ Pin Accounts + Reader Devices on the far right (desktop)
+  const RIGHT_KEYS = useMemo(() => new Set<PageKey>(["accounts", "readerDevices"]), []);
+  const rightTabs = useMemo(
+    () => visiblePages.filter((p) => RIGHT_KEYS.has(p.key)),
+    [visiblePages, RIGHT_KEYS]
+  );
+  const leftTabs = useMemo(
+    () => visiblePages.filter((p) => !RIGHT_KEYS.has(p.key)),
+    [visiblePages, RIGHT_KEYS]
+  );
+
+  // ✅ TAX stays between Buildings and Stalls (in the LEFT tab group)
+  const buildingsIndex = useMemo(
+    () => leftTabs.findIndex((p) => p.key === "buildings"),
+    [leftTabs]
+  );
+
+  const beforeBuildings = useMemo(() => {
+    if (buildingsIndex < 0) return leftTabs;
+    return leftTabs.slice(0, buildingsIndex + 1);
+  }, [leftTabs, buildingsIndex]);
+
+  const afterBuildings = useMemo(() => {
+    if (buildingsIndex < 0) return [];
+    return leftTabs.slice(buildingsIndex + 1);
+  }, [leftTabs, buildingsIndex]);
+
   const MobileMenu = () => (
     <Modal
       visible={menuOpen}
@@ -225,126 +305,147 @@ export default function AdminScreen() {
       onRequestClose={() => setMenuOpen(false)}
     >
       <View style={styles.modalOverlay}>
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setMenuOpen(false)}
-        />
+        <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)} />
         <View style={styles.drawer}>
-          {/* Drawer Header */}
           <View style={styles.drawerHeader}>
             <View style={styles.drawerLogoRow}>
               <View style={styles.logoWrap}>
-                <Image
-                  source={require("../../assets/images/jdn.jpg")}
-                  style={styles.logo}
-                />
+                <Image source={require("../../assets/images/jdn.jpg")} style={styles.logo} />
               </View>
               <View>
                 <Text style={styles.drawerTitle}>Admin Portal</Text>
                 <Text style={styles.drawerSub}>Management Console</Text>
               </View>
             </View>
-            <TouchableOpacity
-              onPress={() => setMenuOpen(false)}
-              style={styles.closeBtn}
-            >
+            <TouchableOpacity onPress={() => setMenuOpen(false)} style={styles.closeBtn}>
               <Ionicons name="close" size={22} color="#64748b" />
             </TouchableOpacity>
           </View>
 
-          {/* User Info */}
           <View style={styles.drawerUser}>
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>{initials || "U"}</Text>
             </View>
             <View style={styles.drawerUserInfo}>
-              <Text style={styles.drawerUserName}>
-                {displayName || "User"}
-              </Text>
-              <View
-                style={[
-                  styles.roleBadge,
-                  { backgroundColor: currentRoleStyle.bg },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.roleText,
-                    { color: currentRoleStyle.text },
-                  ]}
-                >
+              <Text style={styles.drawerUserName}>{displayName || "User"}</Text>
+              <View style={[styles.roleBadge, { backgroundColor: currentRoleStyle.bg }]}>
+                <Text style={[styles.roleText, { color: currentRoleStyle.text }]}>
                   {role.charAt(0).toUpperCase() + role.slice(1)}
                 </Text>
               </View>
             </View>
           </View>
 
-          {/* Nav Items */}
-          <ScrollView
-            style={styles.drawerNav}
-            showsVerticalScrollIndicator={false}
-          >
+          <ScrollView style={styles.drawerNav} showsVerticalScrollIndicator={false}>
             <Text style={styles.drawerLabel}>NAVIGATION</Text>
-            {visiblePages.map((page) => {
-              const isActive = active === page.key;
+
+            {beforeBuildings.map((page) => {
+              const isActive2 = active === page.key;
               return (
                 <TouchableOpacity
                   key={page.key}
                   onPress={() => handleSelect(page.key)}
-                  style={[
-                    styles.drawerItem,
-                    isActive && styles.drawerItemActive,
-                  ]}
+                  style={[styles.drawerItem, isActive2 && styles.drawerItemActive]}
                   activeOpacity={0.7}
                 >
-                  <View
-                    style={[
-                      styles.drawerIconWrap,
-                      isActive && styles.drawerIconWrapActive,
-                    ]}
-                  >
+                  <View style={[styles.drawerIconWrap, isActive2 && styles.drawerIconWrapActive]}>
                     <Ionicons
-                      name={
-                        (isActive
-                          ? page.icon
-                          : `${page.icon}-outline`) as any
-                      }
+                      name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
                       size={18}
-                      color={isActive ? "#fff" : "#64748b"}
+                      color={isActive2 ? "#fff" : "#64748b"}
                     />
                   </View>
-                  <Text
-                    style={[
-                      styles.drawerItemText,
-                      isActive && styles.drawerItemTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.drawerItemText, isActive2 && styles.drawerItemTextActive]}>
                     {page.label}
                   </Text>
-                  {isActive && (
+                  {isActive2 && <Ionicons name="checkmark-circle" size={18} color="#6366f1" />}
+                </TouchableOpacity>
+              );
+            })}
+
+            {hasTax && (
+              <View style={{ marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={() => setTaxMobileOpen((v) => !v)}
+                  style={[styles.drawerItem, isTaxActive && styles.drawerItemActive]}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.drawerIconWrap, isTaxActive && styles.drawerIconWrapActive]}>
                     <Ionicons
-                      name="checkmark-circle"
+                      name={(isTaxActive ? "cash" : "cash-outline") as any}
                       size={18}
-                      color="#6366f1"
+                      color={isTaxActive ? "#fff" : "#64748b"}
                     />
-                  )}
+                  </View>
+                  <Text style={[styles.drawerItemText, isTaxActive && styles.drawerItemTextActive]}>
+                    TAX
+                  </Text>
+                  <Ionicons
+                    name={taxMobileOpen ? "chevron-up" : "chevron-down"}
+                    size={18}
+                    color="#64748b"
+                  />
+                </TouchableOpacity>
+
+                {taxMobileOpen && (
+                  <View style={styles.drawerSubList}>
+                    {taxChildren.map((child) => {
+                      const childActive2 = active === child.key;
+                      return (
+                        <TouchableOpacity
+                          key={child.key}
+                          onPress={() => {
+                            handleSelect(child.key);
+                            setMenuOpen(false);
+                          }}
+                          style={[styles.drawerSubItem, childActive2 && styles.drawerSubItemActive]}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={[
+                              styles.drawerSubItemText,
+                              childActive2 && styles.drawerSubItemTextActive,
+                            ]}
+                          >
+                            {child.label}
+                          </Text>
+                          {childActive2 && <Ionicons name="checkmark" size={16} color="#6366f1" />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            )}
+
+            {afterBuildings.map((page) => {
+              const isActive2 = active === page.key;
+              return (
+                <TouchableOpacity
+                  key={page.key}
+                  onPress={() => handleSelect(page.key)}
+                  style={[styles.drawerItem, isActive2 && styles.drawerItemActive]}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.drawerIconWrap, isActive2 && styles.drawerIconWrapActive]}>
+                    <Ionicons
+                      name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                      size={18}
+                      color={isActive2 ? "#fff" : "#64748b"}
+                    />
+                  </View>
+                  <Text style={[styles.drawerItemText, isActive2 && styles.drawerItemTextActive]}>
+                    {page.label}
+                  </Text>
+                  {isActive2 && <Ionicons name="checkmark-circle" size={18} color="#6366f1" />}
                 </TouchableOpacity>
               );
             })}
           </ScrollView>
 
-          {/* Logout */}
           <View style={styles.drawerFooter}>
-            <TouchableOpacity
-              onPress={handleLogout}
-              style={styles.drawerLogout}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name="log-out-outline"
-                size={20}
-                color="#ef4444"
-              />
+            <TouchableOpacity onPress={handleLogout} style={styles.drawerLogout} activeOpacity={0.7}>
+              <Ionicons name="log-out-outline" size={20} color="#ef4444" />
               <Text style={styles.drawerLogoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -355,18 +456,13 @@ export default function AdminScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      {/* Mobile Menu */}
       {isMobile && <MobileMenu />}
 
-      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           {isMobile ? (
             <>
-              <TouchableOpacity
-                onPress={() => setMenuOpen(true)}
-                style={styles.hamburger}
-              >
+              <TouchableOpacity onPress={() => setMenuOpen(true)} style={styles.hamburger}>
                 <Ionicons name="menu" size={24} color="#0f172a" />
               </TouchableOpacity>
               <Text style={styles.mobileTitle}>{activePageLabel}</Text>
@@ -374,10 +470,7 @@ export default function AdminScreen() {
           ) : (
             <>
               <View style={styles.logoWrap}>
-                <Image
-                  source={require("../../assets/images/jdn.jpg")}
-                  style={styles.logo}
-                />
+                <Image source={require("../../assets/images/jdn.jpg")} style={styles.logo} />
               </View>
               <View style={styles.titleWrap}>
                 <Text style={styles.brandTitle}>Admin Portal</Text>
@@ -397,34 +490,16 @@ export default function AdminScreen() {
                 <Text style={styles.userName} numberOfLines={1}>
                   {displayName || "User"}
                 </Text>
-                <View
-                  style={[
-                    styles.roleBadge,
-                    { backgroundColor: currentRoleStyle.bg },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.roleText,
-                      { color: currentRoleStyle.text },
-                    ]}
-                  >
+                <View style={[styles.roleBadge, { backgroundColor: currentRoleStyle.bg }]}>
+                  <Text style={[styles.roleText, { color: currentRoleStyle.text }]}>
                     {role.charAt(0).toUpperCase() + role.slice(1)}
                   </Text>
                 </View>
               </View>
             </View>
             <View style={styles.headerDivider} />
-            <TouchableOpacity
-              onPress={handleLogout}
-              style={styles.logoutBtn}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name="log-out-outline"
-                size={18}
-                color="#64748b"
-              />
+            <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn} activeOpacity={0.7}>
+              <Ionicons name="log-out-outline" size={18} color="#64748b" />
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -433,70 +508,171 @@ export default function AdminScreen() {
         {isMobile && (
           <View style={styles.mobileHeaderRight}>
             <View style={styles.avatarSmall}>
-              <Text style={styles.avatarTextSmall}>
-                {initials || "U"}
-              </Text>
+              <Text style={styles.avatarTextSmall}>{initials || "U"}</Text>
             </View>
           </View>
         )}
       </View>
 
-      {/* Tab Navigation - Desktop Only */}
+      {/* ✅ Desktop tabs: LEFT scrollable + RIGHT pinned */}
       {!isMobile && (
-        <View style={styles.tabBar}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.tabScroll}
-          >
-            {visiblePages.map((page) => {
-              const isActive = active === page.key;
-              return (
-                <TouchableOpacity
-                  key={page.key}
-                  onPress={() => handleSelect(page.key)}
-                  style={[styles.tab, isActive && styles.tabActive]}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name={
-                      (isActive
-                        ? page.icon
-                        : `${page.icon}-outline`) as any
-                    }
-                    size={16}
-                    color={isActive ? "#6366f1" : "#64748b"}
-                  />
-                  <Text
-                    style={[
-                      styles.tabText,
-                      isActive && styles.tabTextActive,
-                    ]}
-                  >
-                    {page.label}
-                  </Text>
-                  {isActive && <View style={styles.tabIndicator} />}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+        <>
+          <View style={styles.tabBar}>
+            <View style={styles.tabBarRow}>
+              {/* LEFT (scrollable) */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.tabScroll}
+                style={styles.leftTabScroll}
+              >
+                {/* BEFORE + Buildings */}
+                {beforeBuildings.map((page) => {
+                  const isActive2 = active === page.key;
+                  return (
+                    <TouchableOpacity
+                      key={page.key}
+                      onPress={() => handleSelect(page.key)}
+                      style={[styles.tab, isActive2 && styles.tabActive]}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                        size={16}
+                        color={isActive2 ? "#6366f1" : "#64748b"}
+                      />
+                      <Text style={[styles.tabText, isActive2 && styles.tabTextActive]}>
+                        {page.label}
+                      </Text>
+                      {isActive2 && <View style={styles.tabIndicator} />}
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {/* TAX button (dropdown is in a Modal, not inline) */}
+                {hasTax && (
+                  <View style={styles.taxWrap}>
+                    <TouchableOpacity
+                      ref={taxBtnRef}
+                      onPress={toggleTaxMenu}
+                      style={[styles.tab, isTaxActive && styles.tabActive]}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={(isTaxActive ? "cash" : "cash-outline") as any}
+                        size={16}
+                        color={isTaxActive ? "#6366f1" : "#64748b"}
+                      />
+                      <Text style={[styles.tabText, isTaxActive && styles.tabTextActive]}>TAX</Text>
+                      <Ionicons
+                        name={taxOpen ? "chevron-up" : "chevron-down"}
+                        size={14}
+                        color={isTaxActive ? "#6366f1" : "#64748b"}
+                      />
+                      {isTaxActive && <View style={styles.tabIndicator} />}
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* AFTER Buildings (Stalls and below) */}
+                {afterBuildings.map((page) => {
+                  const isActive2 = active === page.key;
+                  return (
+                    <TouchableOpacity
+                      key={page.key}
+                      onPress={() => handleSelect(page.key)}
+                      style={[styles.tab, isActive2 && styles.tabActive]}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                        size={16}
+                        color={isActive2 ? "#6366f1" : "#64748b"}
+                      />
+                      <Text style={[styles.tabText, isActive2 && styles.tabTextActive]}>
+                        {page.label}
+                      </Text>
+                      {isActive2 && <View style={styles.tabIndicator} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* RIGHT (pinned) */}
+              <View style={styles.rightTabs}>
+                {rightTabs.map((page) => {
+                  const isActive2 = active === page.key;
+                  return (
+                    <TouchableOpacity
+                      key={page.key}
+                      onPress={() => handleSelect(page.key)}
+                      style={[styles.tab, isActive2 && styles.tabActive]}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                        size={16}
+                        color={isActive2 ? "#6366f1" : "#64748b"}
+                      />
+                      <Text style={[styles.tabText, isActive2 && styles.tabTextActive]}>
+                        {page.label}
+                      </Text>
+                      {isActive2 && <View style={styles.tabIndicator} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+
+          {/* ✅ TAX dropdown as a Modal (fixes ScrollView clipping on web) */}
+          {taxOpen && hasTax && (
+            <Modal transparent animationType="fade" visible onRequestClose={() => setTaxOpen(false)}>
+              <Pressable style={styles.taxModalBackdrop} onPress={() => setTaxOpen(false)} />
+              <View
+                style={[
+                  styles.taxModalMenu,
+                  {
+                    top: taxAnchor.y + taxAnchor.h + 8,
+                    left: taxAnchor.x,
+                    minWidth: Math.max(160, taxAnchor.w),
+                  },
+                ]}
+              >
+                {taxChildren.map((child) => {
+                  const childActive2 = active === child.key;
+                  return (
+                    <TouchableOpacity
+                      key={child.key}
+                      onPress={() => handleSelect(child.key)}
+                      style={[styles.taxItem, childActive2 && styles.taxItemActive]}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons
+                        name={(childActive2 ? child.icon : `${child.icon}-outline`) as any}
+                        size={16}
+                        color={childActive2 ? "#6366f1" : "#64748b"}
+                      />
+                      <Text style={[styles.taxItemText, childActive2 && styles.taxItemTextActive]}>
+                        {child.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </Modal>
+          )}
+        </>
       )}
 
-      {/* Content */}
-      <View style={[styles.content, isMobile && styles.contentMobile]}>
-        {renderContent()}
-      </View>
+      <View style={[styles.content, isMobile && styles.contentMobile]}>{renderContent()}</View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: "#f8fafc",
-  },
-  // Header
+  screen: { flex: 1, backgroundColor: "#f8fafc" },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -507,9 +683,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#e2e8f0",
     ...(Platform.OS === "web"
-      ? {
-          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-        }
+      ? ({ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" } as any)
       : {
           shadowColor: "#000",
           shadowOpacity: 0.04,
@@ -517,11 +691,7 @@ const styles = StyleSheet.create({
           shadowOffset: { width: 0, height: 1 },
         }),
   },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
+  headerLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
   hamburger: {
     width: 40,
     height: 40,
@@ -530,20 +700,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  mobileTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
+  mobileTitle: { fontSize: 17, fontWeight: "700", color: "#0f172a" },
+
   logoWrap: {
     width: 42,
     height: 42,
     borderRadius: 10,
     overflow: "hidden",
     ...(Platform.OS === "web"
-      ? {
-          boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
-        }
+      ? ({ boxShadow: "0 2px 6px rgba(0,0,0,0.08)" } as any)
       : {
           shadowColor: "#000",
           shadowOpacity: 0.08,
@@ -551,38 +716,15 @@ const styles = StyleSheet.create({
           shadowOffset: { width: 0, height: 2 },
         }),
   },
-  logo: {
-    width: 42,
-    height: 42,
-  },
-  titleWrap: {
-    gap: 1,
-  },
-  brandTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
-    letterSpacing: -0.3,
-  },
-  brandSub: {
-    fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: "500",
-  },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  mobileHeaderRight: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  userCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
+  logo: { width: 42, height: 42 },
+  titleWrap: { gap: 1 },
+  brandTitle: { fontSize: 17, fontWeight: "700", color: "#0f172a", letterSpacing: -0.3 },
+  brandSub: { fontSize: 12, color: "#94a3b8", fontWeight: "500" },
+
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 16 },
+  mobileHeaderRight: { flexDirection: "row", alignItems: "center" },
+
+  userCard: { flexDirection: "row", alignItems: "center", gap: 10 },
   avatar: {
     width: 36,
     height: 36,
@@ -591,11 +733,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#fff",
-  },
+  avatarText: { fontSize: 13, fontWeight: "700", color: "#fff" },
   avatarSmall: {
     width: 32,
     height: 32,
@@ -604,37 +742,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarTextSmall: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#fff",
-  },
-  userInfo: {
-    gap: 2,
-  },
-  userName: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0f172a",
-    maxWidth: 120,
-  },
-  roleBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  roleText: {
-    fontSize: 10,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  headerDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: "#e2e8f0",
-  },
+  avatarTextSmall: { fontSize: 12, fontWeight: "700", color: "#fff" },
+
+  userInfo: { gap: 2 },
+  userName: { fontSize: 13, fontWeight: "600", color: "#0f172a", maxWidth: 120 },
+
+  roleBadge: { alignSelf: "flex-start", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  roleText: { fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.3 },
+
+  headerDivider: { width: 1, height: 28, backgroundColor: "#e2e8f0" },
   logoutBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -646,21 +762,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
-  logoutText: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "#64748b",
-  },
-  // Tab Bar
+  logoutText: { fontSize: 13, fontWeight: "500", color: "#64748b" },
+
   tabBar: {
     backgroundColor: "#ffffff",
     borderBottomWidth: 1,
     borderBottomColor: "#e2e8f0",
+    zIndex: 2000,
+    overflow: "visible",
   },
+
+  tabBarRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  leftTabScroll: {
+    flex: 1,
+    overflow: "visible",
+  },
+  rightTabs: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingRight: 16,
+    paddingLeft: 8,
+  },
+
   tabScroll: {
     paddingHorizontal: 16,
     gap: 4,
+    alignItems: "center",
+    overflow: "visible",
   },
+
   tab: {
     flexDirection: "row",
     alignItems: "center",
@@ -670,15 +805,8 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   tabActive: {},
-  tabText: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "#64748b",
-  },
-  tabTextActive: {
-    color: "#6366f1",
-    fontWeight: "600",
-  },
+  tabText: { fontSize: 13, fontWeight: "500", color: "#64748b" },
+  tabTextActive: { color: "#6366f1", fontWeight: "600" },
   tabIndicator: {
     position: "absolute",
     bottom: 0,
@@ -689,32 +817,61 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 2,
     borderTopRightRadius: 2,
   },
-  // Content
-  content: {
-    flex: 1,
-    padding: 20,
+
+  taxWrap: {
+    position: "relative",
+    zIndex: 3000,
+    overflow: "visible",
   },
-  contentMobile: {
-    padding: 12,
-  },
-  // Mobile Drawer
-  modalOverlay: {
-    flex: 1,
-    flexDirection: "row",
-  },
-  modalBackdrop: {
+
+  // ✅ Modal dropdown (new)
+  taxModalBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(15, 23, 42, 0.4)",
+    backgroundColor: "transparent",
   },
+  taxModalMenu: {
+    position: "absolute",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    paddingVertical: 6,
+    zIndex: 999999,
+    elevation: 999999,
+    ...(Platform.OS === "web"
+      ? ({ boxShadow: "0 12px 28px rgba(0,0,0,0.12)" } as any)
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.12,
+          shadowRadius: 20,
+          shadowOffset: { width: 0, height: 10 },
+        }),
+  },
+
+  taxItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  taxItemActive: { backgroundColor: "rgba(99, 102, 241, 0.08)" },
+  taxItemText: { fontSize: 13, fontWeight: "500", color: "#0f172a" },
+  taxItemTextActive: { color: "#6366f1", fontWeight: "600" },
+
+  content: { flex: 1, padding: 20 },
+  contentMobile: { padding: 12 },
+
+  modalOverlay: { flex: 1, flexDirection: "row" },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(15, 23, 42, 0.4)" },
+
   drawer: {
     width: 300,
     maxWidth: "85%",
     backgroundColor: "#ffffff",
     height: "100%",
     ...(Platform.OS === "web"
-      ? {
-          boxShadow: "4px 0 24px rgba(0,0,0,0.12)",
-        }
+      ? ({ boxShadow: "4px 0 24px rgba(0,0,0,0.12)" } as any)
       : {
           shadowColor: "#000",
           shadowOpacity: 0.12,
@@ -731,21 +888,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#f1f5f9",
   },
-  drawerLogoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  drawerTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  drawerSub: {
-    fontSize: 11,
-    color: "#94a3b8",
-    fontWeight: "500",
-  },
+  drawerLogoRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  drawerTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  drawerSub: { fontSize: 11, color: "#94a3b8", fontWeight: "500" },
   closeBtn: {
     width: 36,
     height: 36,
@@ -754,6 +899,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   drawerUser: {
     flexDirection: "row",
     alignItems: "center",
@@ -765,20 +911,10 @@ const styles = StyleSheet.create({
     marginTop: 16,
     borderRadius: 12,
   },
-  drawerUserInfo: {
-    flex: 1,
-    gap: 4,
-  },
-  drawerUserName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#0f172a",
-  },
-  drawerNav: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 20,
-  },
+  drawerUserInfo: { flex: 1, gap: 4 },
+  drawerUserName: { fontSize: 14, fontWeight: "600", color: "#0f172a" },
+
+  drawerNav: { flex: 1, paddingHorizontal: 16, paddingTop: 20 },
   drawerLabel: {
     fontSize: 11,
     fontWeight: "600",
@@ -787,6 +923,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginLeft: 4,
   },
+
   drawerItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -796,9 +933,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 4,
   },
-  drawerItemActive: {
-    backgroundColor: "#f1f5f9",
-  },
+  drawerItemActive: { backgroundColor: "#f1f5f9" },
+
   drawerIconWrap: {
     width: 36,
     height: 36,
@@ -807,19 +943,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  drawerIconWrapActive: {
-    backgroundColor: "#6366f1",
+  drawerIconWrapActive: { backgroundColor: "#6366f1" },
+
+  drawerItemText: { flex: 1, fontSize: 14, fontWeight: "500", color: "#64748b" },
+  drawerItemTextActive: { color: "#0f172a", fontWeight: "600" },
+
+  drawerSubList: {
+    marginLeft: 52,
+    marginBottom: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: "#e2e8f0",
+    paddingLeft: 10,
   },
-  drawerItemText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#64748b",
+  drawerSubItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 10,
   },
-  drawerItemTextActive: {
-    color: "#0f172a",
-    fontWeight: "600",
-  },
+  drawerSubItemActive: { backgroundColor: "rgba(99, 102, 241, 0.08)" },
+  drawerSubItemText: { fontSize: 13, fontWeight: "500", color: "#64748b" },
+  drawerSubItemTextActive: { color: "#6366f1", fontWeight: "600" },
+
   drawerFooter: {
     paddingHorizontal: 16,
     paddingVertical: 20,
@@ -835,9 +982,5 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: "rgba(239, 68, 68, 0.08)",
   },
-  drawerLogoutText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#ef4444",
-  },
+  drawerLogoutText: { fontSize: 14, fontWeight: "600", color: "#ef4444" },
 });

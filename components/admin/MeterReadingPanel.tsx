@@ -25,8 +25,21 @@ import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useAuth } from "../../contexts/AuthContext";
 
 /* ---------- helpers ---------- */
+const KEY_DEVICE_TOKEN = "device_token_v1";
+const KEY_DEVICE_NAME = "device_name_v1";
+
+async function getReaderDeviceToken(): Promise<string> {
+  const t = await AsyncStorage.getItem(KEY_DEVICE_TOKEN);
+  return (t || "").trim();
+}
+async function getReaderDeviceName(): Promise<string> {
+  const n = await AsyncStorage.getItem(KEY_DEVICE_NAME);
+  return (n || "").trim();
+}
 const todayStr = () => new Date().toISOString().slice(0, 10);
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert)
@@ -255,12 +268,22 @@ export default function MeterReadingPanel({
   initialMeterId?: string;
 }) {
   const jwt = useMemo(() => decodeJwtPayload(token), [token]);
-  const rolesRaw = String(jwt?.user_level ?? jwt?.user_roles ?? "").toLowerCase();
-  const isAdmin = rolesRaw.includes("admin");
-  const isOperator = rolesRaw.includes("operator");
-  const isReader = rolesRaw.includes("reader");
-  const canWrite = isAdmin || isOperator || isReader;
-  
+  const roles = Array.isArray(jwt?.user_roles)
+    ? jwt.user_roles.map((r: any) => String(r).toLowerCase())
+    : String(jwt?.user_level ?? jwt?.user_roles ?? "")
+        .split(/[,\s]+/)
+        .map((r) => r.toLowerCase())
+        .filter(Boolean);
+
+  const isAdmin = roles.includes("admin");
+  const isOperator = roles.includes("operator");
+  const isReader = roles.includes("reader");
+  const isBiller = roles.includes("biller");
+  const canWrite = isAdmin || isOperator || isReader || isBiller;
+
+  const [hasOfflinePackage, setHasOfflinePackage] = useState(false);
+  const [syncingPackage, setSyncingPackage] = useState(false);
+
   const userBuildingId = String(jwt?.building_id || "");
 
   const headerToken =
@@ -284,9 +307,52 @@ export default function MeterReadingPanel({
     NetInfo.fetch().then((s) => setIsConnected(!!s.isConnected));
     return () => sub && sub();
   }, []);
-  const { scans, queueScan, removeScan, approveOne, approveAll, markPending, isConnected: ctxConnected } =
-    useScanHistory();
+  const { token: authToken, deviceToken: ctxDeviceToken, deviceName: ctxDeviceName } = useAuth();
+
+  const {
+    scans,
+    queueScan,
+    removeScan,
+    markPending,
+    syncOfflineReadings,
+    isConnected: ctxConnected,
+  } = useScanHistory();
+
   const online = isConnected ?? ctxConnected ?? false;
+  const [syncing, setSyncing] = useState(false);
+
+  const onSyncOffline = async () => {
+    if (!online) {
+      notify("Offline", "Connect to internet first to sync offline readings.");
+      return;
+    }
+    if (!authToken) {
+      notify("Not logged in", "Please log in again.");
+      return;
+    }
+
+    // device token: prefer context, fallback to AsyncStorage
+    const deviceToken = (ctxDeviceToken || (await getReaderDeviceToken())).trim();
+    const deviceName = (ctxDeviceName || (await getReaderDeviceName())).trim();
+
+    if (!deviceToken) {
+      notify(
+        "Device not registered",
+        "This reader device has no device token yet. Ask admin to register the device serial, then login again."
+      );
+      return;
+    }
+
+    try {
+      setSyncing(true);
+      await syncOfflineReadings(authToken, deviceToken);
+      notify("Synced", `Offline readings sent successfully${deviceName ? ` (${deviceName})` : ""}.`);
+    } catch (e: any) {
+      notify("Sync failed", e?.message || "Unable to sync offline readings.");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // filters + data
   const [typeFilter, setTypeFilter] = useState<"" | "electric" | "water" | "lpg">("");
@@ -320,9 +386,6 @@ export default function MeterReadingPanel({
   const [formRemarks, setFormRemarks] = useState<string>("");
   const [formImage, setFormImage] = useState<string>("");
 
-  // When coming from scanner with initialMeterId:
-  // - preselect the meter
-  // - auto-open the Create Reading modal
   useEffect(() => {
     if (initialMeterId) {
       setSelectedMeterId(initialMeterId);
@@ -346,25 +409,23 @@ export default function MeterReadingPanel({
   const readingInputRef = useRef<TextInput>(null);
 
   const [historyVisible, setHistoryVisible] = useState(false);
-  const [historyTab, setHistoryTab] = useState<"all" | "pending" | "failed" | "approved">("all");
+  const [historyTab, setHistoryTab] = useState<"all" | "pending" | "failed" | "synced">("all");
 
   const [imgToolVisible, setImgToolVisible] = useState(false);
 
   // ---------- AUTO-DETECT READING ENDPOINT ----------
   const READING_ENDPOINTS = ["/meter_reading", "/readings", "/meter-readings", "/meterreadings"];
   const [readingBase, setReadingBase] = useState<string>(READING_ENDPOINTS[0]);
-  /* ===== Billing lock detection (optional) ===== */
   type BillingHeader = {
     building_id: string;
     period: { start: string; end: string };
-    // optional status if you later add a locked flag in the DB
     status?: string;
   };
 
   const BILLING_HEADERS_ENDPOINTS = [
     "/billing/headers",
     "/billings/headers",
-    "/billings/buildings", // 👈 your real endpoint
+    "/billings/buildings",
     "/billing",
     "/billings",
   ];
@@ -389,7 +450,6 @@ export default function MeterReadingPanel({
           return p;
         }
       } catch {
-        // ignore and try next
       }
     }
     return null;
@@ -405,11 +465,9 @@ export default function MeterReadingPanel({
 
       let headers: BillingHeader[] = [];
 
-      // Case 1: backend returns an array of headers
       if (Array.isArray(data)) {
         headers = data as BillingHeader[];
       }
-      // Case 2: backend returns grouped object like /billings/buildings
       else if (data && typeof data === "object") {
         headers = Object.values(data as Record<string, any>).map((item) => ({
           building_id: item.building_id,
@@ -426,7 +484,6 @@ export default function MeterReadingPanel({
         }));
       }
 
-      // keep only valid ones
       headers = headers.filter(
         (h) =>
           h &&
@@ -477,6 +534,19 @@ export default function MeterReadingPanel({
       notify("Not logged in", "Please log in to manage meter readings.");
       return;
     }
+    // ✅ IMPORTANT: Reader must NOT auto-download tenant/meter data on login.
+    // Reader will only get data when they press Sync (IMPORT).
+    if (!isAdmin && !isOperator && !isBiller) {
+      // this is a "reader"
+      setMeters([]);
+      setStalls([]);
+      setReadings([]);
+      setBuildings([]);
+      setHasOfflinePackage(false); // always start empty
+      setBusy(false);
+      return;
+    }
+
     try {
       setBusy(true);
       const base = await detectReadingEndpoint();
@@ -843,6 +913,105 @@ export default function MeterReadingPanel({
     }
   };
 
+  if (!authToken) {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.card, { alignItems: "center", justifyContent: "center" }]}>
+          <Text style={styles.cardTitle}>Not logged in</Text>
+          <Text style={{ marginTop: 8, color: "#64748b" }}>Please log in again.</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const syncReaderPackage = async () => {
+  // only readers use this
+  if (isAdmin || isOperator || isBiller) {
+    notify("Not for admin", "This Sync button is only for Reader offline workflow.");
+    return;
+  }
+
+  if (!online) {
+    notify("Offline", "You must be online to sync (import/export).");
+    return;
+  }
+
+  try {
+    setSyncingPackage(true);
+
+    // device token must exist (saved during login / device registration flow)
+    const deviceToken = (await AsyncStorage.getItem(KEY_DEVICE_TOKEN))?.trim() || "";
+    if (!deviceToken) {
+      notify("Missing device token", "This device is not registered. Ask admin to register this device serial.");
+      return;
+    }
+
+    // =========================
+    // 1) IMPORT (phone is empty)
+    // =========================
+    if (!hasOfflinePackage) {
+      const res = await api.post("/offlineExport/import", { device_token: deviceToken });
+
+      const pkg = res?.data?.package;
+      const items = Array.isArray(pkg?.items) ? pkg.items : [];
+
+      // Convert package items into your Meter list shape
+      const importedMeters: Meter[] = items.map((it: any) => ({
+        meter_id: String(it.meter_id),
+        meter_type: (String(it.classification || it.meter_type || "electric").toLowerCase() as any),
+        meter_sn: String(it.meter_number || it.meter_sn || ""),
+        meter_mult: 1,
+        stall_id: String(it.stall_id || ""),
+        meter_status: "active",
+        last_updated: new Date().toISOString(),
+        updated_by: "import",
+        // optional fields for UI if you want:
+        // tenant_name: it.tenant_name,
+        // prev_reading: it.prev_reading,
+        // prev_date: it.prev_date,
+        // prev_image: it.prev_image,
+        // qr: it.qr,
+      }));
+
+      // You are not getting stalls from backend anymore
+      setMeters(importedMeters);
+      setStalls([]);
+      setReadings([]);
+
+      if (!formMeterId && importedMeters.length) {
+        setFormMeterId(importedMeters[0].meter_id);
+      }
+
+      setHasOfflinePackage(true);
+      notify("Synced", `Imported ${importedMeters.length} meters to this device.`);
+      return;
+    }
+
+    if (!authToken) {
+      notify("Not logged in", "Please log in again.");
+      return;
+    }
+
+    await syncOfflineReadings(authToken!, deviceToken);
+
+    // after successful export we must clear phone data back to 0
+    setMeters([]);
+    setStalls([]);
+    setReadings([]);
+    setBuildings([]);
+    setFormMeterId("");
+    setSelectedMeterId("");
+    setHasOfflinePackage(false);
+
+    notify("Synced", "Exported offline readings and cleared device data.");
+  } catch (e: any) {
+    notify("Sync failed", errorText(e, "Unable to sync right now."));
+  } finally {
+    setSyncingPackage(false);
+  }
+};
+
+
   // Test function for image endpoint
   const testImageEndpoint = async () => {
     if (!readings.length) {
@@ -885,6 +1054,17 @@ export default function MeterReadingPanel({
         <TouchableOpacity style={styles.historyBtn} onPress={() => setHistoryVisible(true)}>
           <Text style={styles.historyBtnText}>Offline History ({scans.length})</Text>
         </TouchableOpacity>
+        {!isAdmin && !isOperator && !isBiller && (
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={syncReaderPackage}
+            disabled={syncingPackage}
+          >
+            <Text style={styles.btnText}>
+              {syncingPackage ? "Syncing..." : hasOfflinePackage ? "Sync (Export)" : "Sync (Import)"}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* meters card */}
@@ -892,7 +1072,7 @@ export default function MeterReadingPanel({
         {/* header */}
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Meter Readings</Text>
-          {canWrite && (
+        {canWrite && (!isReader || hasOfflinePackage) && (
             <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
               <Text style={styles.btnText}>+ Create Reading</Text>
             </TouchableOpacity>
@@ -1377,9 +1557,9 @@ export default function MeterReadingPanel({
         visible={historyVisible}
         onClose={() => setHistoryVisible(false)}
         scans={filteredScans}
-        approveAll={() => approveAll(token)}
+        onSync={onSyncOffline}
+        syncing={syncing}
         markPending={markPending}
-        approveOne={(id: string) => approveOne(id, token)}
         removeScan={removeScan}
         online={online}
       />
@@ -1591,8 +1771,15 @@ function ReadingsModal({
           for (let i = 0; i < uint8Array.length; i++) {
             binary += String.fromCharCode(uint8Array[i]);
           }
-          const base64 = btoa(binary);
-          imageUri = asDataUrl(base64);
+          if (Platform.OS === "web") {
+            const base64 = btoa(binary);
+            imageUri = asDataUrl(base64);
+          } else {
+            imageUri = null; // native: skip base64 conversion
+          }
+          if (Platform.OS !== "web") {
+            notify("Print Proof", "Image preview/printing is available on the web app.");
+          }
           console.log('🖼️ Image converted to data URL successfully');
         } catch (convertError) {
           console.error('❌ Error converting image to base64:', convertError);
@@ -2374,7 +2561,16 @@ const handlePrint = () => {
   );
 }
 
-function HistoryModal({ visible, onClose, scans, approveAll, markPending, approveOne, removeScan, online }: any) {
+function HistoryModal({
+  visible,
+  onClose,
+  scans,
+  onSync,
+  syncing,
+  markPending,
+  removeScan,
+  online,
+}: any) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
@@ -2386,19 +2582,26 @@ function HistoryModal({ visible, onClose, scans, approveAll, markPending, approv
         >
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Offline History</Text>
+
             <View style={styles.headerActions}>
               <TouchableOpacity
                 style={[styles.actionBtn, scans.length ? null : styles.actionBtnDisabled]}
-                disabled={!scans.length}
-                onPress={approveAll}
+                disabled={!scans.length || syncing || !online}
+                onPress={onSync}
               >
-                <Text style={styles.actionBtnText}>Approve All</Text>
+                {syncing ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.actionBtnText}>{online ? "Sync" : "Offline"}</Text>
+                )}
               </TouchableOpacity>
+
               <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={onClose}>
                 <Text style={styles.actionBtnGhostText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
+
           <FlatList
             data={scans}
             keyExtractor={(it) => it.id}
@@ -2414,10 +2617,13 @@ function HistoryModal({ visible, onClose, scans, approveAll, markPending, approv
                   </Text>
                   <Text style={styles.rowSubSmall}>Saved: {new Date(item.createdAt).toLocaleString()}</Text>
                   {!!item.remarks && <Text style={styles.rowSubSmall}>Remarks: {item.remarks}</Text>}
+
                   <View style={styles.badgesRow}>
-                    {item.status === "pending" && <Text style={[styles.statusBadge, styles.statusPending]}>Pending</Text>}
-                    {item.status === "failed" && <Text style={[styles.statusBadge, styles.statusFailed]}>Failed</Text>}
-                    {item.status === "approved" && <Text style={[styles.statusBadge, styles.statusApproved]}>Approved</Text>}
+                    {(item.status === "pending" || item.status === "failed") && (
+                      <Text style={[styles.statusBadge, item.status === "pending" ? styles.statusPending : styles.statusFailed]}>
+                        {item.status === "pending" ? "Pending" : "Failed"}
+                      </Text>
+                    )}
                     {!!item.error && (
                       <Text style={[styles.statusBadge, styles.statusWarn]} numberOfLines={1}>
                         Error: {item.error}
@@ -2425,13 +2631,12 @@ function HistoryModal({ visible, onClose, scans, approveAll, markPending, approv
                     )}
                   </View>
                 </View>
+
                 <View style={styles.rowRight}>
                   <TouchableOpacity style={[styles.smallBtn, styles.smallBtnGhost]} onPress={() => markPending(item.id)}>
                     <Text style={styles.smallBtnGhostText}>Mark Pending</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.smallBtn]} onPress={() => approveOne(item.id)}>
-                    <Text style={styles.smallBtnText}>{online ? "Approve" : "Queue"}</Text>
-                  </TouchableOpacity>
+
                   <TouchableOpacity style={[styles.smallBtn, styles.smallBtnDanger]} onPress={() => removeScan(item.id)}>
                     <Text style={styles.smallBtnText}>Delete</Text>
                   </TouchableOpacity>
