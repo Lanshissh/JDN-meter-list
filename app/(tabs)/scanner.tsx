@@ -1,4 +1,3 @@
-// scanner.tsx
 import {
   OnSuccessfulScanProps,
   QRCodeScanner,
@@ -25,7 +24,6 @@ export default function ScannerScreen() {
     if (scanned) return;
     setScanned(true);
 
-    // Haptic feedback for successful scan
     if (Platform.OS !== "web") {
       Vibration.vibrate(100);
     }
@@ -34,7 +32,7 @@ export default function ScannerScreen() {
       (data as any)?.code ??
         (data as any)?.rawData ??
         (data as any)?.data ??
-        ""
+        "",
     ).trim();
 
     if (!raw) {
@@ -43,7 +41,6 @@ export default function ScannerScreen() {
       return;
     }
 
-    // Expect the QR content to be the meter id, e.g. "MTR-0001"
     const meterIdPattern = /^MTR-[A-Za-z0-9-]+$/i;
     if (!meterIdPattern.test(raw)) {
       Alert.alert("Invalid QR", "QR code does not contain a valid meter ID.");
@@ -53,7 +50,6 @@ export default function ScannerScreen() {
 
     const meterId = raw.toUpperCase();
 
-    // Navigate to Admin → Readings with meterId
     router.replace({
       pathname: "/(tabs)/admin",
       params: { panel: "readings", meterId },
@@ -67,7 +63,7 @@ export default function ScannerScreen() {
     React.useCallback(() => {
       setScannerKey((prev) => prev + 1);
       setScanned(false);
-    }, [])
+    }, []),
   );
 
   return (
@@ -84,7 +80,6 @@ export default function ScannerScreen() {
         permissionScreen={{}}
       />
 
-      {/* Top gradient overlay */}
       <View pointerEvents="none" style={styles.topGradient}>
         <View style={styles.logoContainer}>
           <Image
@@ -96,7 +91,6 @@ export default function ScannerScreen() {
         </View>
       </View>
 
-      {/* Bottom instructions */}
       <View pointerEvents="none" style={styles.bottomGradient}>
         <View style={styles.instructionsContainer}>
           <Text style={styles.instructionTitle}>Scan Meter QR Code</Text>
@@ -111,7 +105,6 @@ export default function ScannerScreen() {
         </View>
       </View>
 
-      {/* Scanning status indicator */}
       {scanned && (
         <View pointerEvents="none" style={styles.statusIndicator}>
           <View style={styles.statusBadge}>

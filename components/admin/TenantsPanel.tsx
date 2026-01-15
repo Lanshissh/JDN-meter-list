@@ -58,11 +58,18 @@ type Stall = {
   updated_by?: string;
 };
 
-type VatRow = { tax_id: string | number; vat_code: string; vat_description?: string | null };
+type VatRow = {
+  tax_id: string | number;
+  vat_code: string;
+  vat_description?: string | null;
+};
 type WtRow = { wt_id: string; wt_code: string; wt_description?: string | null };
 
 const cmp = (a: string | number, b: string | number) =>
-  String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
+  String(a ?? "").localeCompare(String(b ?? ""), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
 
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
@@ -72,7 +79,8 @@ function decodeJwtPayload(token: string | null): any | null {
     const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
     const padLen = (4 - (base64.length % 4)) % 4;
     const padded = base64 + "=".repeat(padLen);
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
     let str = "";
     for (let i = 0; i < padded.length; i += 4) {
       const c1 = chars.indexOf(padded[i]);
@@ -91,7 +99,7 @@ function decodeJwtPayload(token: string | null): any | null {
       str
         .split("")
         .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
+        .join(""),
     );
     return JSON.parse(json);
   } catch {
@@ -131,7 +139,9 @@ const H = Dimensions.get("window").height;
 const FOOTER_H = 68,
   HEADER_H = 56,
   V_MARGIN = 24;
-const MOBILE_MODAL_MAX_HEIGHT = Math.round(H - (FOOTER_H + HEADER_H + V_MARGIN));
+const MOBILE_MODAL_MAX_HEIGHT = Math.round(
+  H - (FOOTER_H + HEADER_H + V_MARGIN),
+);
 
 const Chip = ({
   label,
@@ -142,8 +152,18 @@ const Chip = ({
   active: boolean;
   onPress: () => void;
 }) => (
-  <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
-    <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+  <TouchableOpacity
+    onPress={onPress}
+    style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
+  >
+    <Text
+      style={[
+        styles.chipText,
+        active ? styles.chipTextActive : styles.chipTextIdle,
+      ]}
+    >
+      {label}
+    </Text>
   </TouchableOpacity>
 );
 
@@ -211,10 +231,17 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     mergedToken && /^Bearer\s/i.test(mergedToken.trim())
       ? mergedToken.trim()
       : mergedToken
-      ? `Bearer ${mergedToken.trim()}`
-      : "";
-  const authHeader = useMemo(() => (headerToken ? { Authorization: headerToken } : {}), [headerToken]);
-  const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
+        ? `Bearer ${mergedToken.trim()}`
+        : "";
+  const authHeader = useMemo(
+    () => (headerToken ? { Authorization: headerToken } : {}),
+    [headerToken],
+  );
+  const api = useMemo(
+    () =>
+      axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
+    [authHeader],
+  );
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -224,7 +251,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [wtCodes, setWtCodes] = useState<WtRow[]>([]);
   const [query, setQuery] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">("");
+  const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">(
+    "",
+  );
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
@@ -293,7 +322,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       }
 
       try {
-        const [vRes, wRes] = await Promise.all([api.get<VatRow[]>("/vat"), api.get<WtRow[]>("/wt")]);
+        const [vRes, wRes] = await Promise.all([
+          api.get<VatRow[]>("/vat"),
+          api.get<WtRow[]>("/wt"),
+        ]);
         setVatCodes(vRes.data || []);
         setWtCodes(wRes.data || []);
       } catch {
@@ -324,13 +356,23 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = tenants;
-    if (buildingFilter) list = list.filter((t) => t.building_id === buildingFilter);
-    if (statusFilter) list = list.filter((t) => t.tenant_status === statusFilter);
+    if (buildingFilter)
+      list = list.filter((t) => t.building_id === buildingFilter);
+    if (statusFilter)
+      list = list.filter((t) => t.tenant_status === statusFilter);
     if (!q) return list;
     return list.filter((t) =>
-      [t.tenant_id, t.tenant_sn, t.tenant_name, t.building_id, t.tenant_status, t.vat_code ?? "", t.wt_code ?? ""]
+      [
+        t.tenant_id,
+        t.tenant_sn,
+        t.tenant_name,
+        t.building_id,
+        t.tenant_status,
+        t.vat_code ?? "",
+        t.wt_code ?? "",
+      ]
         .map((v) => String(v).toLowerCase())
-        .some((v) => v.includes(q))
+        .some((v) => v.includes(q)),
     );
   }, [tenants, query, buildingFilter, statusFilter]);
 
@@ -364,7 +406,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     setDetailsVisible(true);
 
     try {
-      const bRes = await api.get<BuildingBaseRates>(`/buildings/${encodeURIComponent(row.building_id)}/base-rates`);
+      const bRes = await api.get<BuildingBaseRates>(
+        `/buildings/${encodeURIComponent(row.building_id)}/base-rates`,
+      );
       setBRates(bRes.data);
     } catch {
       setBRates(null);
@@ -373,7 +417,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     try {
       setStallsBusy(true);
       const sRes = await api.get<Stall[]>(`/stalls`);
-      setTenantStalls((sRes.data || []).filter((s) => s.tenant_id === row.tenant_id));
+      setTenantStalls(
+        (sRes.data || []).filter((s) => s.tenant_id === row.tenant_id),
+      );
     } catch {
       setTenantStalls([]);
     } finally {
@@ -468,13 +514,16 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const roleBannerText = isAdmin
     ? "Admin account – full access"
     : isBiller
-    ? "Biller account – can edit tax codes"
-    : isOperator
-    ? "Operator account – tax codes are read-only"
-    : null;
+      ? "Biller account – can edit tax codes"
+      : isOperator
+        ? "Operator account – tax codes are read-only"
+        : null;
 
   return (
-    <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", android: undefined })} style={styles.page}>
+    <KeyboardAvoidingView
+      behavior={Platform.select({ ios: "padding", android: undefined })}
+      style={styles.page}
+    >
       <View style={styles.grid}>
         <View style={styles.card}>
           <View style={styles.cardHeader}>
@@ -501,7 +550,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
-              <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+              <Ionicons
+                name="search"
+                size={16}
+                color="#94a3b8"
+                style={{ marginRight: 6 }}
+              />
               <TextInput
                 value={query}
                 onChangeText={setQuery}
@@ -510,8 +564,16 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 style={styles.search}
               />
             </View>
-            <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
-              <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+            <TouchableOpacity
+              style={styles.btnGhost}
+              onPress={() => setFiltersVisible(true)}
+            >
+              <Ionicons
+                name="options-outline"
+                size={16}
+                color="#394e6a"
+                style={{ marginRight: 6 }}
+              />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
@@ -521,7 +583,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
             <View style={styles.chipsRow}>
-              <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+              <Chip
+                label="All"
+                active={buildingFilter === ""}
+                onPress={() => setBuildingFilter("")}
+              />
               {buildings
                 .slice()
                 .sort((a, b) => a.building_name.localeCompare(b.building_name))
@@ -545,30 +611,54 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               data={sorted}
               keyExtractor={(item) => item.tenant_id}
               style={{ flex: 1 }}
-              contentContainerStyle={sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }}
-              ListEmptyComponent={<Text style={styles.empty}>No tenants found.</Text>}
+              contentContainerStyle={
+                sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }
+              }
+              ListEmptyComponent={
+                <Text style={styles.empty}>No tenants found.</Text>
+              }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
-                      {item.tenant_name} <Text style={styles.rowSub}>({item.tenant_id})</Text>
+                      {item.tenant_name}{" "}
+                      <Text style={styles.rowSub}>({item.tenant_id})</Text>
                     </Text>
                     <Text style={styles.rowMeta}>
-                      SN: {item.tenant_sn || "—"} · {buildingName(item.building_id)}
+                      SN: {item.tenant_sn || "—"} ·{" "}
+                      {buildingName(item.building_id)}
                     </Text>
                     <Text style={styles.rowMetaSmall}>
-                      Status: {item.tenant_status.toUpperCase()} · VAT: {vatLabelFor(item.vat_code)} · WT:{" "}
-                      {wtLabelFor(item.wt_code)} · Penalty: {item.for_penalty ? "Yes" : "No"}
+                      Status: {item.tenant_status.toUpperCase()} · VAT:{" "}
+                      {vatLabelFor(item.vat_code)} · WT:{" "}
+                      {wtLabelFor(item.wt_code)} · Penalty:{" "}
+                      {item.for_penalty ? "Yes" : "No"}
                     </Text>
                   </View>
                   <View style={styles.rowActions}>
-                    <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openDetails(item)}>
-                      <Ionicons name="create-outline" size={16} color="#1f2937" />
-                      <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.actionEdit]}
+                      onPress={() => openDetails(item)}
+                    >
+                      <Ionicons
+                        name="create-outline"
+                        size={16}
+                        color="#1f2937"
+                      />
+                      <Text style={[styles.actionText, styles.actionEditText]}>
+                        Update
+                      </Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => deleteTenant(item)}>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.actionDelete]}
+                      onPress={() => deleteTenant(item)}
+                    >
                       <Ionicons name="trash-outline" size={16} color="#fff" />
-                      <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                      <Text
+                        style={[styles.actionText, styles.actionDeleteText]}
+                      >
+                        Delete
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -600,23 +690,55 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       >
         <Text style={styles.dropdownLabel}>Status</Text>
         <View className="chipsRow" style={styles.chipsRow}>
-          <Chip label="All" active={statusFilter === ""} onPress={() => setStatusFilter("")} />
-          <Chip label="Active" active={statusFilter === "active"} onPress={() => setStatusFilter("active")} />
-          <Chip label="Inactive" active={statusFilter === "inactive"} onPress={() => setStatusFilter("inactive")} />
+          <Chip
+            label="All"
+            active={statusFilter === ""}
+            onPress={() => setStatusFilter("")}
+          />
+          <Chip
+            label="Active"
+            active={statusFilter === "active"}
+            onPress={() => setStatusFilter("active")}
+          />
+          <Chip
+            label="Inactive"
+            active={statusFilter === "inactive"}
+            onPress={() => setStatusFilter("inactive")}
+          />
         </View>
 
         <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
         <View style={styles.chipsRow}>
-          <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
-          <Chip label="Oldest" active={sortMode === "oldest"} onPress={() => setSortMode("oldest")} />
-          <Chip label="ID ↑" active={sortMode === "idAsc"} onPress={() => setSortMode("idAsc")} />
-          <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
+          <Chip
+            label="Newest"
+            active={sortMode === "newest"}
+            onPress={() => setSortMode("newest")}
+          />
+          <Chip
+            label="Oldest"
+            active={sortMode === "oldest"}
+            onPress={() => setSortMode("oldest")}
+          />
+          <Chip
+            label="ID ↑"
+            active={sortMode === "idAsc"}
+            onPress={() => setSortMode("idAsc")}
+          />
+          <Chip
+            label="ID ↓"
+            active={sortMode === "idDesc"}
+            onPress={() => setSortMode("idDesc")}
+          />
         </View>
       </ModalSheet>
 
       <ModalSheet
         visible={detailsVisible}
-        title={detailsTenant ? `Quick Edit • ${detailsTenant.tenant_name}` : "Quick Edit"}
+        title={
+          detailsTenant
+            ? `Quick Edit • ${detailsTenant.tenant_name}`
+            : "Quick Edit"
+        }
         onClose={() => setDetailsVisible(false)}
         footer={
           <>
@@ -631,7 +753,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             <Button variant="ghost" onPress={() => setDetailsVisible(false)}>
               Close
             </Button>
-            <Button icon="save-outline" onPress={saveTenant} disabled={submitting}>
+            <Button
+              icon="save-outline"
+              onPress={saveTenant}
+              disabled={submitting}
+            >
               {submitting ? "Saving…" : "Save changes"}
             </Button>
           </>
@@ -642,7 +768,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             {roleBannerText && (
               <View style={styles.roleBanner}>
                 <Ionicons
-                  name={isOperator ? "lock-closed-outline" : "shield-checkmark-outline"}
+                  name={
+                    isOperator
+                      ? "lock-closed-outline"
+                      : "shield-checkmark-outline"
+                  }
                   size={16}
                   color={isOperator ? "#854d0e" : "#1d4ed8"}
                   style={{ marginRight: 6 }}
@@ -662,7 +792,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               style={styles.sheetScroll}
               contentContainerStyle={styles.sheetContent}
               keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+              keyboardDismissMode={
+                Platform.OS === "ios" ? "interactive" : "on-drag"
+              }
               nestedScrollEnabled
               showsVerticalScrollIndicator
             >
@@ -675,7 +807,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                         <Input
                           placeholder="e.g., SN-001"
                           value={tenantDraft?.tenant_sn || ""}
-                          onChangeText={(v) => setTenantDraft((t) => (t ? { ...t, tenant_sn: v } : t))}
+                          onChangeText={(v) =>
+                            setTenantDraft((t) =>
+                              t ? { ...t, tenant_sn: v } : t,
+                            )
+                          }
                         />
                       </View>
                       <View>
@@ -683,7 +819,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                         <Input
                           placeholder="Tenant name"
                           value={tenantDraft?.tenant_name || ""}
-                          onChangeText={(v) => setTenantDraft((t) => (t ? { ...t, tenant_name: v } : t))}
+                          onChangeText={(v) =>
+                            setTenantDraft((t) =>
+                              t ? { ...t, tenant_name: v } : t,
+                            )
+                          }
                         />
                       </View>
                       <View style={styles.rowInline}>
@@ -693,7 +833,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                             value={tenantDraft?.tenant_status || "active"}
                             onChange={(v) =>
                               setTenantDraft((t) =>
-                                t ? ({ ...t, tenant_status: v as "active" | "inactive" } as Tenant) : t
+                                t
+                                  ? ({
+                                      ...t,
+                                      tenant_status: v as "active" | "inactive",
+                                    } as Tenant)
+                                  : t,
                               )
                             }
                           >
@@ -705,12 +850,20 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           <Text style={styles.fieldLabel}>Penalty</Text>
                           <Button
                             variant="ghost"
-                            icon={(tenantDraft?.for_penalty ? "checkbox" : "square-outline") as any}
+                            icon={
+                              (tenantDraft?.for_penalty
+                                ? "checkbox"
+                                : "square-outline") as any
+                            }
                             onPress={() =>
-                              setTenantDraft((t) => (t ? { ...t, for_penalty: !t.for_penalty } : t))
+                              setTenantDraft((t) =>
+                                t ? { ...t, for_penalty: !t.for_penalty } : t,
+                              )
                             }
                           >
-                            {tenantDraft?.for_penalty ? "For penalty" : "No penalty"}
+                            {tenantDraft?.for_penalty
+                              ? "For penalty"
+                              : "No penalty"}
                           </Button>
                         </View>
                       </View>
@@ -719,7 +872,11 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                         <PickerField
                           label="Building"
                           value={tenantDraft?.building_id || ""}
-                          onChange={(v) => setTenantDraft((t) => (t ? { ...t, building_id: v } : t))}
+                          onChange={(v) =>
+                            setTenantDraft((t) =>
+                              t ? { ...t, building_id: v } : t,
+                            )
+                          }
                           placeholder="Select building…"
                         >
                           {buildings.map((b) => (
@@ -732,13 +889,21 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                         </PickerField>
                       ) : (
                         <View>
-                          <Text style={styles.fieldLabel}>Building (type ID)</Text>
+                          <Text style={styles.fieldLabel}>
+                            Building (type ID)
+                          </Text>
                           <Input
                             placeholder="e.g., BLDG-001"
                             value={tenantDraft?.building_id || ""}
-                            onChangeText={(v) => setTenantDraft((t) => (t ? { ...t, building_id: v } : t))}
+                            onChangeText={(v) =>
+                              setTenantDraft((t) =>
+                                t ? { ...t, building_id: v } : t,
+                              )
+                            }
                           />
-                          <Text style={styles.helpText}>No building list available — using manual input.</Text>
+                          <Text style={styles.helpText}>
+                            No building list available — using manual input.
+                          </Text>
                         </View>
                       )}
                     </View>
@@ -751,7 +916,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           label="VAT Code"
                           value={tenantDraft?.vat_code ?? ""}
                           onChange={(v) =>
-                            setTenantDraft((t) => (t ? { ...t, vat_code: v || null } : t))
+                            setTenantDraft((t) =>
+                              t ? { ...t, vat_code: v || null } : t,
+                            )
                           }
                           placeholder="— None —"
                         >
@@ -759,7 +926,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                             <Picker.Item
                               key={String(v.tax_id)}
                               label={`${v.vat_code}${
-                                v.vat_description ? ` — ${v.vat_description}` : ""
+                                v.vat_description
+                                  ? ` — ${v.vat_description}`
+                                  : ""
                               }`}
                               value={v.vat_code}
                             />
@@ -769,7 +938,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           label="Withholding Code"
                           value={tenantDraft?.wt_code ?? ""}
                           onChange={(v) =>
-                            setTenantDraft((t) => (t ? { ...t, wt_code: v || null } : t))
+                            setTenantDraft((t) =>
+                              t ? { ...t, wt_code: v || null } : t,
+                            )
                           }
                           placeholder="— None —"
                         >
@@ -801,7 +972,9 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           </View>
                         </View>
                         <View>
-                          <Text style={styles.fieldLabel}>Withholding Code</Text>
+                          <Text style={styles.fieldLabel}>
+                            Withholding Code
+                          </Text>
                           <View style={styles.readonlyBox}>
                             <Ionicons
                               name="lock-closed-outline"
@@ -815,8 +988,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           </View>
                         </View>
                         <Text style={styles.helpText}>
-                          Tax codes are <Text style={{ fontWeight: "700" }}>read-only</Text> for operator accounts.
-                          Please contact an admin or biller if you need these values changed.
+                          Tax codes are{" "}
+                          <Text style={{ fontWeight: "700" }}>read-only</Text>{" "}
+                          for operator accounts. Please contact an admin or
+                          biller if you need these values changed.
                         </Text>
                       </View>
                     )}
@@ -826,26 +1001,36 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 <View style={styles.quickCol}>
                   <Card title="Base Rates (Read-only)">
                     <Text style={styles.kv}>
-                      <Text style={styles.kvKey}>Building:</Text> {buildingName(tenantDraft?.building_id || "")}
+                      <Text style={styles.kvKey}>Building:</Text>{" "}
+                      {buildingName(tenantDraft?.building_id || "")}
                     </Text>
                     <Text style={styles.kv}>
-                      <Text style={styles.kvKey}>Electric Rate:</Text> {fmt(bRates?.erate_perKwH, "per kWh")}
+                      <Text style={styles.kvKey}>Electric Rate:</Text>{" "}
+                      {fmt(bRates?.erate_perKwH, "per kWh")}
                     </Text>
                     <Text style={styles.kv}>
-                      <Text style={styles.kvKey}>Electric Min:</Text> {fmt(bRates?.emin_con, "kWh")}
+                      <Text style={styles.kvKey}>Electric Min:</Text>{" "}
+                      {fmt(bRates?.emin_con, "kWh")}
                     </Text>
                     <Text style={styles.kv}>
-                      <Text style={styles.kvKey}>Water Rate:</Text> {fmt(bRates?.wrate_perCbM, "per cu.m")}
+                      <Text style={styles.kvKey}>Water Rate:</Text>{" "}
+                      {fmt(bRates?.wrate_perCbM, "per cu.m")}
                     </Text>
                     <Text style={styles.kv}>
-                      <Text style={styles.kvKey}>Water Min:</Text> {fmt(bRates?.wmin_con, "cu.m")}
+                      <Text style={styles.kvKey}>Water Min:</Text>{" "}
+                      {fmt(bRates?.wmin_con, "cu.m")}
                     </Text>
                     <Text style={styles.kv}>
-                      <Text style={styles.kvKey}>LPG Rate:</Text> {fmt(bRates?.lrate_perKg, "per kg")}
+                      <Text style={styles.kvKey}>LPG Rate:</Text>{" "}
+                      {fmt(bRates?.lrate_perKg, "per kg")}
                     </Text>
                   </Card>
 
-                  <Card title="Stalls" right={stallsBusy ? <ActivityIndicator /> : undefined} style={{ marginTop: 12 }}>
+                  <Card
+                    title="Stalls"
+                    right={stallsBusy ? <ActivityIndicator /> : undefined}
+                    style={{ marginTop: 12 }}
+                  >
                     {stallsBusy ? null : tenantStalls.length === 0 ? (
                       <Text style={styles.empty}>No stalls assigned.</Text>
                     ) : (
@@ -853,13 +1038,17 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                         <View key={s.stall_id} style={styles.stallRow}>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.rowTitle}>
-                              {s.stall_sn} <Text style={styles.rowSub}>({s.stall_id})</Text>
+                              {s.stall_sn}{" "}
+                              <Text style={styles.rowSub}>({s.stall_id})</Text>
                             </Text>
                             <Text style={styles.rowMetaSmall}>
                               Status: {String(s.stall_status).toUpperCase()}
                             </Text>
                           </View>
-                          <Button variant="ghost" onPress={() => unassignStall(s)}>
+                          <Button
+                            variant="ghost"
+                            onPress={() => unassignStall(s)}
+                          >
                             Unassign
                           </Button>
                           <Button onPress={() => saveStall(s)}>Save</Button>
@@ -889,7 +1078,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 onPress={async () => {
                   const building_id = cBuildingId.trim();
                   if (!building_id) {
-                    notify("Building required", "Please choose or enter a building.");
+                    notify(
+                      "Building required",
+                      "Please choose or enter a building.",
+                    );
                     return;
                   }
                   if (!cTenantName.trim()) {
@@ -916,7 +1108,10 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     await loadAll();
                     notify("Created", "Tenant created successfully.");
                   } catch (err) {
-                    notify("Create failed", errorText(err, "Unable to create tenant."));
+                    notify(
+                      "Create failed",
+                      errorText(err, "Unable to create tenant."),
+                    );
                   } finally {
                     setSubmitting(false);
                   }
@@ -932,7 +1127,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             <View style={styles.rowInline}>
               {buildings.length > 0 ? (
                 <View style={[styles.flex1, { marginRight: 8 }]}>
-                  <PickerField label="Building" value={cBuildingId} onChange={setCBuildingId} placeholder="Select building…">
+                  <PickerField
+                    label="Building"
+                    value={cBuildingId}
+                    onChange={setCBuildingId}
+                    placeholder="Select building…"
+                  >
                     {buildings.map((b) => (
                       <Picker.Item
                         key={b.building_id}
@@ -945,8 +1145,14 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               ) : (
                 <View style={[styles.flex1, { marginRight: 8 }]}>
                   <Text style={styles.fieldLabel}>Building (type ID)</Text>
-                  <Input placeholder="e.g., BLDG-001" value={cBuildingId} onChangeText={setCBuildingId} />
-                  <Text style={styles.helpText}>No building list available — using manual input.</Text>
+                  <Input
+                    placeholder="e.g., BLDG-001"
+                    value={cBuildingId}
+                    onChangeText={setCBuildingId}
+                  />
+                  <Text style={styles.helpText}>
+                    No building list available — using manual input.
+                  </Text>
                 </View>
               )}
 
@@ -954,28 +1160,48 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 <Text style={styles.fieldLabel}>Status</Text>
                 <View style={[styles.pickerShell, styles.disabledField]}>
                   <View style={styles.lockedStatusContainer}>
-                    <Ionicons name="lock-closed" size={16} color="#64748b" style={styles.lockIcon} />
+                    <Ionicons
+                      name="lock-closed"
+                      size={16}
+                      color="#64748b"
+                      style={styles.lockIcon}
+                    />
                     <Text style={styles.lockedStatusText}>Active</Text>
                   </View>
                 </View>
-                <Text style={styles.helperText}>New tenants are always created as active</Text>
+                <Text style={styles.helperText}>
+                  New tenants are always created as active
+                </Text>
               </View>
             </View>
 
             <View style={styles.rowInline}>
               <View style={[styles.flex1, { marginRight: 8 }]}>
                 <Text style={styles.fieldLabel}>Tenant ID</Text>
-                <Input placeholder="e.g., SN-001" value={cTenantSn} onChangeText={setCTenantSn} />
+                <Input
+                  placeholder="e.g., SN-001"
+                  value={cTenantSn}
+                  onChangeText={setCTenantSn}
+                />
               </View>
               <View style={[styles.flex1, { marginLeft: 8 }]}>
                 <Text style={styles.fieldLabel}>Tenant Name</Text>
-                <Input placeholder="Tenant name" value={cTenantName} onChangeText={setCTenantName} />
+                <Input
+                  placeholder="Tenant name"
+                  value={cTenantName}
+                  onChangeText={setCTenantName}
+                />
               </View>
             </View>
 
             <View style={styles.rowInline}>
               <View style={[styles.flex1, { marginRight: 8 }]}>
-                <PickerField label="VAT Code" value={cVat} onChange={setCVat} placeholder="— None —">
+                <PickerField
+                  label="VAT Code"
+                  value={cVat}
+                  onChange={setCVat}
+                  placeholder="— None —"
+                >
                   {vatCodes.map((v) => (
                     <Picker.Item
                       key={String(v.tax_id)}
@@ -986,7 +1212,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 </PickerField>
               </View>
               <View style={[styles.flex1, { marginLeft: 8 }]}>
-                <PickerField label="Withholding Code" value={cWt} onChange={setCWt} placeholder="— None —">
+                <PickerField
+                  label="Withholding Code"
+                  value={cWt}
+                  onChange={setCWt}
+                  placeholder="— None —"
+                >
                   {wtCodes.map((w) => (
                     <Picker.Item
                       key={w.wt_id}
@@ -1010,8 +1241,8 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             </View>
 
             <Text style={styles.helpText}>
-              Tenant IDs are auto-generated on create (e.g., TNT-#). Assign stalls from the Stalls/Assign panel after
-              creating the tenant.
+              Tenant IDs are auto-generated on create (e.g., TNT-#). Assign
+              stalls from the Stalls/Assign panel after creating the tenant.
             </Text>
           </View>
         </ModalSheet>
@@ -1034,11 +1265,27 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-  btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  btn: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
   btnText: { color: "#fff", fontWeight: "700" },
-  filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
+  filtersBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: "wrap",
+  },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -1061,7 +1308,12 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-  buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  buildingHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     borderWidth: 1,
@@ -1112,10 +1364,19 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
-  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
+  loader: {
+    paddingVertical: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   emptyPad: { paddingVertical: 30 },
   empty: { paddingVertical: 12, textAlign: "center", color: "#64748b" },
-  fieldLabel: { fontSize: 12, color: tokens.color.inkSubtle, marginBottom: 6, fontWeight: "700" },
+  fieldLabel: {
+    fontSize: 12,
+    color: tokens.color.inkSubtle,
+    marginBottom: 6,
+    fontWeight: "700",
+  },
   rowInline: { flexDirection: "row", alignItems: "center" },
   flex1: { flex: 1 },
   readonlyBox: {
@@ -1138,7 +1399,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: "hidden",
   },
-  pickerNative: { width: "100%", height: 44, paddingLeft: 8, color: tokens.color.ink, fontSize: 14 },
+  pickerNative: {
+    width: "100%",
+    height: 44,
+    paddingLeft: 8,
+    color: tokens.color.ink,
+    fontSize: 14,
+  },
   pickerItemIOS: { fontSize: 16, color: tokens.color.ink },
   dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8 },
   kv: { fontSize: 13, color: tokens.color.ink, marginTop: 6 },
@@ -1151,17 +1418,33 @@ const styles = StyleSheet.create({
     borderBottomColor: tokens.color.line,
     gap: 8,
   },
-  helpText: { color: tokens.color.inkMuted, fontSize: 12, lineHeight: 16, marginTop: 2 },
+  helpText: {
+    color: tokens.color.inkMuted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+  },
   quickGrid: {
     gap: 12,
     ...(Platform.OS === "web"
-      ? ({ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 12, rowGap: 12 } as any)
+      ? ({
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          columnGap: 12,
+          rowGap: 12,
+        } as any)
       : { flexDirection: "row", flexWrap: "wrap" }),
   },
   quickCol: {
-    ...(Platform.OS === "web" ? {} : { flexGrow: 1, flexBasis: "48%", minWidth: 280 }),
+    ...(Platform.OS === "web"
+      ? {}
+      : { flexGrow: 1, flexBasis: "48%", minWidth: 280 }),
   },
-  sheetBody: { maxHeight: MOBILE_MODAL_MAX_HEIGHT, flexShrink: 1, width: "100%" },
+  sheetBody: {
+    maxHeight: MOBILE_MODAL_MAX_HEIGHT,
+    flexShrink: 1,
+    width: "100%",
+  },
   sheetScroll: { maxHeight: MOBILE_MODAL_MAX_HEIGHT },
   sheetContent: { paddingVertical: 12, gap: 12, paddingBottom: 96 },
   sep: { height: 1, backgroundColor: tokens.color.line, marginVertical: 10 },

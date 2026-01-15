@@ -24,17 +24,17 @@ type Util = "electric" | "water" | "lpg";
 type UserRow = {
   user_id: string;
   user_fullname: string;
-  user_roles: Role[];      
-  building_ids: string[];  
-  utility_role: Util[];    
+  user_roles: Role[];
+  building_ids: string[];
+  utility_role: Util[];
   last_updated?: string;
   updated_by?: string;
 };
 type User = {
   user_id: string;
   user_fullname: string;
-  role: Role;              
-  buildings: string[];     
+  role: Role;
+  buildings: string[];
   utilities: Util[];
   last_updated?: string;
   updated_by?: string;
@@ -44,7 +44,11 @@ type Building = {
   building_name: string;
 };
 function notify(title: string, message?: string) {
-  if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).alert) {
+  if (
+    Platform.OS === "web" &&
+    typeof window !== "undefined" &&
+    (window as any).alert
+  ) {
     (window as any).alert(message ? `${title}\n\n${message}` : title);
   } else {
     Alert.alert(title, message);
@@ -56,14 +60,39 @@ function errorText(err: any, fallback = "Server error.") {
   if (d?.error) return String(d.error);
   if (d?.message) return String(d.message);
   if (err?.message) return String(err.message);
-  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+  try {
+    return JSON.stringify(d ?? err);
+  } catch {
+    return fallback;
+  }
 }
 const cmp = (a: string | number, b: string | number) =>
-  String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
+  String(a ?? "").localeCompare(String(b ?? ""), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
 const dateOf = (s?: string) => (s ? Date.parse(s) || 0 : 0);
-const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
-  <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
-    <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+const Chip = ({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) => (
+  <TouchableOpacity
+    onPress={onPress}
+    style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
+  >
+    <Text
+      style={[
+        styles.chipText,
+        active ? styles.chipTextActive : styles.chipTextIdle,
+      ]}
+    >
+      {label}
+    </Text>
   </TouchableOpacity>
 );
 export default function AccountsPanel({ token }: { token: string | null }) {
@@ -92,10 +121,21 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   const [e_role, setE_role] = useState<Role>("operator");
   const [e_buildingId, setE_buildingId] = useState("");
   const [e_utils, setE_utils] = useState<Util[]>([]);
-  const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
-  const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
+  const authHeader = useMemo(
+    () => ({ Authorization: `Bearer ${token ?? ""}` }),
+    [token],
+  );
+  const api = useMemo(
+    () =>
+      axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
+    [authHeader],
+  );
   const loadAll = async () => {
-    if (!token) { setBusy(false); notify("Not logged in", "Please log in to manage accounts."); return; }
+    if (!token) {
+      setBusy(false);
+      notify("Not logged in", "Please log in to manage accounts.");
+      return;
+    }
     try {
       setBusy(true);
       const [uRes, bRes] = await Promise.all([
@@ -103,9 +143,17 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         api.get<Building[]>("/buildings"),
       ]);
       const normalized: User[] = (uRes.data || []).map((u) => {
-        const role = (Array.isArray(u.user_roles) && u.user_roles.length ? u.user_roles[0] : "operator") as Role;
-        const buildings = Array.isArray(u.building_ids) ? u.building_ids.map(String) : [];
-        const utils = Array.isArray(u.utility_role) ? (u.utility_role as Util[]) : [];
+        const role = (
+          Array.isArray(u.user_roles) && u.user_roles.length
+            ? u.user_roles[0]
+            : "operator"
+        ) as Role;
+        const buildings = Array.isArray(u.building_ids)
+          ? u.building_ids.map(String)
+          : [];
+        const utils = Array.isArray(u.utility_role)
+          ? (u.utility_role as Util[])
+          : [];
         return {
           user_id: String(u.user_id),
           user_fullname: String(u.user_fullname ?? ""),
@@ -118,12 +166,17 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       });
       setUsers(normalized);
       setBuildings(bRes.data || []);
-      if (!c_buildingId && (bRes.data?.length ?? 0) > 0) setC_buildingId(bRes.data[0].building_id);
+      if (!c_buildingId && (bRes.data?.length ?? 0) > 0)
+        setC_buildingId(bRes.data[0].building_id);
     } catch (err: any) {
       notify("Load failed", errorText(err, "Connection error."));
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
-  useEffect(() => { loadAll(); }, [token]);
+  useEffect(() => {
+    loadAll();
+  }, [token]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = users;
@@ -135,9 +188,15 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     }
     if (q) {
       list = list.filter((u) =>
-        [u.user_id, u.user_fullname, u.role, ...u.buildings, ...(u.utilities || [])]
+        [
+          u.user_id,
+          u.user_fullname,
+          u.role,
+          ...u.buildings,
+          ...(u.utilities || []),
+        ]
           .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q))
+          .some((v) => String(v).toLowerCase().includes(q)),
       );
     }
     return list;
@@ -145,18 +204,32 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
-      case "oldest": arr.sort((a, b) => dateOf(a.last_updated) - dateOf(b.last_updated)); break;
-      case "idAsc":  arr.sort((a, b) => cmp(a.user_id, b.user_id)); break;
-      case "idDesc": arr.sort((a, b) => cmp(b.user_id, a.user_id)); break;
+      case "oldest":
+        arr.sort((a, b) => dateOf(a.last_updated) - dateOf(b.last_updated));
+        break;
+      case "idAsc":
+        arr.sort((a, b) => cmp(a.user_id, b.user_id));
+        break;
+      case "idDesc":
+        arr.sort((a, b) => cmp(b.user_id, a.user_id));
+        break;
       case "newest":
-      default:       arr.sort((a, b) => dateOf(b.last_updated) - dateOf(a.last_updated)); break;
+      default:
+        arr.sort((a, b) => dateOf(b.last_updated) - dateOf(a.last_updated));
+        break;
     }
     return arr;
   }, [filtered, sortMode]);
   const onCreate = async () => {
     const fullname = c_fullname.trim();
-    if (!fullname || !c_password) { notify("Missing info", "Please enter Full name and Password."); return; }
-    if (c_role !== "admin" && !c_buildingId) { notify("Missing building", "Select a Building for non-admin roles."); return; }
+    if (!fullname || !c_password) {
+      notify("Missing info", "Please enter Full name and Password.");
+      return;
+    }
+    if (c_role !== "admin" && !c_buildingId) {
+      notify("Missing building", "Select a Building for non-admin roles.");
+      return;
+    }
     try {
       setSubmitting(true);
       const body: any = {
@@ -168,12 +241,17 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       };
       await api.post("/users", body);
       setCreateVisible(false);
-      setC_fullname(""); setC_password(""); setC_role("operator"); setC_utils([]);
+      setC_fullname("");
+      setC_password("");
+      setC_role("operator");
+      setC_utils([]);
       await loadAll();
       notify("Success", "Account created.");
     } catch (err: any) {
       notify("Create failed", errorText(err));
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   };
   const openEdit = (u: User) => {
     setEditUser(u);
@@ -186,7 +264,10 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   };
   const onUpdate = async () => {
     if (!editUser) return;
-    if (e_role !== "admin" && !e_buildingId) { notify("Missing building", "Select a Building for non-admin roles."); return; }
+    if (e_role !== "admin" && !e_buildingId) {
+      notify("Missing building", "Select a Building for non-admin roles.");
+      return;
+    }
     try {
       setSubmitting(true);
       const body: any = {
@@ -202,18 +283,36 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       notify("Updated", "Account updated successfully.");
     } catch (err: any) {
       notify("Update failed", errorText(err));
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   };
   const onDelete = async (u: User) => {
-    if (Platform.OS === "web" && typeof window !== "undefined" && (window as any).confirm) {
-      const ok = (window as any).confirm(`Delete ${u.user_fullname} (${u.user_id})?`);
+    if (
+      Platform.OS === "web" &&
+      typeof window !== "undefined" &&
+      (window as any).confirm
+    ) {
+      const ok = (window as any).confirm(
+        `Delete ${u.user_fullname} (${u.user_id})?`,
+      );
       if (!ok) return;
     } else {
       const buttons: any[] = [
         { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: async () => { await doDelete(); } },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await doDelete();
+          },
+        },
       ];
-      return Alert.alert("Delete account?", `${u.user_fullname} (${u.user_id})`, buttons);
+      return Alert.alert(
+        "Delete account?",
+        `${u.user_fullname} (${u.user_id})`,
+        buttons,
+      );
     }
     await doDelete();
     async function doDelete() {
@@ -224,7 +323,9 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         notify("Deleted", "Account deleted.");
       } catch (err: any) {
         notify("Delete failed", errorText(err));
-      } finally { setSubmitting(false); }
+      } finally {
+        setSubmitting(false);
+      }
     }
   };
   return (
@@ -233,13 +334,21 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Manage Accounts</Text>
-            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => setCreateVisible(true)}
+            >
               <Text style={styles.btnText}>+ Create Account</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
-              <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+              <Ionicons
+                name="search"
+                size={16}
+                color="#94a3b8"
+                style={{ marginRight: 6 }}
+              />
               <TextInput
                 value={query}
                 onChangeText={setQuery}
@@ -248,8 +357,16 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 style={styles.search}
               />
             </View>
-            <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
-              <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+            <TouchableOpacity
+              style={styles.btnGhost}
+              onPress={() => setFiltersVisible(true)}
+            >
+              <Ionicons
+                name="options-outline"
+                size={16}
+                color="#394e6a"
+                style={{ marginRight: 6 }}
+              />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
@@ -263,7 +380,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.chipsRowHorizontal}
               >
-                <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+                <Chip
+                  label="All"
+                  active={buildingFilter === ""}
+                  onPress={() => setBuildingFilter("")}
+                />
                 {buildings.map((b) => (
                   <Chip
                     key={b.building_id}
@@ -275,7 +396,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               </ScrollView>
             ) : (
               <View style={styles.chipsRow}>
-                <Chip label="All" active={buildingFilter === ""} onPress={() => setBuildingFilter("")} />
+                <Chip
+                  label="All"
+                  active={buildingFilter === ""}
+                  onPress={() => setBuildingFilter("")}
+                />
                 {buildings.map((b) => (
                   <Chip
                     key={b.building_id}
@@ -288,57 +413,105 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             )}
           </View>
           {busy ? (
-            <View style={styles.loader}><ActivityIndicator /></View>
+            <View style={styles.loader}>
+              <ActivityIndicator />
+            </View>
           ) : (
             <FlatList
               data={sorted}
               keyExtractor={(u) => u.user_id}
               style={{ flex: 1 }}
-              contentContainerStyle={sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }}
+              contentContainerStyle={
+                sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }
+              }
               ListEmptyComponent={
                 <View style={styles.empty}>
                   <Ionicons name="person-outline" size={42} color="#cbd5e1" />
                   <Text style={styles.emptyTitle}>No accounts</Text>
-                  <Text style={styles.emptyText}>Try adjusting your search or create a new one.</Text>
+                  <Text style={styles.emptyText}>
+                    Try adjusting your search or create a new one.
+                  </Text>
                 </View>
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
-                      {item.user_fullname} <Text style={styles.rowSub}>({item.user_id})</Text>
+                      {item.user_fullname}{" "}
+                      <Text style={styles.rowSub}>({item.user_id})</Text>
                     </Text>
                     <Text style={styles.rowMeta}>
                       Role: {item.role}
-                      {item.buildings.length ? ` • Building: ${item.buildings.join(", ")}` : " • Building: —"}
-                      {item.utilities.length ? ` • Utilities: ${item.utilities.join(", ")}` : ""}
+                      {item.buildings.length
+                        ? ` • Building: ${item.buildings.join(", ")}`
+                        : " • Building: —"}
+                      {item.utilities.length
+                        ? ` • Utilities: ${item.utilities.join(", ")}`
+                        : ""}
                     </Text>
                     {item.last_updated ? (
                       <Text style={styles.rowMetaSmall}>
-                        Updated {new Date(item.last_updated).toLocaleString()} {item.updated_by ? `• by ${item.updated_by}` : ""}
+                        Updated {new Date(item.last_updated).toLocaleString()}{" "}
+                        {item.updated_by ? `• by ${item.updated_by}` : ""}
                       </Text>
                     ) : null}
                   </View>
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
-                        <Ionicons name="create-outline" size={16} color="#1f2937" />
-                        <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionEdit]}
+                        onPress={() => openEdit(item)}
+                      >
+                        <Ionicons
+                          name="create-outline"
+                          size={16}
+                          color="#1f2937"
+                        />
+                        <Text
+                          style={[styles.actionText, styles.actionEditText]}
+                        >
+                          Update
+                        </Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionDelete]}
+                        onPress={() => onDelete(item)}
+                      >
                         <Ionicons name="trash-outline" size={16} color="#fff" />
-                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                        <Text
+                          style={[styles.actionText, styles.actionDeleteText]}
+                        >
+                          Delete
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   ) : (
                     <View style={styles.rowActions}>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
-                        <Ionicons name="create-outline" size={16} color="#1f2937" />
-                        <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionEdit]}
+                        onPress={() => openEdit(item)}
+                      >
+                        <Ionicons
+                          name="create-outline"
+                          size={16}
+                          color="#1f2937"
+                        />
+                        <Text
+                          style={[styles.actionText, styles.actionEditText]}
+                        >
+                          Update
+                        </Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionDelete]}
+                        onPress={() => onDelete(item)}
+                      >
                         <Ionicons name="trash-outline" size={16} color="#fff" />
-                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                        <Text
+                          style={[styles.actionText, styles.actionDeleteText]}
+                        >
+                          Delete
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -347,14 +520,25 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             />
           )}
         </View>
-        <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
+        <Modal
+          visible={filtersVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setFiltersVisible(false)}
+        >
           <View style={styles.promptOverlay}>
             <View style={styles.promptCard}>
               <Text style={styles.modalTitle}>Filters & Sort</Text>
               <View style={styles.modalDivider} />
               <Text style={styles.dropdownLabel}>Role</Text>
               <View style={styles.chipsRow}>
-                {[{ label: "All", value: "" }, "admin", "operator", "biller", "reader"].map((opt) =>
+                {[
+                  { label: "All", value: "" },
+                  "admin",
+                  "operator",
+                  "biller",
+                  "reader",
+                ].map((opt) =>
                   typeof opt === "string" ? (
                     <Chip
                       key={opt}
@@ -369,30 +553,62 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       active={roleFilter === (opt.value as any)}
                       onPress={() => setRoleFilter(opt.value as any)}
                     />
-                  )
+                  ),
                 )}
               </View>
-              <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Sort by</Text>
+              <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>
+                Sort by
+              </Text>
               <View style={styles.chipsRow}>
-                <Chip label="Newest" active={sortMode === "newest"} onPress={() => setSortMode("newest")} />
-                <Chip label="Oldest" active={sortMode === "oldest"} onPress={() => setSortMode("oldest")} />
-                <Chip label="ID ↑" active={sortMode === "idAsc"} onPress={() => setSortMode("idAsc")} />
-                <Chip label="ID ↓" active={sortMode === "idDesc"} onPress={() => setSortMode("idDesc")} />
+                <Chip
+                  label="Newest"
+                  active={sortMode === "newest"}
+                  onPress={() => setSortMode("newest")}
+                />
+                <Chip
+                  label="Oldest"
+                  active={sortMode === "oldest"}
+                  onPress={() => setSortMode("oldest")}
+                />
+                <Chip
+                  label="ID ↑"
+                  active={sortMode === "idAsc"}
+                  onPress={() => setSortMode("idAsc")}
+                />
+                <Chip
+                  label="ID ↓"
+                  active={sortMode === "idDesc"}
+                  onPress={() => setSortMode("idDesc")}
+                />
               </View>
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btn]} onPress={() => setFiltersVisible(false)}>
+                <TouchableOpacity
+                  style={[styles.btn]}
+                  onPress={() => setFiltersVisible(false)}
+                >
                   <Text style={styles.btnText}>Done</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
-        <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+        <Modal
+          visible={createVisible}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setCreateVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.modalWrap}
+          >
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Create Account</Text>
               <View style={styles.modalDivider} />
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Full name</Text>
                   <TextInput
@@ -417,7 +633,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Role</Text>
                   <View style={styles.pickerWrapper}>
-                    <Picker selectedValue={c_role} onValueChange={(v) => setC_role(v as Role)} style={styles.picker}>
+                    <Picker
+                      selectedValue={c_role}
+                      onValueChange={(v) => setC_role(v as Role)}
+                      style={styles.picker}
+                    >
                       <Picker.Item label="Admin" value="admin" />
                       <Picker.Item label="Operator" value="operator" />
                       <Picker.Item label="Biller" value="biller" />
@@ -430,9 +650,17 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Building</Text>
                       <View style={styles.pickerWrapper}>
-                        <Picker selectedValue={c_buildingId} onValueChange={(v) => setC_buildingId(String(v))} style={styles.picker}>
+                        <Picker
+                          selectedValue={c_buildingId}
+                          onValueChange={(v) => setC_buildingId(String(v))}
+                          style={styles.picker}
+                        >
                           {buildings.map((b) => (
-                            <Picker.Item key={b.building_id} label={b.building_name || b.building_id} value={b.building_id} />
+                            <Picker.Item
+                              key={b.building_id}
+                              label={b.building_name || b.building_id}
+                              value={b.building_id}
+                            />
                           ))}
                         </Picker>
                       </View>
@@ -447,7 +675,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                             label={u}
                             active={active}
                             onPress={() => {
-                              setC_utils(active ? c_utils.filter((x) => x !== u) : [...c_utils, u]);
+                              setC_utils(
+                                active
+                                  ? c_utils.filter((x) => x !== u)
+                                  : [...c_utils, u],
+                              );
                             }}
                           />
                         );
@@ -457,22 +689,42 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 )}
               </ScrollView>
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
+                <TouchableOpacity
+                  style={[styles.btnGhostAlt]}
+                  onPress={() => setCreateVisible(false)}
+                >
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
-                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  onPress={onCreate}
+                  disabled={submitting}
+                >
+                  <Text style={styles.btnText}>
+                    {submitting ? "Saving…" : "Create"}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
           </KeyboardAvoidingView>
         </Modal>
-        <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+        <Modal
+          visible={editVisible}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setEditVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.modalWrap}
+          >
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Update Account</Text>
               <View style={styles.modalDivider} />
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
                 {editUser && (
                   <>
                     <View style={styles.inputRow}>
@@ -486,7 +738,9 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       />
                     </View>
                     <View style={styles.inputRow}>
-                      <Text style={styles.inputLabel}>New password (optional)</Text>
+                      <Text style={styles.inputLabel}>
+                        New password (optional)
+                      </Text>
                       <TextInput
                         value={e_password}
                         onChangeText={setE_password}
@@ -499,7 +753,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Role</Text>
                       <View style={styles.pickerWrapper}>
-                        <Picker selectedValue={e_role} onValueChange={(v) => setE_role(v as Role)} style={styles.picker}>
+                        <Picker
+                          selectedValue={e_role}
+                          onValueChange={(v) => setE_role(v as Role)}
+                          style={styles.picker}
+                        >
                           <Picker.Item label="Admin" value="admin" />
                           <Picker.Item label="Operator" value="operator" />
                           <Picker.Item label="Biller" value="biller" />
@@ -518,7 +776,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                               style={styles.picker}
                             >
                               {buildings.map((b) => (
-                                <Picker.Item key={b.building_id} label={b.building_name || b.building_id} value={b.building_id} />
+                                <Picker.Item
+                                  key={b.building_id}
+                                  label={b.building_name || b.building_id}
+                                  value={b.building_id}
+                                />
                               ))}
                             </Picker>
                           </View>
@@ -533,7 +795,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                                 label={u}
                                 active={active}
                                 onPress={() => {
-                                  setE_utils(active ? e_utils.filter((x) => x !== u) : [...e_utils, u]);
+                                  setE_utils(
+                                    active
+                                      ? e_utils.filter((x) => x !== u)
+                                      : [...e_utils, u],
+                                  );
                                 }}
                               />
                             );
@@ -545,11 +811,20 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 )}
               </ScrollView>
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
+                <TouchableOpacity
+                  style={[styles.btnGhostAlt]}
+                  onPress={() => setEditVisible(false)}
+                >
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
-                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Save"}</Text>
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  onPress={onUpdate}
+                  disabled={submitting}
+                >
+                  <Text style={styles.btnText}>
+                    {submitting ? "Saving…" : "Save"}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -581,10 +856,21 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-  btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  btn: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
-  filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" },
+  filtersBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: "wrap",
+  },
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -607,7 +893,11 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
+  loader: {
+    paddingVertical: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -624,9 +914,28 @@ const styles = StyleSheet.create({
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-  rowActions: { width: 200, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 },
-  rowActionsMobile: { flexDirection: "row", gap: 8, marginTop: 10, justifyContent: "flex-start", alignItems: "center" },
-  actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 },
+  rowActions: {
+    width: 200,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  rowActionsMobile: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    justifyContent: "flex-start",
+    alignItems: "center",
+  },
+  actionBtn: {
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   actionEdit: { backgroundColor: "#e2e8f0" },
   actionDelete: { backgroundColor: "#ef4444" },
   actionText: { fontWeight: "700" },
@@ -636,7 +945,12 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", gap: 6 },
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
-  buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  buildingHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8 },
   chip: {
@@ -672,7 +986,12 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
   modalDivider: { height: 1, backgroundColor: "#e2e8f0", marginVertical: 10 },
-  modalActions: { marginTop: 10, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
+  modalActions: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
   btnGhostAlt: {
     backgroundColor: "#f1f5f9",
     borderWidth: 1,
@@ -693,8 +1012,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     color: "#0f172a",
   },
-  sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
-  pickerWrapper: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, overflow: "hidden" },
+  sectionTitle: {
+    marginTop: 10,
+    marginBottom: 6,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    overflow: "hidden",
+  },
   picker: { height: 40 },
   promptOverlay: {
     flex: 1,
@@ -714,5 +1043,10 @@ const styles = StyleSheet.create({
       default: { elevation: 3 },
     }) as any),
   },
-  dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
+  dropdownLabel: {
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 8,
+    textTransform: "none",
+  },
 });

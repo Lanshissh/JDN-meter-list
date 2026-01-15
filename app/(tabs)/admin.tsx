@@ -60,15 +60,9 @@ export default function AdminScreen() {
 
   const { width } = useWindowDimensions();
   const isMobile = width < MOBILE_BREAKPOINT;
-
   const [menuOpen, setMenuOpen] = useState(false);
-
-  // Desktop TAX dropdown open state (now controlled by modal)
   const [taxOpen, setTaxOpen] = useState(false);
-  // Mobile TAX collapsible state
   const [taxMobileOpen, setTaxMobileOpen] = useState(false);
-
-  // ✅ Anchor the TAX menu to the TAX button (fix for web ScrollView clipping)
   const taxBtnRef = useRef<any>(null);
   const [taxAnchor, setTaxAnchor] = useState({ x: 0, y: 0, w: 0, h: 0 });
 
@@ -88,7 +82,6 @@ export default function AdminScreen() {
     else openTaxMenu();
   };
 
-  // Normalize roles (handles array or comma)
   const role: string = useMemo(() => {
     const rawRoles: any = user?.user_roles;
     const roles: string[] = Array.isArray(rawRoles)
@@ -143,13 +136,11 @@ export default function AdminScreen() {
     []
   );
 
-  // Visible primary pages (VAT/WT removed from this list)
   const visiblePages = useMemo(
     () => pages.filter((p) => allowed.has(p.key)),
     [pages, allowed]
   );
 
-  // TAX children, if allowed
   const taxChildren = useMemo(() => {
     const children: Page[] = [];
     if (allowed.has("vat")) children.push({ label: "VAT", key: "vat", icon: "calculator" });
@@ -173,8 +164,6 @@ export default function AdminScreen() {
   };
 
   const [active, setActive] = useState<PageKey>(resolveInitial());
-
-  // ✅ TAX highlights as active whenever inside VAT/WT
   const isTaxActive = active === "vat" || active === "wt";
 
   useEffect(() => {
@@ -186,14 +175,12 @@ export default function AdminScreen() {
     } else if (!allowedSet.has(active)) {
       setActive(roleInitial[role] ?? "buildings");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, params?.panel, params?.tab]);
 
   const applyRouteParam = (key: PageKey) => {
     try {
       router.setParams?.({ panel: key });
     } catch {
-      // ignore
     }
   };
 
@@ -201,8 +188,6 @@ export default function AdminScreen() {
     setActive(key);
     applyRouteParam(key);
     setMenuOpen(false);
-
-    // close dropdowns when selecting
     setTaxOpen(false);
   };
 
@@ -269,8 +254,6 @@ export default function AdminScreen() {
       : active === "wt"
       ? "Withholding"
       : visiblePages.find((p) => p.key === active)?.label || "Admin";
-
-  // ✅ Pin Accounts + Reader Devices on the far right (desktop)
   const RIGHT_KEYS = useMemo(() => new Set<PageKey>(["accounts", "readerDevices"]), []);
   const rightTabs = useMemo(
     () => visiblePages.filter((p) => RIGHT_KEYS.has(p.key)),
@@ -280,8 +263,6 @@ export default function AdminScreen() {
     () => visiblePages.filter((p) => !RIGHT_KEYS.has(p.key)),
     [visiblePages, RIGHT_KEYS]
   );
-
-  // ✅ TAX stays between Buildings and Stalls (in the LEFT tab group)
   const buildingsIndex = useMemo(
     () => leftTabs.findIndex((p) => p.key === "buildings"),
     [leftTabs]
@@ -824,7 +805,6 @@ const styles = StyleSheet.create({
     overflow: "visible",
   },
 
-  // ✅ Modal dropdown (new)
   taxModalBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "transparent",

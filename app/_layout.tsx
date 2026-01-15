@@ -19,13 +19,11 @@ function RootLayoutNav() {
 
   if (loading) return null;
 
-  // MOBILE-ONLY gate: if not logged in, force login page
   const needsLoginOnMobile = Platform.OS !== "web" && !isLoggedIn;
 
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>
-        {/* Keep both groups registered */}
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="(auth)/login" />
         <Stack.Screen name="+not-found" />

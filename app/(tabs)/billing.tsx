@@ -1,4 +1,3 @@
-// app/(tabs)/billing.tsx - Mobile Optimized Version
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,7 +19,6 @@ import { useAuth } from "../../contexts/AuthContext";
 import { BASE_API } from "../../constants/api";
 import RateOfChangePanel from "../../components/billing/RateOfChangePanel";
 
-/* ========================= Types ========================= */
 type BillingRow = {
   stall_no: string | null;
   stall_sn: string | null;
@@ -86,7 +84,6 @@ type StoredBilling = {
 
 type BuildingOption = { building_id: string; building_name: string | null };
 
-/* ========================= Helpers ========================= */
 const notify = (title: string, message?: string) => {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -257,7 +254,6 @@ const saveCsv = (filename: string, csv: string) => {
   }
 };
 
-/* ========================= Calendar Date Picker ========================= */
 function CalendarDatePicker({
   label,
   value,
@@ -298,10 +294,10 @@ function CalendarDatePicker({
 
   const todayDate = new Date();
   const [pickerYear, setPickerYear] = useState(
-    internalDate?.getFullYear() ?? todayDate.getFullYear()
+    internalDate?.getFullYear() ?? todayDate.getFullYear(),
   );
   const [pickerMonth, setPickerMonth] = useState(
-    internalDate?.getMonth() ?? todayDate.getMonth()
+    internalDate?.getMonth() ?? todayDate.getMonth(),
   );
 
   useEffect(() => {
@@ -384,13 +380,19 @@ function CalendarDatePicker({
     return (
       <View style={mobileStyles.calendarContainer}>
         <View style={mobileStyles.calendarHeader}>
-          <TouchableOpacity onPress={goPrevMonth} style={mobileStyles.navButton}>
+          <TouchableOpacity
+            onPress={goPrevMonth}
+            style={mobileStyles.navButton}
+          >
             <Ionicons name="chevron-back" size={18} />
           </TouchableOpacity>
           <Text style={mobileStyles.calendarHeaderText}>
             {monthNames[pickerMonth]} {pickerYear}
           </Text>
-          <TouchableOpacity onPress={goNextMonth} style={mobileStyles.navButton}>
+          <TouchableOpacity
+            onPress={goNextMonth}
+            style={mobileStyles.navButton}
+          >
             <Ionicons name="chevron-forward" size={18} />
           </TouchableOpacity>
         </View>
@@ -410,13 +412,13 @@ function CalendarDatePicker({
                 day != null &&
                   selectedDay === day &&
                   selectedMonth === pickerMonth &&
-                  selectedYear === pickerYear
+                  selectedYear === pickerYear,
               );
               const isToday = Boolean(
                 day != null &&
                   day === todayDate.getDate() &&
                   pickerMonth === todayDate.getMonth() &&
-                  pickerYear === todayDate.getFullYear()
+                  pickerYear === todayDate.getFullYear(),
               );
 
               return (
@@ -447,12 +449,18 @@ function CalendarDatePicker({
         ))}
 
         <View style={mobileStyles.calendarFooter}>
-          <TouchableOpacity onPress={() => setShow(false)} style={mobileStyles.cancelButton}>
+          <TouchableOpacity
+            onPress={() => setShow(false)}
+            style={mobileStyles.cancelButton}
+          >
             <Text style={mobileStyles.cancelButtonText}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={applyDate}
-            style={[styles.primaryButton, { paddingHorizontal: 16, paddingVertical: 8 }]}
+            style={[
+              styles.primaryButton,
+              { paddingHorizontal: 16, paddingVertical: 8 },
+            ]}
           >
             <Text style={styles.primaryButtonText}>Apply</Text>
           </TouchableOpacity>
@@ -465,7 +473,9 @@ function CalendarDatePicker({
 
   return (
     <View>
-      <Text style={isMobile ? mobileStyles.formLabel : styles.inputLabel}>{label}</Text>
+      <Text style={isMobile ? mobileStyles.formLabel : styles.inputLabel}>
+        {label}
+      </Text>
       <TouchableOpacity
         onPress={toggleModal}
         style={isMobile ? mobileStyles.formInputWrapper : styles.inputWrapper}
@@ -483,8 +493,8 @@ function CalendarDatePicker({
                 ? mobileStyles.formTextValue
                 : styles.textValue
               : isMobile
-              ? mobileStyles.formPlaceholder
-              : styles.textPlaceholder
+                ? mobileStyles.formPlaceholder
+                : styles.textPlaceholder
           }
         >
           {displayValue || placeholder}
@@ -508,7 +518,6 @@ function CalendarDatePicker({
   );
 }
 
-/* ========================= Mobile Row Card Component ========================= */
 function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const rocIsPositive =
@@ -516,7 +525,10 @@ function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
 
   return (
     <TouchableOpacity
-      style={[mobileStyles.rowCard, index % 2 === 0 && mobileStyles.rowCardEven]}
+      style={[
+        mobileStyles.rowCard,
+        index % 2 === 0 && mobileStyles.rowCardEven,
+      ]}
       onPress={() => setExpanded(!expanded)}
       activeOpacity={0.7}
     >
@@ -525,10 +537,14 @@ function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
           <Text style={mobileStyles.rowCardStall}>
             {row.stall_sn || row.stall_no || "—"}
           </Text>
-          <Text style={mobileStyles.rowCardMeter}>{row.meter_no || row.meter_id}</Text>
+          <Text style={mobileStyles.rowCardMeter}>
+            {row.meter_no || row.meter_id}
+          </Text>
         </View>
         <View style={mobileStyles.rowCardRight}>
-          <Text style={mobileStyles.rowCardAmount}>{formatCurrency(row.total_amount)}</Text>
+          <Text style={mobileStyles.rowCardAmount}>
+            {formatCurrency(row.total_amount)}
+          </Text>
           <View style={mobileStyles.rowCardKwh}>
             <Text style={mobileStyles.rowCardKwhText}>
               {fmt(row.consumed_kwh, 0)} kWh
@@ -558,17 +574,23 @@ function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
           <View style={mobileStyles.divider} />
           <View style={mobileStyles.detailRow}>
             <Text style={mobileStyles.detailLabel}>Previous Reading</Text>
-            <Text style={mobileStyles.detailValue}>{fmt(row.reading_previous, 0)}</Text>
+            <Text style={mobileStyles.detailValue}>
+              {fmt(row.reading_previous, 0)}
+            </Text>
           </View>
           <View style={mobileStyles.detailRow}>
             <Text style={mobileStyles.detailLabel}>Current Reading</Text>
-            <Text style={mobileStyles.detailValue}>{fmt(row.reading_present, 0)}</Text>
+            <Text style={mobileStyles.detailValue}>
+              {fmt(row.reading_present, 0)}
+            </Text>
           </View>
           <View style={mobileStyles.divider} />
           <View style={mobileStyles.detailRow}>
             <Text style={mobileStyles.detailLabel}>Previous Consumption</Text>
             <Text style={mobileStyles.detailValue}>
-              {row.prev_consumed_kwh ? `${fmt(row.prev_consumed_kwh, 0)} kWh` : "—"}
+              {row.prev_consumed_kwh
+                ? `${fmt(row.prev_consumed_kwh, 0)} kWh`
+                : "—"}
             </Text>
           </View>
           <View style={mobileStyles.detailRow}>
@@ -610,7 +632,9 @@ function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
             <View
               style={[
                 mobileStyles.penaltyBadge,
-                row.for_penalty ? mobileStyles.penaltyYes : mobileStyles.penaltyNo,
+                row.for_penalty
+                  ? mobileStyles.penaltyYes
+                  : mobileStyles.penaltyNo,
               ]}
             >
               <Text
@@ -631,14 +655,15 @@ function MobileRowCard({ row, index }: { row: BillingRow; index: number }) {
   );
 }
 
-/* ========================= Component ========================= */
 export default function BillingScreen() {
   const { token, user } = useAuth();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const isSmallMobile = width < 400;
 
-  const roles: string[] = Array.isArray(user?.user_roles) ? user!.user_roles : [];
+  const roles: string[] = Array.isArray(user?.user_roles)
+    ? user!.user_roles
+    : [];
   const isAdmin = roles.includes("admin");
   const isBiller = roles.includes("biller");
   const noAccess = !isAdmin && !isBiller;
@@ -647,8 +672,8 @@ export default function BillingScreen() {
     token && /^Bearer\s/i.test(token.trim())
       ? token.trim()
       : token
-      ? `Bearer ${token.trim()}`
-      : "";
+        ? `Bearer ${token.trim()}`
+        : "";
   const api = useMemo(
     () =>
       axios.create({
@@ -656,7 +681,7 @@ export default function BillingScreen() {
         timeout: 20000,
         headers: headerToken ? { Authorization: headerToken } : {},
       }),
-    [headerToken]
+    [headerToken],
   );
 
   const [buildingId, setBuildingId] = useState("");
@@ -701,7 +726,7 @@ export default function BillingScreen() {
     setError("");
     try {
       const res = await api.get<Record<string, StoredBilling>>(
-        "/billings/buildings"
+        "/billings/buildings",
       );
       setStoredBillings(res.data || {});
     } catch (e: any) {
@@ -722,7 +747,7 @@ export default function BillingScreen() {
     setError("");
     try {
       const res = await api.get<BuildingBillingResponse>(
-        `/billings/buildings/${encodeURIComponent(buildingBillingId)}`
+        `/billings/buildings/${encodeURIComponent(buildingBillingId)}`,
       );
       setPayload(res.data);
       setModeTab("generate");
@@ -752,12 +777,12 @@ export default function BillingScreen() {
     try {
       const res = await api.post<BuildingBillingResponse>(
         `/billings/buildings/${encodeURIComponent(
-          buildingId.trim()
+          buildingId.trim(),
         )}/period-start/${encodeURIComponent(
-          startDate
+          startDate,
         )}/period-end/${encodeURIComponent(endDate)}`,
         {},
-        { params: { penalty_rate: penaltyNum } }
+        { params: { penalty_rate: penaltyNum } },
       );
       setPayload(res.data);
       await fetchStoredBillings();
@@ -774,7 +799,7 @@ export default function BillingScreen() {
       if (status === 409 && existingId) {
         notify(
           "Already exists",
-          "Billing already exists for this building and period. Loading it instead."
+          "Billing already exists for this building and period. Loading it instead.",
         );
         await fetchStoredBilling(existingId);
         await fetchStoredBillings();
@@ -808,7 +833,7 @@ export default function BillingScreen() {
     } catch (e: any) {
       notify(
         "Download failed",
-        e?.message ?? "Unable to download billing report."
+        e?.message ?? "Unable to download billing report.",
       );
     } finally {
       setBusy(false);
@@ -829,22 +854,20 @@ export default function BillingScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      {/* Header */}
       <View style={[styles.header, isMobile && mobileStyles.header]}>
         <Text style={[styles.title, isMobile && mobileStyles.title]}>
           Billing & Statements
         </Text>
-        <Text
-          style={[styles.subtitle, isMobile && mobileStyles.subtitle]}
-        >
+        <Text style={[styles.subtitle, isMobile && mobileStyles.subtitle]}>
           {isMobile
             ? "Generate billing and export CSV"
             : "Generate per-building billing, export CSV, and manage stored billings."}
         </Text>
       </View>
 
-      {/* Tabs */}
-      <View style={[styles.tabContainer, isMobile && mobileStyles.tabContainer]}>
+      <View
+        style={[styles.tabContainer, isMobile && mobileStyles.tabContainer]}
+      >
         <TouchableOpacity
           style={[
             styles.tab,
@@ -896,7 +919,6 @@ export default function BillingScreen() {
       <View style={[styles.content, isMobile && mobileStyles.content]}>
         {viewTab === "billing" ? (
           <View>
-            {/* Mode Toggle */}
             <View
               style={[styles.modeToggle, isMobile && mobileStyles.modeToggle]}
             >
@@ -939,7 +961,6 @@ export default function BillingScreen() {
 
             {modeTab === "generate" ? (
               <>
-                {/* Input Card */}
                 <View
                   style={[styles.inputCard, isMobile && mobileStyles.inputCard]}
                 >
@@ -951,9 +972,7 @@ export default function BillingScreen() {
                   </View>
 
                   {isMobile ? (
-                    /* Mobile Layout - Clean Stacked Form */
                     <View style={mobileStyles.formContainer}>
-                      {/* Building Select */}
                       <View style={mobileStyles.formGroup}>
                         <Text style={mobileStyles.formLabel}>Building *</Text>
                         <View style={mobileStyles.formInputWrapper}>
@@ -966,9 +985,7 @@ export default function BillingScreen() {
                           {buildings.length > 0 ? (
                             <Picker
                               selectedValue={buildingId}
-                              onValueChange={(v) =>
-                                setBuildingId(String(v))
-                              }
+                              onValueChange={(v) => setBuildingId(String(v))}
                               style={mobileStyles.formPicker}
                               mode={
                                 Platform.OS === "android"
@@ -976,10 +993,7 @@ export default function BillingScreen() {
                                   : undefined
                               }
                             >
-                              <Picker.Item
-                                label="Select building…"
-                                value=""
-                              />
+                              <Picker.Item label="Select building…" value="" />
                               {buildings.map((b) => (
                                 <Picker.Item
                                   key={b.building_id}
@@ -1005,7 +1019,6 @@ export default function BillingScreen() {
                         </View>
                       </View>
 
-                      {/* Date Range Row */}
                       <View style={mobileStyles.dateRow}>
                         <View style={mobileStyles.dateField}>
                           <CalendarDatePicker
@@ -1029,7 +1042,6 @@ export default function BillingScreen() {
                         </View>
                       </View>
 
-                      {/* Penalty Rate */}
                       <View style={mobileStyles.formGroup}>
                         <Text style={mobileStyles.formLabel}>
                           Penalty Rate (%) *
@@ -1053,7 +1065,6 @@ export default function BillingScreen() {
                       </View>
                     </View>
                   ) : (
-                    /* Desktop Layout */
                     <View style={styles.inputGrid}>
                       <View style={styles.inputGroup}>
                         <Text style={styles.inputLabel}>Building *</Text>
@@ -1067,9 +1078,7 @@ export default function BillingScreen() {
                           {buildings.length > 0 ? (
                             <Picker
                               selectedValue={buildingId}
-                              onValueChange={(v) =>
-                                setBuildingId(String(v))
-                              }
+                              onValueChange={(v) => setBuildingId(String(v))}
                               style={styles.picker}
                               mode={
                                 Platform.OS === "android"
@@ -1077,10 +1086,7 @@ export default function BillingScreen() {
                                   : undefined
                               }
                             >
-                              <Picker.Item
-                                label="Select building…"
-                                value=""
-                              />
+                              <Picker.Item label="Select building…" value="" />
                               {buildings.map((b) => (
                                 <Picker.Item
                                   key={b.building_id}
@@ -1148,7 +1154,6 @@ export default function BillingScreen() {
                     </View>
                   )}
 
-                  {/* Action Buttons */}
                   {isMobile ? (
                     <View style={mobileStyles.actionRow}>
                       <TouchableOpacity
@@ -1178,11 +1183,7 @@ export default function BillingScreen() {
                         onPress={onExportCurrentCsv}
                         disabled={!payload}
                       >
-                        <Ionicons
-                          name="download"
-                          size={18}
-                          color="#2563EB"
-                        />
+                        <Ionicons name="download" size={18} color="#2563EB" />
                       </TouchableOpacity>
                     </View>
                   ) : (
@@ -1212,11 +1213,7 @@ export default function BillingScreen() {
                         onPress={onExportCurrentCsv}
                         disabled={!payload}
                       >
-                        <Ionicons
-                          name="download"
-                          size={16}
-                          color="#2563EB"
-                        />
+                        <Ionicons name="download" size={16} color="#2563EB" />
                         <Text style={styles.secondaryButtonText}>
                           Export CSV
                         </Text>
@@ -1224,12 +1221,9 @@ export default function BillingScreen() {
                     </View>
                   )}
 
-                  {error ? (
-                    <Text style={styles.errorText}>{error}</Text>
-                  ) : null}
+                  {error ? <Text style={styles.errorText}>{error}</Text> : null}
                 </View>
 
-                {/* Billing Summary & Details */}
                 <View
                   style={[
                     styles.billingCard,
@@ -1330,9 +1324,7 @@ export default function BillingScreen() {
                       {payload.generated_at && (
                         <Text style={styles.generatedAt}>
                           Generated at{" "}
-                          {new Date(
-                            payload.generated_at
-                          ).toLocaleString()}
+                          {new Date(payload.generated_at).toLocaleString()}
                         </Text>
                       )}
                     </View>
@@ -1359,25 +1351,18 @@ export default function BillingScreen() {
                     </View>
                   )}
 
-                  {/* Tenant Details */}
                   {payload && (
                     <View style={{ marginTop: 16, gap: 16 }}>
                       {payload.tenants.map((tenant, tenantIndex) => (
                         <View
-                          key={
-                            tenant.tenant_id || `tenant-${tenantIndex}`
-                          }
+                          key={tenant.tenant_id || `tenant-${tenantIndex}`}
                           style={[
                             styles.tenantCard,
                             isMobile && mobileStyles.tenantCard,
                           ]}
                         >
                           <View style={styles.tenantHeader}>
-                            <Ionicons
-                              name="person"
-                              size={18}
-                              color="#374151"
-                            />
+                            <Ionicons name="person" size={18} color="#374151" />
                             <View style={styles.tenantInfo}>
                               <Text
                                 style={[
@@ -1397,7 +1382,6 @@ export default function BillingScreen() {
                             </View>
                           </View>
 
-                          {/* Mobile: Card-based layout */}
                           {isMobile ? (
                             <View style={mobileStyles.rowCardContainer}>
                               {tenant.rows.map((row, rowIndex) => (
@@ -1409,7 +1393,6 @@ export default function BillingScreen() {
                               ))}
                             </View>
                           ) : (
-                            /* Desktop: Table layout */
                             <View style={styles.compactTable}>
                               <View style={styles.compactTableHeader}>
                                 <View
@@ -1491,22 +1474,15 @@ export default function BillingScreen() {
                                   <View
                                     style={[styles.compactCell, { flex: 2 }]}
                                   >
-                                    <Text
-                                      style={styles.compactCellPrimary}
-                                    >
-                                      {row.stall_sn ||
-                                        row.stall_no ||
-                                        "—"}
+                                    <Text style={styles.compactCellPrimary}>
+                                      {row.stall_sn || row.stall_no || "—"}
                                     </Text>
-                                    <Text
-                                      style={styles.compactCellSecondary}
-                                    >
+                                    <Text style={styles.compactCellSecondary}>
                                       {row.meter_no || row.meter_id}
                                     </Text>
                                     <View style={styles.meterTypeBadge}>
                                       <Text style={styles.meterTypeText}>
-                                        {(row.meter_type || "")
-                                          .toUpperCase()}
+                                        {(row.meter_type || "").toUpperCase()}
                                       </Text>
                                       <Text style={styles.multiplierText}>
                                         ×{fmt(row.mult, 0)}
@@ -1514,10 +1490,7 @@ export default function BillingScreen() {
                                     </View>
                                   </View>
                                   <View
-                                    style={[
-                                      styles.compactCell,
-                                      { flex: 1.5 },
-                                    ]}
+                                    style={[styles.compactCell, { flex: 1.5 }]}
                                   >
                                     <View style={styles.readingPair}>
                                       <Text style={styles.readingLabel}>
@@ -1537,32 +1510,19 @@ export default function BillingScreen() {
                                     </View>
                                   </View>
                                   <View
-                                    style={[
-                                      styles.compactCell,
-                                      { flex: 1 },
-                                    ]}
+                                    style={[styles.compactCell, { flex: 1 }]}
                                   >
-                                    <Text
-                                      style={styles.consumptionValue}
-                                    >
+                                    <Text style={styles.consumptionValue}>
                                       {fmt(row.consumed_kwh, 0)} kWh
                                     </Text>
                                     {row.prev_consumed_kwh && (
-                                      <Text
-                                        style={
-                                          styles.previousConsumption
-                                        }
-                                      >
-                                        Prev:{" "}
-                                        {fmt(row.prev_consumed_kwh, 0)}
+                                      <Text style={styles.previousConsumption}>
+                                        Prev: {fmt(row.prev_consumed_kwh, 0)}
                                       </Text>
                                     )}
                                   </View>
                                   <View
-                                    style={[
-                                      styles.compactCell,
-                                      { flex: 1 },
-                                    ]}
+                                    style={[styles.compactCell, { flex: 1 }]}
                                   >
                                     <Text
                                       style={[
@@ -1575,17 +1535,11 @@ export default function BillingScreen() {
                                     >
                                       {row.rate_of_change_pct == null
                                         ? "—"
-                                        : `${fmt(
-                                            row.rate_of_change_pct,
-                                            0
-                                          )}%`}
+                                        : `${fmt(row.rate_of_change_pct, 0)}%`}
                                     </Text>
                                   </View>
                                   <View
-                                    style={[
-                                      styles.compactCell,
-                                      { flex: 1.5 },
-                                    ]}
+                                    style={[styles.compactCell, { flex: 1.5 }]}
                                   >
                                     <View style={styles.ratesContainer}>
                                       <Text style={styles.rateText}>
@@ -1599,9 +1553,8 @@ export default function BillingScreen() {
                                         {row.vat_rate == null
                                           ? "—"
                                           : `${fmt(
-                                              (row.vat_rate as number) *
-                                                100,
-                                              1
+                                              (row.vat_rate as number) * 100,
+                                              1,
                                             )}%`}
                                       </Text>
                                       {row.whtax_code && (
@@ -1624,10 +1577,7 @@ export default function BillingScreen() {
                                     </View>
                                   </View>
                                   <View
-                                    style={[
-                                      styles.compactCell,
-                                      { flex: 1 },
-                                    ]}
+                                    style={[styles.compactCell, { flex: 1 }]}
                                   >
                                     <Text style={styles.amountText}>
                                       {formatCurrency(row.total_amount)}
@@ -1656,8 +1606,8 @@ export default function BillingScreen() {
                               {formatCurrency(
                                 tenant.rows.reduce(
                                   (sum, row) => sum + row.total_amount,
-                                  0
-                                )
+                                  0,
+                                ),
                               )}
                             </Text>
                           </View>
@@ -1668,7 +1618,6 @@ export default function BillingScreen() {
                 </View>
               </>
             ) : (
-              /* Stored Billings */
               <View
                 style={[
                   styles.storedBillingsCard,
@@ -1682,11 +1631,7 @@ export default function BillingScreen() {
                     onPress={fetchStoredBillings}
                     style={styles.refreshButton}
                   >
-                    <Ionicons
-                      name="refresh"
-                      size={16}
-                      color="#64748B"
-                    />
+                    <Ionicons name="refresh" size={16} color="#64748B" />
                   </TouchableOpacity>
                 </View>
                 {busy ? (
@@ -1770,7 +1715,6 @@ export default function BillingScreen() {
   );
 }
 
-/* ========================= Desktop Styles ========================= */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F8FAFC" },
   noAccessContainer: {
@@ -2114,7 +2058,6 @@ const styles = StyleSheet.create({
   billingId: { marginLeft: "auto", fontSize: 12, color: "#6B7280" },
 });
 
-/* ========================= Mobile Styles ========================= */
 const mobileStyles = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingVertical: 16 },
   title: { fontSize: 22 },
@@ -2255,7 +2198,6 @@ const mobileStyles = StyleSheet.create({
   billingItem: { paddingVertical: 8, paddingHorizontal: 10 },
   tenantTotalAmount: { fontSize: 13, fontWeight: "600", color: "#111827" },
 
-  /* Calendar modal */
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.5)",

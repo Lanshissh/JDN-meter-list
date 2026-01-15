@@ -43,7 +43,12 @@ function toText(v: any) {
 }
 
 function pickMessage(data: any) {
-  return data?.error || data?.message || data?.hint || (typeof data === "string" ? data : null);
+  return (
+    data?.error ||
+    data?.message ||
+    data?.hint ||
+    (typeof data === "string" ? data : null)
+  );
 }
 
 export default function OfflineSubmissionsPanel() {
@@ -76,7 +81,9 @@ export default function OfflineSubmissionsPanel() {
         setItems(submissions);
       } else {
         setItems([]);
-        setError(toText(pickMessage(res.data) || "Unexpected response from server."));
+        setError(
+          toText(pickMessage(res.data) || "Unexpected response from server."),
+        );
       }
     } catch (e: any) {
       const msg =
@@ -101,7 +108,8 @@ export default function OfflineSubmissionsPanel() {
       await api.post(`/offlineExport/approve/${id}`);
       await fetchPending();
     } catch (e: any) {
-      const msg = pickMessage(e?.response?.data) || e?.message || "Approve failed.";
+      const msg =
+        pickMessage(e?.response?.data) || e?.message || "Approve failed.";
       Alert.alert("Approve failed", toText(msg));
     } finally {
       setLoading(false);
@@ -114,7 +122,8 @@ export default function OfflineSubmissionsPanel() {
       await api.post(`/offlineExport/reject/${id}`);
       await fetchPending();
     } catch (e: any) {
-      const msg = pickMessage(e?.response?.data) || e?.message || "Reject failed.";
+      const msg =
+        pickMessage(e?.response?.data) || e?.message || "Reject failed.";
       Alert.alert("Reject failed", toText(msg));
     } finally {
       setLoading(false);
@@ -147,28 +156,49 @@ export default function OfflineSubmissionsPanel() {
         contentContainerStyle={{ paddingBottom: 24 }}
         refreshing={loading}
         onRefresh={fetchPending}
-        ListEmptyComponent={<Text style={styles.empty}>No pending submissions.</Text>}
+        ListEmptyComponent={
+          <Text style={styles.empty}>No pending submissions.</Text>
+        }
         renderItem={({ item }) => (
           <View style={styles.card}>
             <Text style={styles.big}>Meter: {toText(item.meter_id)}</Text>
-            <Text style={styles.meta}>Value: {Number(item.reading_value).toFixed(2)}</Text>
+            <Text style={styles.meta}>
+              Value: {Number(item.reading_value).toFixed(2)}
+            </Text>
             <Text style={styles.meta}>Date: {toText(item.reading_date)}</Text>
-            <Text style={styles.meta}>Reader: {toText(item.reader_user_id)}</Text>
+            <Text style={styles.meta}>
+              Reader: {toText(item.reader_user_id)}
+            </Text>
 
             {!!item.device_serial && (
-              <Text style={styles.meta}>Device: {toText(item.device_serial)} {item.device_name ? `(${toText(item.device_name)})` : ""}</Text>
+              <Text style={styles.meta}>
+                Device: {toText(item.device_serial)}{" "}
+                {item.device_name ? `(${toText(item.device_name)})` : ""}
+              </Text>
             )}
 
-            <Text style={styles.meta}>Submitted: {toText(item.submitted_at)}</Text>
-            {!!item.remarks && <Text style={styles.meta}>Remarks: {toText(item.remarks)}</Text>}
+            <Text style={styles.meta}>
+              Submitted: {toText(item.submitted_at)}
+            </Text>
+            {!!item.remarks && (
+              <Text style={styles.meta}>Remarks: {toText(item.remarks)}</Text>
+            )}
 
-            <Text style={styles.note}>Image stored: {item.image_base64 ? "✅" : "❌"}</Text>
+            <Text style={styles.note}>
+              Image stored: {item.image_base64 ? "✅" : "❌"}
+            </Text>
 
             <View style={styles.row}>
-              <TouchableOpacity style={[styles.smallBtn, styles.approveBtn]} onPress={() => approve(item.id)}>
+              <TouchableOpacity
+                style={[styles.smallBtn, styles.approveBtn]}
+                onPress={() => approve(item.id)}
+              >
                 <Text style={styles.smallBtnText}>Approve</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.smallBtn, styles.rejectBtn]} onPress={() => reject(item.id)}>
+              <TouchableOpacity
+                style={[styles.smallBtn, styles.rejectBtn]}
+                onPress={() => reject(item.id)}
+              >
                 <Text style={styles.smallBtnText}>Reject</Text>
               </TouchableOpacity>
             </View>
@@ -181,13 +211,30 @@ export default function OfflineSubmissionsPanel() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 16 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   title: { fontSize: 18, fontWeight: "800" },
-  btn: { backgroundColor: "#47538b", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+  btn: {
+    backgroundColor: "#47538b",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
   btnText: { color: "#fff", fontWeight: "700" },
   err: { color: "#c62828", marginBottom: 10 },
   empty: { opacity: 0.7, marginTop: 20, textAlign: "center" },
-  card: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12, marginBottom: 10, backgroundColor: "#fff" },
+  card: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: "#fff",
+  },
   big: { fontWeight: "900" },
   meta: { opacity: 0.85, marginTop: 2 },
   note: { marginTop: 8, opacity: 0.7 },

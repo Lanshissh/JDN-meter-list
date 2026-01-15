@@ -74,7 +74,7 @@ const notify = (title: string, message?: any) => {
 const handleError = (
   setErr: (s: string) => void,
   fallbackMsg: string,
-  e: any
+  e: any,
 ) => {
   const status = e?.response?.status;
   const url = e?.config?.url;
@@ -264,7 +264,6 @@ function CalendarDatePicker({
       fullDate: Date | null;
     }> = [];
 
-    // Previous month's days
     const prevMonthLastDay = new Date(year, month, 0).getDate();
     for (let i = startingDayOfWeek - 1; i >= 0; i--) {
       days.push({
@@ -274,7 +273,6 @@ function CalendarDatePicker({
       });
     }
 
-    // Current month's days
     for (let i = 1; i <= daysInMonth; i++) {
       days.push({
         date: i,
@@ -283,7 +281,6 @@ function CalendarDatePicker({
       });
     }
 
-    // Next month's days
     const remainingDays = 42 - days.length;
     for (let i = 1; i <= remainingDays; i++) {
       days.push({
@@ -383,7 +380,6 @@ function CalendarDatePicker({
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
           >
-            {/* Header */}
             <View style={calendarStyles.calendarHeader}>
               <Text style={calendarStyles.monthYear}>
                 {MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}
@@ -404,7 +400,6 @@ function CalendarDatePicker({
               </View>
             </View>
 
-            {/* Quick Today Button */}
             <TouchableOpacity
               style={calendarStyles.todayButton}
               onPress={handleToday}
@@ -413,7 +408,6 @@ function CalendarDatePicker({
               <Text style={calendarStyles.todayText}>Today</Text>
             </TouchableOpacity>
 
-            {/* Day Headers */}
             <View style={calendarStyles.dayHeaders}>
               {DAYS.map((day) => (
                 <Text key={day} style={calendarStyles.dayHeader}>
@@ -422,7 +416,6 @@ function CalendarDatePicker({
               ))}
             </View>
 
-            {/* Calendar Grid */}
             <View style={calendarStyles.calendarGrid}>
               {days.map((day, index) => (
                 <TouchableOpacity
@@ -456,7 +449,6 @@ function CalendarDatePicker({
               ))}
             </View>
 
-            {/* Footer */}
             <View style={calendarStyles.calendarFooter}>
               <TouchableOpacity
                 style={calendarStyles.cancelButton}
@@ -481,8 +473,8 @@ function RateOfChangePanel() {
     token && /^Bearer\s/i.test(token.trim())
       ? token.trim()
       : token
-      ? `Bearer ${token.trim()}`
-      : "";
+        ? `Bearer ${token.trim()}`
+        : "";
 
   const api: AxiosInstance = useMemo(
     () =>
@@ -491,7 +483,7 @@ function RateOfChangePanel() {
         timeout: 20000,
         headers: headerToken ? { Authorization: headerToken } : {},
       }),
-    [headerToken]
+    [headerToken],
   );
 
   const detectedPrefixRef = useRef<string | null>(null);
@@ -516,14 +508,13 @@ function RateOfChangePanel() {
   const [meterRoc, setMeterRoc] = useState<RocMeter | null>(null);
   const [tenantRoc, setTenantRoc] = useState<RocTenant | null>(null);
   const [buildingRoc, setBuildingRoc] = useState<RocBuilding | null>(null);
-  const [cmpMonthly, setCmpMonthly] =
-    useState<BuildingMonthlyTotals | null>(null);
+  const [cmpMonthly, setCmpMonthly] = useState<BuildingMonthlyTotals | null>(
+    null,
+  );
   const [cmpFour, setCmpFour] = useState<BuildingFourMonths | null>(null);
   const [cmpYearly, setCmpYearly] = useState<BuildingYearly | null>(null);
-
   const [buildings, setBuildings] = useState<BuildingOption[]>([]);
 
-  // Load buildings for dropdown
   useEffect(() => {
     if (!token) return;
     const loadBuildings = async () => {
@@ -587,9 +578,9 @@ function RateOfChangePanel() {
 
     try {
       const raw = `/roc/meters/${encodeURIComponent(
-        meterId.trim()
+        meterId.trim(),
       )}/period-start/${encodeURIComponent(
-        startDate
+        startDate,
       )}/period-end/${encodeURIComponent(endDate)}`;
       const data = await getWithAutoPrefix<RocMeter>(raw);
       setMeterRoc(data || null);
@@ -611,9 +602,9 @@ function RateOfChangePanel() {
 
     try {
       const raw = `/roc/tenants/${encodeURIComponent(
-        tenantId.trim()
+        tenantId.trim(),
       )}/period-start/${encodeURIComponent(
-        startDate
+        startDate,
       )}/period-end/${encodeURIComponent(endDate)}`;
       const data = await getWithAutoPrefix<RocTenant>(raw);
       setTenantRoc(data || null);
@@ -635,9 +626,9 @@ function RateOfChangePanel() {
 
     try {
       const raw = `/roc/buildings/${encodeURIComponent(
-        buildingId.trim()
+        buildingId.trim(),
       )}/period-start/${encodeURIComponent(
-        startDate
+        startDate,
       )}/period-end/${encodeURIComponent(endDate)}`;
       const data = await getWithAutoPrefix<RocBuilding>(raw);
       setBuildingRoc(data || null);
@@ -659,9 +650,9 @@ function RateOfChangePanel() {
 
     try {
       const raw = `/roc/buildings/${encodeURIComponent(
-        buildingId.trim()
+        buildingId.trim(),
       )}/period-start/${encodeURIComponent(
-        startDate
+        startDate,
       )}/period-end/${encodeURIComponent(endDate)}/monthly-comparison`;
       const data = await getWithAutoPrefix<BuildingMonthlyTotals>(raw);
       setCmpMonthly(data || null);
@@ -683,9 +674,9 @@ function RateOfChangePanel() {
 
     try {
       const raw = `/roc/buildings/${encodeURIComponent(
-        buildingId.trim()
+        buildingId.trim(),
       )}/period-start/${encodeURIComponent(
-        startDate
+        startDate,
       )}/period-end/${encodeURIComponent(endDate)}/quarterly-comparison`;
       const data = await getWithAutoPrefix<BuildingFourMonths>(raw);
       setCmpFour(data || null);
@@ -707,7 +698,7 @@ function RateOfChangePanel() {
 
     try {
       const raw = `/roc/buildings/${encodeURIComponent(
-        buildingId.trim()
+        buildingId.trim(),
       )}/year/${encodeURIComponent(String(yr))}/yearly-comparison`;
       const data = await getWithAutoPrefix<BuildingYearly>(raw);
       setCmpYearly(data || null);
@@ -721,7 +712,7 @@ function RateOfChangePanel() {
   const dl = (
     filename: string,
     content: string,
-    mime = "text/csv;charset=utf-8"
+    mime = "text/csv;charset=utf-8",
   ) => {
     if (!(isWeb && typeof window !== "undefined")) {
       notify("CSV created", "Use your device's share/download feature.");
@@ -761,7 +752,7 @@ function RateOfChangePanel() {
       .join(",");
     dl(
       `monthly_comparison_${bid}_${ps}_${pe}.csv`,
-      `"${header.join('","')}"\n${row}\n`
+      `"${header.join('","')}"\n${row}\n`,
     );
   };
 
@@ -798,21 +789,19 @@ function RateOfChangePanel() {
           tot.lpg ?? "",
         ]
           .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
-          .join(",")
+          .join(","),
       );
     });
     const all = cmpFour.totals_all ?? {};
     lines.push(
       `"Σ Totals","","","","","",${all.electric ?? ""},${
         all.water ?? ""
-      },${all.lpg ?? ""}`
+      },${all.lpg ?? ""}`,
     );
-    lines.push(
-      `"All Utilities","","","","","",${all.all_utilities ?? ""},,`
-    );
+    lines.push(`"All Utilities","","","","","",${all.all_utilities ?? ""},,`);
     dl(
       `quarterly_comparison_${bid}_${win.start ?? ""}_${win.end ?? ""}.csv`,
-      lines.join("\n") + "\n"
+      lines.join("\n") + "\n",
     );
   };
 
@@ -848,21 +837,19 @@ function RateOfChangePanel() {
           tot.lpg ?? "",
         ]
           .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
-          .join(",")
+          .join(","),
       );
     });
     const all = cmpYearly.totals_all ?? {};
     lines.push(
       `"Σ Annual Totals","","","","","",${all.electric ?? ""},${
         all.water ?? ""
-      },${all.lpg ?? ""}`
+      },${all.lpg ?? ""}`,
     );
-    lines.push(
-      `"All Utilities","","","","","",${all.all_utilities ?? ""},,`
-    );
+    lines.push(`"All Utilities","","","","","",${all.all_utilities ?? ""},,`);
     dl(
       `yearly_comparison_${bid}_${cmpYearly.year ?? ""}.csv`,
-      lines.join("\n") + "\n"
+      lines.join("\n") + "\n",
     );
   };
 
@@ -884,7 +871,6 @@ function RateOfChangePanel() {
         </Text>
       </View>
 
-      {/* Tabs */}
       <View
         style={[styles.tabContainer, isMobile && styles.tabContainerMobile]}
       >
@@ -924,7 +910,6 @@ function RateOfChangePanel() {
         </View>
       )}
 
-      {/* Parameters */}
       <View style={[styles.inputCard, isMobile && styles.inputCardMobile]}>
         <Text style={styles.sectionTitle}>Parameters</Text>
 
@@ -973,7 +958,7 @@ function RateOfChangePanel() {
                         label={
                           b.building_name
                             ? `${b.building_name} (${b.building_id})`
-                            : b.building_id ?? ""
+                            : (b.building_id ?? "")
                         }
                         value={b.building_id}
                       />
@@ -1015,9 +1000,7 @@ function RateOfChangePanel() {
             <InputField
               label="Year"
               value={year}
-              onChangeText={(v) =>
-                setYear(v.replace(/[^\d]/g, "").slice(0, 4))
-              }
+              onChangeText={(v) => setYear(v.replace(/[^\d]/g, "").slice(0, 4))}
               placeholder="2024"
               icon="today"
               keyboardType="numeric"
@@ -1086,14 +1069,9 @@ function RateOfChangePanel() {
         </View>
       </View>
 
-      {/* Results */}
       <View
-        style={[
-          styles.resultsSection,
-          isMobile && styles.resultsSectionMobile,
-        ]}
+        style={[styles.resultsSection, isMobile && styles.resultsSectionMobile]}
       >
-        {/* Meter */}
         {mode === "meter" && meterRoc && (
           <ResultsCard title="Meter Analysis" icon="speedometer">
             <View style={styles.meterHeader}>
@@ -1132,7 +1110,6 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {/* Tenant */}
         {mode === "tenant" && tenantRoc && (
           <ResultsCard title="Tenant Analysis" icon="person">
             <Text style={styles.tenantId}>Tenant: {tenantRoc.tenant_id}</Text>
@@ -1171,7 +1148,6 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {/* Building */}
         {mode === "building" && buildingRoc && (
           <ResultsCard title="Building Analysis" icon="business">
             <View style={styles.buildingHeader}>
@@ -1218,7 +1194,6 @@ function RateOfChangePanel() {
           </ResultsCard>
         )}
 
-        {/* Comparison */}
         {mode === "comparison" && (
           <>
             {cmpMonthly && (
@@ -1229,10 +1204,7 @@ function RateOfChangePanel() {
                   </Text>
                 </View>
                 <View
-                  style={[
-                    styles.statsGrid,
-                    isMobile && styles.statsGridMobile,
-                  ]}
+                  style={[styles.statsGrid, isMobile && styles.statsGridMobile]}
                 >
                   <StatCard
                     label="Electric"
@@ -1391,11 +1363,7 @@ function TabButton({
       style={[styles.tabButton, active && styles.tabButtonActive]}
       onPress={onPress}
     >
-      <Ionicons
-        name={icon}
-        size={16}
-        color={active ? "#2563EB" : "#64748B"}
-      />
+      <Ionicons name={icon} size={16} color={active ? "#2563EB" : "#64748B"} />
       <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
         {label}
       </Text>
@@ -1475,8 +1443,8 @@ function ActionButton({
           variant === "primary"
             ? "#FFFFFF"
             : variant === "outline"
-            ? "#2563EB"
-            : "#2563EB"
+              ? "#2563EB"
+              : "#2563EB"
         }
       />
       <Text

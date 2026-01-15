@@ -138,7 +138,7 @@ export default function BuildingPanel({ token }: Props) {
 
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token]
+    [token],
   );
   const api = useMemo(
     () =>
@@ -147,7 +147,7 @@ export default function BuildingPanel({ token }: Props) {
         headers: authHeader,
         timeout: 15000,
       }),
-    [authHeader]
+    [authHeader],
   );
 
   const basePath = "/buildings";
@@ -183,7 +183,9 @@ export default function BuildingPanel({ token }: Props) {
       const textOk = !q
         ? true
         : [r.building_id, r.building_name, r.updated_by].some((v) =>
-            String(v ?? "").toLowerCase().includes(q)
+            String(v ?? "")
+              .toLowerCase()
+              .includes(q),
           );
 
       const rateOk = hasAnyRate
@@ -203,40 +205,36 @@ export default function BuildingPanel({ token }: Props) {
     switch (sortMode) {
       case "nameAsc":
         return arr.sort((a, b) =>
-          (a.building_name || "").localeCompare(b.building_name || "")
+          (a.building_name || "").localeCompare(b.building_name || ""),
         );
       case "nameDesc":
         return arr.sort((a, b) =>
-          (b.building_name || "").localeCompare(a.building_name || "")
+          (b.building_name || "").localeCompare(a.building_name || ""),
         );
       case "idAsc":
         return arr.sort((a, b) =>
-          (a.building_id || "").localeCompare(
-            b.building_id || "",
-            undefined,
-            { numeric: true }
-          )
+          (a.building_id || "").localeCompare(b.building_id || "", undefined, {
+            numeric: true,
+          }),
         );
       case "idDesc":
         return arr.sort((a, b) =>
-          (b.building_id || "").localeCompare(
-            a.building_id || "",
-            undefined,
-            { numeric: true }
-          )
+          (b.building_id || "").localeCompare(a.building_id || "", undefined, {
+            numeric: true,
+          }),
         );
       case "oldest":
         return arr.sort(
           (a, b) =>
             (Date.parse(a.last_updated || "") || 0) -
-            (Date.parse(b.last_updated || "") || 0)
+            (Date.parse(b.last_updated || "") || 0),
         );
       case "newest":
       default:
         return arr.sort(
           (a, b) =>
             (Date.parse(b.last_updated || "") || 0) -
-            (Date.parse(a.last_updated || "") || 0)
+            (Date.parse(a.last_updated || "") || 0),
         );
     }
   }, [filtered, sortMode]);
@@ -280,23 +278,13 @@ export default function BuildingPanel({ token }: Props) {
   const openEdit = (row: Building) => {
     setEditRow(row);
     setE_name(row.building_name || "");
-    setE_eRate(
-      row.erate_perKwH != null ? String(row.erate_perKwH) : ""
-    );
+    setE_eRate(row.erate_perKwH != null ? String(row.erate_perKwH) : "");
     setE_eMin(row.emin_con != null ? String(row.emin_con) : "");
-    setE_wRate(
-      row.wrate_perCbM != null ? String(row.wrate_perCbM) : ""
-    );
+    setE_wRate(row.wrate_perCbM != null ? String(row.wrate_perCbM) : "");
     setE_wMin(row.wmin_con != null ? String(row.wmin_con) : "");
-    setE_lRate(
-      row.lrate_perKg != null ? String(row.lrate_perKg) : ""
-    );
-    setE_markup(
-      row.markup_rate != null ? String(row.markup_rate) : ""
-    );
-    setE_penalty(
-      row.penalty_rate != null ? String(row.penalty_rate) : ""
-    ); // NEW
+    setE_lRate(row.lrate_perKg != null ? String(row.lrate_perKg) : "");
+    setE_markup(row.markup_rate != null ? String(row.markup_rate) : "");
+    setE_penalty(row.penalty_rate != null ? String(row.penalty_rate) : ""); // NEW
     setEditVisible(true);
   };
 
@@ -333,9 +321,7 @@ export default function BuildingPanel({ token }: Props) {
     const go = async () => {
       try {
         setSubmitting(true);
-        await api.delete(
-          `${basePath}/${encodeURIComponent(row.building_id)}`
-        );
+        await api.delete(`${basePath}/${encodeURIComponent(row.building_id)}`);
         await loadAll();
         notify("Deleted", "Building removed.");
       } catch (err) {
@@ -345,8 +331,13 @@ export default function BuildingPanel({ token }: Props) {
       }
     };
 
-    if (Platform.OS === "web" && typeof window !== "undefined" && window.confirm) {
-      if (window.confirm(`Delete ${row.building_name || row.building_id}?`)) go();
+    if (
+      Platform.OS === "web" &&
+      typeof window !== "undefined" &&
+      window.confirm
+    ) {
+      if (window.confirm(`Delete ${row.building_name || row.building_id}?`))
+        go();
     } else {
       Alert.alert(
         "Confirm delete",
@@ -354,7 +345,7 @@ export default function BuildingPanel({ token }: Props) {
         [
           { text: "Cancel", style: "cancel" },
           { text: "Delete", style: "destructive", onPress: go },
-        ]
+        ],
       );
     }
   };
@@ -413,17 +404,11 @@ export default function BuildingPanel({ token }: Props) {
               keyExtractor={(r) => r.building_id}
               style={{ flex: 1 }}
               contentContainerStyle={
-                sorted.length === 0
-                  ? styles.emptyPad
-                  : { paddingBottom: 24 }
+                sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }
               }
               ListEmptyComponent={
                 <View style={styles.empty}>
-                  <Ionicons
-                    name="business-outline"
-                    size={42}
-                    color="#cbd5e1"
-                  />
+                  <Ionicons name="business-outline" size={42} color="#cbd5e1" />
                   <Text style={styles.emptyTitle}>No buildings</Text>
                   <Text style={styles.emptyText}>
                     Try adjusting your search or create a new record.
@@ -431,18 +416,11 @@ export default function BuildingPanel({ token }: Props) {
                 </View>
               }
               renderItem={({ item }) => (
-                <View
-                  style={[
-                    styles.row,
-                    isMobile && styles.rowMobile,
-                  ]}
-                >
+                <View style={[styles.row, isMobile && styles.rowMobile]}>
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
                       {item.building_name || "(No name)"}{" "}
-                      <Text style={styles.rowSub}>
-                        ({item.building_id})
-                      </Text>
+                      <Text style={styles.rowSub}>({item.building_id})</Text>
                     </Text>
                     <Text style={styles.rowMeta}>
                       ELECTRIC: {item.erate_perKwH ?? "—"} ₱/kWh (min{" "}
@@ -460,19 +438,14 @@ export default function BuildingPanel({ token }: Props) {
                     {item.last_updated ? (
                       <Text style={styles.rowMetaSmall}>
                         Updated {fmtDate(item.last_updated)}{" "}
-                        {item.updated_by
-                          ? `• by ${item.updated_by}`
-                          : ""}
+                        {item.updated_by ? `• by ${item.updated_by}` : ""}
                       </Text>
                     ) : null}
                   </View>
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity
-                        style={[
-                          styles.actionBtn,
-                          styles.actionEdit,
-                        ]}
+                        style={[styles.actionBtn, styles.actionEdit]}
                         onPress={() => openEdit(item)}
                       >
                         <Ionicons
@@ -481,31 +454,18 @@ export default function BuildingPanel({ token }: Props) {
                           color="#1f2937"
                         />
                         <Text
-                          style={[
-                            styles.actionText,
-                            styles.actionEditText,
-                          ]}
+                          style={[styles.actionText, styles.actionEditText]}
                         >
                           Update
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[
-                          styles.actionBtn,
-                          styles.actionDelete,
-                        ]}
+                        style={[styles.actionBtn, styles.actionDelete]}
                         onPress={() => onDelete(item)}
                       >
-                        <Ionicons
-                          name="trash-outline"
-                          size={16}
-                          color="#fff"
-                        />
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
                         <Text
-                          style={[
-                            styles.actionText,
-                            styles.actionDeleteText,
-                          ]}
+                          style={[styles.actionText, styles.actionDeleteText]}
                         >
                           Delete
                         </Text>
@@ -514,10 +474,7 @@ export default function BuildingPanel({ token }: Props) {
                   ) : (
                     <View style={styles.rowActions}>
                       <TouchableOpacity
-                        style={[
-                          styles.actionBtn,
-                          styles.actionEdit,
-                        ]}
+                        style={[styles.actionBtn, styles.actionEdit]}
                         onPress={() => openEdit(item)}
                       >
                         <Ionicons
@@ -526,31 +483,18 @@ export default function BuildingPanel({ token }: Props) {
                           color="#1f2937"
                         />
                         <Text
-                          style={[
-                            styles.actionText,
-                            styles.actionEditText,
-                          ]}
+                          style={[styles.actionText, styles.actionEditText]}
                         >
                           Update
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[
-                          styles.actionBtn,
-                          styles.actionDelete,
-                        ]}
+                        style={[styles.actionBtn, styles.actionDelete]}
                         onPress={() => onDelete(item)}
                       >
-                        <Ionicons
-                          name="trash-outline"
-                          size={16}
-                          color="#fff"
-                        />
+                        <Ionicons name="trash-outline" size={16} color="#fff" />
                         <Text
-                          style={[
-                            styles.actionText,
-                            styles.actionDeleteText,
-                          ]}
+                          style={[styles.actionText, styles.actionDeleteText]}
                         >
                           Delete
                         </Text>
@@ -609,11 +553,7 @@ export default function BuildingPanel({ token }: Props) {
               />
             </View>
 
-            <Text
-              style={[styles.dropdownLabel, { marginTop: 10 }]}
-            >
-              Other
-            </Text>
+            <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
             <View style={styles.chipsRow}>
               <Chip
                 label="Only non-zero"
@@ -799,9 +739,7 @@ export default function BuildingPanel({ token }: Props) {
         >
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>
-              {editRow
-                ? `Edit • ${editRow.building_name}`
-                : "Edit Building"}
+              {editRow ? `Edit • ${editRow.building_name}` : "Edit Building"}
             </Text>
             <View style={styles.modalDivider} />
             <ScrollView
@@ -904,9 +842,7 @@ export default function BuildingPanel({ token }: Props) {
               {editRow?.last_updated ? (
                 <Text style={styles.helpText}>
                   Last updated: {fmtDate(editRow.last_updated)}{" "}
-                  {editRow.updated_by
-                    ? `• ${editRow.updated_by}`
-                    : ""}
+                  {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
                 </Text>
               ) : null}
             </ScrollView>

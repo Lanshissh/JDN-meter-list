@@ -23,12 +23,13 @@ import { Picker } from "@react-native-picker/picker";
 import NetInfo from "@react-native-community/netinfo";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
 import { BASE_API } from "../../constants/api";
 import { useScanHistory } from "../../contexts/ScanHistoryContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../../contexts/AuthContext";
 
-/* ---------- helpers ---------- */
 const KEY_DEVICE_TOKEN = "device_token_v1";
 const KEY_DEVICE_NAME = "device_name_v1";
 
@@ -65,7 +66,8 @@ function errorText(err: any, fallback = "Server error.") {
       if (typeof v === "object") {
         if (typeof (v as any).error === "string") return (v as any).error;
         if (typeof (v as any).message === "string") return (v as any).message;
-        if ((v as any).error && typeof (v as any).error.message === "string") return (v as any).error.message;
+        if ((v as any).error && typeof (v as any).error.message === "string")
+          return (v as any).error.message;
         return JSON.stringify(v, null, 2);
       }
       return null;
@@ -74,7 +76,9 @@ function errorText(err: any, fallback = "Server error.") {
     const body =
       pick(data) ||
       pick(err?.message) ||
-      (err?.toString && err.toString() !== "[object Object]" ? err.toString() : null) ||
+      (err?.toString && err.toString() !== "[object Object]"
+        ? err.toString()
+        : null) ||
       fallback;
 
     return [header, body].filter(Boolean).join("\n\n");
@@ -90,7 +94,8 @@ function decodeJwtPayload(token: string | null): any | null {
     const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
     const padLen = (4 - (base64.length % 4)) % 4;
     const padded = base64 + "=".repeat(padLen);
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
     let str = "";
     for (let i = 0; i < padded.length; i += 4) {
       const c1 = chars.indexOf(padded[i]);
@@ -98,22 +103,32 @@ function decodeJwtPayload(token: string | null): any | null {
       const c3 = chars.indexOf(padded[i + 2]);
       const c4 = chars.indexOf(padded[i + 3]);
       const n = (c1 << 18) | (c2 << 12) | ((c3 & 63) << 6) | (c4 & 63);
-      const b1 = (n >> 16) & 255, b2 = (n >> 8) & 255, b3 = n & 255;
+      const b1 = (n >> 16) & 255,
+        b2 = (n >> 8) & 255,
+        b3 = n & 255;
       if (c3 === 64) str += String.fromCharCode(b1);
       else if (c4 === 64) str += String.fromCharCode(b1, b2);
       else str += String.fromCharCode(b1, b2, b3);
     }
     const json = decodeURIComponent(
-      str.split("").map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)).join("")
+      str
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(""),
     );
     return JSON.parse(json);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 function fmtValue(n: number | string | null | undefined, unit?: string) {
   if (n == null) return "—";
   const v = typeof n === "string" ? parseFloat(n) : n;
   if (!isFinite(v)) return String(n);
-  const formatted = Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+  const formatted = Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(v);
   return unit ? `${formatted} ${unit}` : formatted;
 }
 function formatDateTime(dt: string) {
@@ -125,7 +140,9 @@ function formatDateTime(dt: string) {
     const hh = String(d.getHours()).padStart(2, "0");
     const mi = String(d.getMinutes()).padStart(2, "0");
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
-  } catch { return dt; }
+  } catch {
+    return dt;
+  }
 }
 function confirm(title: string, message: string): Promise<boolean> {
   if (Platform.OS === "web" && typeof window !== "undefined") {
@@ -145,13 +162,12 @@ function toDataUrl(val?: string) {
   return `data:image/jpeg;base64,${s}`;
 }
 
-/* ---------- image helpers ---------- */
 const MAX_IMAGE_BYTES = 400 * 1024;
 function base64Bytes(b64: string): number {
   const len = (b64 || "").replace(/[^A-Za-z0-9+/=]/g, "").length;
   if (!len) return 0;
-  const padding = (b64.endsWith("==") ? 2 : (b64.endsWith("=") ? 1 : 0));
-  return Math.floor(len * 3 / 4) - padding;
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((len * 3) / 4) - padding;
 }
 function asBase64(raw: string): string {
   const s = (raw || "").trim();
@@ -166,8 +182,16 @@ function asDataUrl(raw: string, mime = "image/jpeg"): string {
   const s = (raw || "").trim();
   return s.startsWith("data:") ? s : `data:${mime};base64,${s}`;
 }
-async function compressDataUrlWeb(dataUrl: string, maxDim = 1024, quality = 0.7): Promise<string> {
-  if (Platform.OS !== "web" || typeof document === "undefined" || !(globalThis as any).Image) {
+async function compressDataUrlWeb(
+  dataUrl: string,
+  maxDim = 1024,
+  quality = 0.7,
+): Promise<string> {
+  if (
+    Platform.OS !== "web" ||
+    typeof document === "undefined" ||
+    !(globalThis as any).Image
+  ) {
     return Promise.resolve(dataUrl.split(",")[1] || "");
   }
   return new Promise((resolve) => {
@@ -178,14 +202,19 @@ async function compressDataUrlWeb(dataUrl: string, maxDim = 1024, quality = 0.7)
         let tw = img.naturalWidth || img.width;
         let th = img.naturalHeight || img.height;
         if (Math.max(tw, th) > maxDim) {
-          if (tw >= th) { th = Math.round((th / tw) * maxDim); tw = maxDim; }
-          else { tw = Math.round((tw / th) * maxDim); th = maxDim; }
+          if (tw >= th) {
+            th = Math.round((th / tw) * maxDim);
+            tw = maxDim;
+          } else {
+            tw = Math.round((tw / th) * maxDim);
+            th = maxDim;
+          }
         }
         const canvas: any = (document as any).createElement("canvas");
         canvas.width = Math.max(1, tw);
         canvas.height = Math.max(1, th);
         const ctx: any = canvas.getContext("2d");
-        if (!ctx) return resolve((dataUrl.split(",")[1] || ""));
+        if (!ctx) return resolve(dataUrl.split(",")[1] || "");
         ctx.drawImage(img, 0, 0, tw, th);
         const out: string = canvas.toDataURL("image/jpeg", quality);
         resolve(out.split(",")[1] || "");
@@ -197,11 +226,16 @@ async function compressDataUrlWeb(dataUrl: string, maxDim = 1024, quality = 0.7)
     }
   });
 }
-async function ensureSizedBase64(input: string, mime = "image/jpeg"): Promise<string> {
+async function ensureSizedBase64(
+  input: string,
+  mime = "image/jpeg",
+): Promise<string> {
   const raw = asBase64(input);
   if (Platform.OS !== "web") {
     if (base64Bytes(raw) > MAX_IMAGE_BYTES) {
-      throw new Error(`Image is too large (${(base64Bytes(raw)/1024).toFixed(0)} KB). Please pick a smaller image.`);
+      throw new Error(
+        `Image is too large (${(base64Bytes(raw) / 1024).toFixed(0)} KB). Please pick a smaller image.`,
+      );
     }
     return raw;
   }
@@ -210,25 +244,74 @@ async function ensureSizedBase64(input: string, mime = "image/jpeg"): Promise<st
   if (base64Bytes(c1) <= MAX_IMAGE_BYTES) return c1;
   const c2 = await compressDataUrlWeb(asDataUrl(c1, mime), 900, 0.6);
   if (base64Bytes(c2) <= MAX_IMAGE_BYTES) return c2;
-  throw new Error(`Image is still too large (${(base64Bytes(c2)/1024).toFixed(0)} KB). Please choose a smaller image.`);
+  throw new Error(
+    `Image is still too large (${(base64Bytes(c2) / 1024).toFixed(0)} KB). Please choose a smaller image.`,
+  );
 }
 
-/* ---------- last two readings + % calc ---------- */
+async function compressUriToSizedBase64Native(uri: string): Promise<string> {
+  const widths = [1600, 1400, 1280, 1152, 1024, 900, 800, 720, 640];
+  const qualities = [0.85, 0.78, 0.72, 0.66, 0.60, 0.54, 0.48, 0.42, 0.36];
+
+  let currentUri = uri;
+
+  for (let i = 0; i < widths.length; i++) {
+    const width = widths[i];
+    const compress = qualities[i];
+
+    const result = await ImageManipulator.manipulateAsync(
+      currentUri,
+      [{ resize: { width } }],
+      {
+        compress,
+        format: ImageManipulator.SaveFormat.JPEG,
+        base64: true,
+      }
+    );
+
+    const b64 = (result.base64 || "").trim();
+    if (b64 && base64Bytes(b64) <= MAX_IMAGE_BYTES) {
+      return b64;
+    }
+    currentUri = result.uri;
+  }
+
+  const last = await ImageManipulator.manipulateAsync(
+    currentUri,
+    [],
+    { compress: 0.30, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+  );
+
+  const lastB64 = (last.base64 || "").trim();
+  if (lastB64 && base64Bytes(lastB64) <= MAX_IMAGE_BYTES) return lastB64;
+
+  throw new Error(
+    `Image is still too large (${Math.round(base64Bytes(lastB64) / 1024)} KB). Try a closer photo or lower resolution image.`
+  );
+}
+
 function ts(d: string) {
   const t = Date.parse(d);
   return Number.isFinite(t) ? t : 0;
 }
 function getLastTwo(
-  readings: { meter_id: string; lastread_date: string; reading_value: number | string }[],
-  meterId: string
+  readings: {
+    meter_id: string;
+    lastread_date: string;
+    reading_value: number | string;
+  }[],
+  meterId: string,
 ) {
   const arr = readings
-    .filter(r => r.meter_id === meterId)
+    .filter((r) => r.meter_id === meterId)
     .slice()
     .sort((a, b) => ts(b.lastread_date) - ts(a.lastread_date));
   return { latest: arr[0] || null, previous: arr[1] || null };
 }
-function pctUp(newVal: number, oldVal: number | string | null | undefined): number | null {
+function pctUp(
+  newVal: number,
+  oldVal: number | string | null | undefined,
+): number | null {
   const oldN = oldVal == null ? null : Number(oldVal);
   if (oldN == null || !isFinite(oldN) || oldN === 0) return null;
   const nv = Number(newVal);
@@ -236,7 +319,6 @@ function pctUp(newVal: number, oldVal: number | string | null | undefined): numb
   return (nv - oldN) / oldN;
 }
 
-/* ---------- types ---------- */
 export type Reading = {
   reading_id: string;
   meter_id: string;
@@ -287,27 +369,38 @@ export default function MeterReadingPanel({
   const userBuildingId = String(jwt?.building_id || "");
 
   const headerToken =
-    token && /^Bearer\s/i.test(token.trim()) ? token.trim() : token ? `Bearer ${token.trim()}` : "";
-  const authHeader = useMemo(() => (headerToken ? { Authorization: headerToken } : {}), [headerToken]);
-  const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
-
-  // Load lock headers once auth header changes (root-level)
+    token && /^Bearer\s/i.test(token.trim())
+      ? token.trim()
+      : token
+        ? `Bearer ${token.trim()}`
+        : "";
+  const authHeader = useMemo(
+    () => (headerToken ? { Authorization: headerToken } : {}),
+    [headerToken],
+  );
+  const api = useMemo(
+    () =>
+      axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
+    [authHeader],
+  );
   useEffect(() => {
     reloadBillingHeaders();
   }, [authHeader]);
-
-  // device
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
-  // connectivity
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   useEffect(() => {
-    const sub = NetInfo.addEventListener((s) => setIsConnected(!!s.isConnected));
+    const sub = NetInfo.addEventListener((s) =>
+      setIsConnected(!!s.isConnected),
+    );
     NetInfo.fetch().then((s) => setIsConnected(!!s.isConnected));
     return () => sub && sub();
   }, []);
-  const { token: authToken, deviceToken: ctxDeviceToken, deviceName: ctxDeviceName } = useAuth();
+  const {
+    token: authToken,
+    deviceToken: ctxDeviceToken,
+    deviceName: ctxDeviceName,
+  } = useAuth();
 
   const {
     scans,
@@ -330,15 +423,15 @@ export default function MeterReadingPanel({
       notify("Not logged in", "Please log in again.");
       return;
     }
-
-    // device token: prefer context, fallback to AsyncStorage
-    const deviceToken = (ctxDeviceToken || (await getReaderDeviceToken())).trim();
+    const deviceToken = (
+      ctxDeviceToken || (await getReaderDeviceToken())
+    ).trim();
     const deviceName = (ctxDeviceName || (await getReaderDeviceName())).trim();
 
     if (!deviceToken) {
       notify(
         "Device not registered",
-        "This reader device has no device token yet. Ask admin to register the device serial, then login again."
+        "This reader device has no device token yet. Ask admin to register the device serial, then login again.",
       );
       return;
     }
@@ -346,34 +439,36 @@ export default function MeterReadingPanel({
     try {
       setSyncing(true);
       await syncOfflineReadings(authToken, deviceToken);
-      notify("Synced", `Offline readings sent successfully${deviceName ? ` (${deviceName})` : ""}.`);
+      notify(
+        "Synced",
+        `Offline readings sent successfully${deviceName ? ` (${deviceName})` : ""}.`,
+      );
     } catch (e: any) {
       notify("Sync failed", e?.message || "Unable to sync offline readings.");
     } finally {
       setSyncing(false);
     }
   };
-
-  // filters + data
-  const [typeFilter, setTypeFilter] = useState<"" | "electric" | "water" | "lpg">("");
+  const [typeFilter, setTypeFilter] = useState<
+    "" | "electric" | "water" | "lpg"
+  >("");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
-  const [sortBy, setSortBy] = useState<"date_desc" | "date_asc" | "id_desc" | "id_asc">("date_desc");
+  const [sortBy, setSortBy] = useState<
+    "date_desc" | "date_asc" | "id_desc" | "id_asc"
+  >("date_desc");
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [meters, setMeters] = useState<Meter[]>([]);
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-
-  // searches
   const [meterQuery, setMeterQuery] = useState("");
   const [query, setQuery] = useState("");
-
-  // selection & modals
-  const [selectedMeterId, setSelectedMeterId] = useState<string>(initialMeterId ?? "");
+  const [selectedMeterId, setSelectedMeterId] = useState<string>(
+    initialMeterId ?? "",
+  );
   const [readingsModalVisible, setReadingsModalVisible] = useState(false);
   const PAGE_SIZE = 30;
   const [page, setPage] = useState(1);
@@ -385,6 +480,9 @@ export default function MeterReadingPanel({
   const [formDate, setFormDate] = useState<string>(todayStr());
   const [formRemarks, setFormRemarks] = useState<string>("");
   const [formImage, setFormImage] = useState<string>("");
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageSizeKB, setImageSizeKB] = useState<number | null>(null);
 
   useEffect(() => {
     if (initialMeterId) {
@@ -409,12 +507,17 @@ export default function MeterReadingPanel({
   const readingInputRef = useRef<TextInput>(null);
 
   const [historyVisible, setHistoryVisible] = useState(false);
-  const [historyTab, setHistoryTab] = useState<"all" | "pending" | "failed" | "synced">("all");
+  const [historyTab, setHistoryTab] = useState<
+    "all" | "pending" | "failed" | "synced"
+  >("all");
 
   const [imgToolVisible, setImgToolVisible] = useState(false);
-
-  // ---------- AUTO-DETECT READING ENDPOINT ----------
-  const READING_ENDPOINTS = ["/meter_reading", "/readings", "/meter-readings", "/meterreadings"];
+  const READING_ENDPOINTS = [
+    "/meter_reading",
+    "/readings",
+    "/meter-readings",
+    "/meterreadings",
+  ];
   const [readingBase, setReadingBase] = useState<string>(READING_ENDPOINTS[0]);
   type BillingHeader = {
     building_id: string;
@@ -430,7 +533,9 @@ export default function MeterReadingPanel({
     "/billings",
   ];
 
-  const [billingHeadersBase, setBillingHeadersBase] = useState<string | null>(null);
+  const [billingHeadersBase, setBillingHeadersBase] = useState<string | null>(
+    null,
+  );
   const [billingHeaders, setBillingHeaders] = useState<BillingHeader[]>([]);
 
   async function detectBillingHeadersEndpoint() {
@@ -440,17 +545,16 @@ export default function MeterReadingPanel({
         const ok =
           res.status >= 200 &&
           res.status < 400 &&
-          (
-            Array.isArray(res.data) ||
-            (res.data && typeof res.data === "object" && !Array.isArray(res.data))
-          );
+          (Array.isArray(res.data) ||
+            (res.data &&
+              typeof res.data === "object" &&
+              !Array.isArray(res.data)));
 
         if (ok) {
           setBillingHeadersBase(p);
           return p;
         }
-      } catch {
-      }
+      } catch {}
     }
     return null;
   }
@@ -467,8 +571,7 @@ export default function MeterReadingPanel({
 
       if (Array.isArray(data)) {
         headers = data as BillingHeader[];
-      }
-      else if (data && typeof data === "object") {
+      } else if (data && typeof data === "object") {
         headers = Object.values(data as Record<string, any>).map((item) => ({
           building_id: item.building_id,
           period: item.period ?? {
@@ -476,8 +579,8 @@ export default function MeterReadingPanel({
             end: item.period_end,
           },
           status:
-            item.status ?? 
-            item.lock_status ?? 
+            item.status ??
+            item.lock_status ??
             (typeof item.is_locked !== "undefined"
               ? String(item.is_locked)
               : undefined),
@@ -490,7 +593,7 @@ export default function MeterReadingPanel({
           h.building_id &&
           h.period &&
           typeof h.period.start === "string" &&
-          typeof h.period.end === "string"
+          typeof h.period.end === "string",
       );
 
       setBillingHeaders(headers);
@@ -505,7 +608,13 @@ export default function MeterReadingPanel({
     for (const p of READING_ENDPOINTS) {
       try {
         const res = await api.get(p, { validateStatus: () => true });
-        if ((res.status >= 200 && res.status < 400 && Array.isArray(res.data)) || (res.status === 200 && res.data && typeof res.data === "object" && "items" in res.data)) {
+        if (
+          (res.status >= 200 && res.status < 400 && Array.isArray(res.data)) ||
+          (res.status === 200 &&
+            res.data &&
+            typeof res.data === "object" &&
+            "items" in res.data)
+        ) {
           setReadingBase(p);
           return p;
         }
@@ -515,18 +624,19 @@ export default function MeterReadingPanel({
   }
 
   const filteredScans = useMemo(
-    () => (historyTab === "all" ? scans : scans.filter((s) => s.status === historyTab)),
-    [scans, historyTab]
+    () =>
+      historyTab === "all"
+        ? scans
+        : scans.filter((s) => s.status === historyTab),
+    [scans, historyTab],
   );
   const readNum = (id: string) => {
     const m = /^MR-(\d+)/i.exec(id || "");
     return m ? parseInt(m[1], 10) : 0;
   };
 
-  // load
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
   const loadAll = async () => {
     if (!token) {
@@ -534,15 +644,12 @@ export default function MeterReadingPanel({
       notify("Not logged in", "Please log in to manage meter readings.");
       return;
     }
-    // ✅ IMPORTANT: Reader must NOT auto-download tenant/meter data on login.
-    // Reader will only get data when they press Sync (IMPORT).
     if (!isAdmin && !isOperator && !isBiller) {
-      // this is a "reader"
       setMeters([]);
       setStalls([]);
       setReadings([]);
       setBuildings([]);
-      setHasOfflinePackage(false); // always start empty
+      setHasOfflinePackage(false);
       setBusy(false);
       return;
     }
@@ -555,10 +662,15 @@ export default function MeterReadingPanel({
         api.get<Meter[]>("/meters"),
         api.get<Stall[]>("/stalls"),
       ]);
-      setReadings(Array.isArray(rRes.data) ? rRes.data : (rRes.data as any)?.items ?? []);
+      setReadings(
+        Array.isArray(rRes.data)
+          ? rRes.data
+          : ((rRes.data as any)?.items ?? []),
+      );
       setMeters(mRes.data || []);
       setStalls(sRes.data || []);
-      if (!formMeterId && mRes.data?.length) setFormMeterId(mRes.data[0].meter_id);
+      if (!formMeterId && mRes.data?.length)
+        setFormMeterId(mRes.data[0].meter_id);
       if (isAdmin) {
         try {
           const bRes = await api.get<Building[]>("/buildings");
@@ -571,15 +683,17 @@ export default function MeterReadingPanel({
         setBuildingFilter((prev) => prev || userBuildingId);
       }
 
-      // 🔒 also fetch stored billings headers for lock detection
       await reloadBillingHeaders();
     } catch (err: any) {
-      notify("Load failed", errorText(err, "Please check your connection and permissions."));
-      if (Platform.OS === "web") console.error("LOAD ERROR", err?.response ?? err);
+      notify(
+        "Load failed",
+        errorText(err, "Please check your connection and permissions."),
+      );
+      if (Platform.OS === "web")
+        console.error("LOAD ERROR", err?.response ?? err);
     } finally {
       setBusy(false);
     }
-
   };
   useEffect(() => {
     if (selectedMeterId) setFormMeterId(selectedMeterId);
@@ -598,19 +712,15 @@ export default function MeterReadingPanel({
     return m;
   }, [stalls]);
 
-  // Helper to map meter → building
   const buildingIdForMeter = (
-    meterId: string | null | undefined
+    meterId: string | null | undefined,
   ): string | null => {
     if (!meterId) return null;
     const m = metersById.get(meterId);
     if (!m) return null;
 
     const stallId =
-      (m as any).stall_id ||
-      (m as any).stall_no ||
-      (m as any).stall_sn ||
-      null;
+      (m as any).stall_id || (m as any).stall_no || (m as any).stall_sn || null;
 
     if (stallId && stallToBuilding.has(String(stallId))) {
       return stallToBuilding.get(String(stallId)) || null;
@@ -619,8 +729,7 @@ export default function MeterReadingPanel({
     return (m as any).building_id || null;
   };
 
-  const ymd = (d: string) =>
-    typeof d === "string" ? d.split("T")[0] : d;
+  const ymd = (d: string) => (typeof d === "string" ? d.split("T")[0] : d);
 
   const isBetween = (d: string, s: string, e: string) => {
     const x = ymd(d);
@@ -630,28 +739,30 @@ export default function MeterReadingPanel({
   const isLockedHeader = (h: BillingHeader): boolean => {
     const status = (h.status ?? "").toString().toLowerCase();
     if (!status) {
-      // no status column → treat any stored billing as locked
       return true;
     }
     return ["locked", "lock", "closed", "finalized", "1", "true"].includes(
-      status
+      status,
     );
   };
 
-  const isDateLockedFor = (buildingId: string | null, dateYmd: string): boolean => {
+  const isDateLockedFor = (
+    buildingId: string | null,
+    dateYmd: string,
+  ): boolean => {
     if (!buildingId) return false;
     if (!billingHeaders?.length) return false;
-    return billingHeaders.some((h) => h.building_id === buildingId && isBetween(dateYmd, h.period.start, h.period.end));
+    return billingHeaders.some(
+      (h) =>
+        h.building_id === buildingId &&
+        isBetween(dateYmd, h.period.start, h.period.end),
+    );
   };
-
-  // Existing simple flag helper (if you already have one, keep yours)
   const isReadingLocked = (row?: Reading | null): boolean => {
     return getReadingLockInfo(row).locked;
   };
-
-  // NEW: rich lock info (flag + billing header)
   const getReadingLockInfo = (
-    row?: Reading | null
+    row?: Reading | null,
   ): { locked: boolean; header?: BillingHeader } => {
     if (!row) return { locked: false };
 
@@ -667,32 +778,34 @@ export default function MeterReadingPanel({
       (h) =>
         h.building_id === buildingId &&
         isLockedHeader(h) &&
-        isBetween(dateStr, h.period.start, h.period.end)
+        isBetween(dateStr, h.period.start, h.period.end),
     );
 
     return { locked: !!header, header };
   };
-
-  // numeric sort helper for meter ids
   const mtrNum = (id: string) => {
     const n = (id || "").replace(/\D+/g, "");
     return n ? parseInt(n, 10) : 0;
   };
-
-  // Filtered/sorted meter list used by the picker
   const filteredMeters = useMemo(() => {
     let arr = meters.slice();
 
     if (typeFilter) {
       const t = String(typeFilter).toLowerCase();
-      arr = arr.filter((m) => String((m as any).meter_type || "").toLowerCase() === t);
+      arr = arr.filter(
+        (m) => String((m as any).meter_type || "").toLowerCase() === t,
+      );
     }
 
     if (buildingFilter) {
       const b = buildingFilter;
       arr = arr.filter((m) => {
         const direct = (m as any).building_id || null;
-        const stallId = (m as any).stall_id || (m as any).stall_no || (m as any).stall_sn || null;
+        const stallId =
+          (m as any).stall_id ||
+          (m as any).stall_no ||
+          (m as any).stall_sn ||
+          null;
         const viaStall = stallId ? stallToBuilding.get(String(stallId)) : null;
         return direct === b || viaStall === b;
       });
@@ -702,13 +815,19 @@ export default function MeterReadingPanel({
       const q = meterQuery.trim().toLowerCase();
       arr = arr.filter(
         (m) =>
-          String((m as any).meter_no || "").toLowerCase().includes(q) ||
-          String(m.meter_id || "").toLowerCase().includes(q)
+          String((m as any).meter_no || "")
+            .toLowerCase()
+            .includes(q) ||
+          String(m.meter_id || "")
+            .toLowerCase()
+            .includes(q),
       );
     }
 
     return arr.sort(
-      (a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id)
+      (a, b) =>
+        mtrNum(a.meter_id) - mtrNum(b.meter_id) ||
+        a.meter_id.localeCompare(b.meter_id),
     );
   }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
 
@@ -720,12 +839,18 @@ export default function MeterReadingPanel({
         buildings
           .slice()
           .sort((a, b) => a.building_name.localeCompare(b.building_name))
-          .map((b) => ({ label: b.building_name || b.building_id, value: b.building_id }))
+          .map((b) => ({
+            label: b.building_name || b.building_id,
+            value: b.building_id,
+          })),
       );
     }
     const base = [{ label: "All", value: "" }];
-    if (userBuildingId) return base.concat([{ label: userBuildingId, value: userBuildingId }]);
-    const ids = Array.from(new Set(stalls.map((s) => s.building_id).filter(Boolean) as string[])).sort();
+    if (userBuildingId)
+      return base.concat([{ label: userBuildingId, value: userBuildingId }]);
+    const ids = Array.from(
+      new Set(stalls.map((s) => s.building_id).filter(Boolean) as string[]),
+    ).sort();
     return base.concat(ids.map((id) => ({ label: id, value: id })));
   }, [isAdmin, buildings, stalls, userBuildingId]);
 
@@ -734,14 +859,18 @@ export default function MeterReadingPanel({
 
     if (typeFilter) {
       const t = String(typeFilter).toLowerCase();
-      arr = arr.filter((m) => String((m.meter_type || "")).toLowerCase() === t);
+      arr = arr.filter((m) => String(m.meter_type || "").toLowerCase() === t);
     }
 
     if (buildingFilter) {
       const b = buildingFilter;
       arr = arr.filter((m) => {
         const direct = (m as any).building_id || null;
-        const stallId = (m as any).stall_id || (m as any).stall_no || (m as any).stall_sn || null;
+        const stallId =
+          (m as any).stall_id ||
+          (m as any).stall_no ||
+          (m as any).stall_sn ||
+          null;
         const viaStall = stallId ? stallToBuilding.get(String(stallId)) : null;
         return direct === b || viaStall === b;
       });
@@ -750,20 +879,33 @@ export default function MeterReadingPanel({
     const q = (meterQuery || "").trim().toLowerCase();
     if (q) {
       arr = arr.filter((m) =>
-        [m.meter_id, (m as any).meter_sn, (m as any).stall_id, (m as any).meter_status, (m as any).meter_type]
+        [
+          m.meter_id,
+          (m as any).meter_sn,
+          (m as any).stall_id,
+          (m as any).meter_status,
+          (m as any).meter_type,
+        ]
           .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q))
+          .some((v) => String(v).toLowerCase().includes(q)),
       );
     }
 
     return arr.sort(
-      (a, b) => mtrNum(a.meter_id) - mtrNum(b.meter_id) || a.meter_id.localeCompare(b.meter_id)
+      (a, b) =>
+        mtrNum(a.meter_id) - mtrNum(b.meter_id) ||
+        a.meter_id.localeCompare(b.meter_id),
     );
   }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
-  /* ---------- CRUD ---------- */
   const onCreate = async () => {
     const b = buildingIdForMeter(formMeterId);
-    if (b && isDateLockedFor(b, formDate)) { notify('Locked by billing', 'That date is inside a locked billing period for this building.'); return; }
+    if (b && isDateLockedFor(b, formDate)) {
+      notify(
+        "Locked by billing",
+        "That date is inside a locked billing period for this building.",
+      );
+      return;
+    }
     if (!canWrite) {
       notify("Not allowed", "Only admin/operator can create readings.");
       return;
@@ -780,15 +922,24 @@ export default function MeterReadingPanel({
 
     if (createWarn) {
       if (!formRemarks.trim()) {
-        notify("Remarks required", "Please add remarks because the value increased by 20% or more.");
+        notify(
+          "Remarks required",
+          "Please add remarks because the value increased by 20% or more.",
+        );
         return;
       }
-      const ok = await confirm("Proceed with high change?", "The reading increased by ≥20%. Do you want to proceed?");
+      const ok = await confirm(
+        "Proceed with high change?",
+        "The reading increased by ≥20%. Do you want to proceed?",
+      );
       if (!ok) return;
     }
 
     if (!formImage.trim()) {
-      notify("Image required", "Your backend requires an image (base64 / data URL / hex).");
+      notify(
+        "Image required",
+        "Your backend requires an image (base64 / data URL / hex).",
+      );
       return;
     }
 
@@ -815,7 +966,10 @@ export default function MeterReadingPanel({
       setFormRemarks("");
       setFormImage("");
       setCreateVisible(false);
-      notify("Saved offline", "Reading added to Offline History. Approve it when you have internet.");
+      notify(
+        "Saved offline",
+        "Reading added to Offline History. Approve it when you have internet.",
+      );
       return;
     }
 
@@ -837,7 +991,13 @@ export default function MeterReadingPanel({
   };
 
   const openEdit = (row: Reading) => {
-    if (isReadingLocked(row)) { notify('Locked by billing', 'This reading falls within a locked billing period and cannot be edited.'); return; }
+    if (isReadingLocked(row)) {
+      notify(
+        "Locked by billing",
+        "This reading falls within a locked billing period and cannot be edited.",
+      );
+      return;
+    }
     setEditRow(row);
     setEditMeterId(row.meter_id);
     setEditValue(String(row.reading_value));
@@ -849,15 +1009,27 @@ export default function MeterReadingPanel({
   };
 
   const onUpdate = async () => {
-    if (editRow && isReadingLocked(editRow)) { notify('Locked by billing', 'This reading falls within a locked billing period and cannot be updated.'); return; }
+    if (editRow && isReadingLocked(editRow)) {
+      notify(
+        "Locked by billing",
+        "This reading falls within a locked billing period and cannot be updated.",
+      );
+      return;
+    }
     if (!canWrite || !editRow) return;
 
     if (editWarn) {
       if (!editRemarks.trim()) {
-        notify("Remarks required", "Please add remarks because the value increased by 20% or more.");
+        notify(
+          "Remarks required",
+          "Please add remarks because the value increased by 20% or more.",
+        );
         return;
       }
-      const ok = await confirm("Proceed with high change?", "The reading increased by ≥20%. Do you want to proceed?");
+      const ok = await confirm(
+        "Proceed with high change?",
+        "The reading increased by ≥20%. Do you want to proceed?",
+      );
       if (!ok) return;
     }
 
@@ -866,7 +1038,10 @@ export default function MeterReadingPanel({
       try {
         newImageB64 = await ensureSizedBase64(editImage);
       } catch (e: any) {
-        notify("Image too large", e?.message || "Please choose a smaller image.");
+        notify(
+          "Image too large",
+          e?.message || "Please choose a smaller image.",
+        );
         return;
       }
     }
@@ -880,7 +1055,10 @@ export default function MeterReadingPanel({
         remarks: editRemarks.trim() === "" ? null : editRemarks.trim(),
       };
       if (newImageB64) body.image = newImageB64;
-      await api.put(`${readingBase}/${encodeURIComponent(editRow.reading_id)}`, body);
+      await api.put(
+        `${readingBase}/${encodeURIComponent(editRow.reading_id)}`,
+        body,
+      );
       setEditVisible(false);
       await loadAll();
       notify("Updated", "Reading updated successfully.");
@@ -898,11 +1076,16 @@ export default function MeterReadingPanel({
     }
     const target = row ?? editRow;
     if (!target) return;
-    const ok = await confirm("Delete reading?", `Are you sure you want to delete ${target.reading_id}?`);
+    const ok = await confirm(
+      "Delete reading?",
+      `Are you sure you want to delete ${target.reading_id}?`,
+    );
     if (!ok) return;
     try {
       setSubmitting(true);
-      await api.delete(`${readingBase}/${encodeURIComponent(target.reading_id)}`);
+      await api.delete(
+        `${readingBase}/${encodeURIComponent(target.reading_id)}`,
+      );
       setEditVisible(false);
       await loadAll();
       notify("Deleted", `${target.reading_id} removed.`);
@@ -916,103 +1099,106 @@ export default function MeterReadingPanel({
   if (!authToken) {
     return (
       <View style={styles.screen}>
-        <View style={[styles.card, { alignItems: "center", justifyContent: "center" }]}>
+        <View
+          style={[
+            styles.card,
+            { alignItems: "center", justifyContent: "center" },
+          ]}
+        >
           <Text style={styles.cardTitle}>Not logged in</Text>
-          <Text style={{ marginTop: 8, color: "#64748b" }}>Please log in again.</Text>
+          <Text style={{ marginTop: 8, color: "#64748b" }}>
+            Please log in again.
+          </Text>
         </View>
       </View>
     );
   }
 
   const syncReaderPackage = async () => {
-  // only readers use this
-  if (isAdmin || isOperator || isBiller) {
-    notify("Not for admin", "This Sync button is only for Reader offline workflow.");
-    return;
-  }
-
-  if (!online) {
-    notify("Offline", "You must be online to sync (import/export).");
-    return;
-  }
-
-  try {
-    setSyncingPackage(true);
-
-    // device token must exist (saved during login / device registration flow)
-    const deviceToken = (await AsyncStorage.getItem(KEY_DEVICE_TOKEN))?.trim() || "";
-    if (!deviceToken) {
-      notify("Missing device token", "This device is not registered. Ask admin to register this device serial.");
+    if (isAdmin || isOperator || isBiller) {
+      notify(
+        "Not for admin",
+        "This Sync button is only for Reader offline workflow.",
+      );
       return;
     }
 
-    // =========================
-    // 1) IMPORT (phone is empty)
-    // =========================
-    if (!hasOfflinePackage) {
-      const res = await api.post("/offlineExport/import", { device_token: deviceToken });
+    if (!online) {
+      notify("Offline", "You must be online to sync (import/export).");
+      return;
+    }
 
-      const pkg = res?.data?.package;
-      const items = Array.isArray(pkg?.items) ? pkg.items : [];
-
-      // Convert package items into your Meter list shape
-      const importedMeters: Meter[] = items.map((it: any) => ({
-        meter_id: String(it.meter_id),
-        meter_type: (String(it.classification || it.meter_type || "electric").toLowerCase() as any),
-        meter_sn: String(it.meter_number || it.meter_sn || ""),
-        meter_mult: 1,
-        stall_id: String(it.stall_id || ""),
-        meter_status: "active",
-        last_updated: new Date().toISOString(),
-        updated_by: "import",
-        // optional fields for UI if you want:
-        // tenant_name: it.tenant_name,
-        // prev_reading: it.prev_reading,
-        // prev_date: it.prev_date,
-        // prev_image: it.prev_image,
-        // qr: it.qr,
-      }));
-
-      // You are not getting stalls from backend anymore
-      setMeters(importedMeters);
-      setStalls([]);
-      setReadings([]);
-
-      if (!formMeterId && importedMeters.length) {
-        setFormMeterId(importedMeters[0].meter_id);
+    try {
+      setSyncingPackage(true);
+      const deviceToken =
+        (await AsyncStorage.getItem(KEY_DEVICE_TOKEN))?.trim() || "";
+      if (!deviceToken) {
+        notify(
+          "Missing device token",
+          "This device is not registered. Ask admin to register this device serial.",
+        );
+        return;
       }
 
-      setHasOfflinePackage(true);
-      notify("Synced", `Imported ${importedMeters.length} meters to this device.`);
-      return;
+      if (!hasOfflinePackage) {
+        const res = await api.post("/offlineExport/import", {
+          device_token: deviceToken,
+        });
+
+        const pkg = res?.data?.package;
+        const items = Array.isArray(pkg?.items) ? pkg.items : [];
+        const importedMeters: Meter[] = items.map((it: any) => ({
+          meter_id: String(it.meter_id),
+          meter_type: String(
+            it.classification || it.meter_type || "electric",
+          ).toLowerCase() as any,
+          meter_sn: String(it.meter_number || it.meter_sn || ""),
+          meter_mult: 1,
+          stall_id: String(it.stall_id || ""),
+          meter_status: "active",
+          last_updated: new Date().toISOString(),
+          updated_by: "import",
+        }));
+
+        setMeters(importedMeters);
+        setStalls([]);
+        setReadings([]);
+
+        if (!formMeterId && importedMeters.length) {
+          setFormMeterId(importedMeters[0].meter_id);
+        }
+
+        setHasOfflinePackage(true);
+        notify(
+          "Synced",
+          `Imported ${importedMeters.length} meters to this device.`,
+        );
+        return;
+      }
+
+      if (!authToken) {
+        notify("Not logged in", "Please log in again.");
+        return;
+      }
+
+      await syncOfflineReadings(authToken!, deviceToken);
+
+      setMeters([]);
+      setStalls([]);
+      setReadings([]);
+      setBuildings([]);
+      setFormMeterId("");
+      setSelectedMeterId("");
+      setHasOfflinePackage(false);
+
+      notify("Synced", "Exported offline readings and cleared device data.");
+    } catch (e: any) {
+      notify("Sync failed", errorText(e, "Unable to sync right now."));
+    } finally {
+      setSyncingPackage(false);
     }
+  };
 
-    if (!authToken) {
-      notify("Not logged in", "Please log in again.");
-      return;
-    }
-
-    await syncOfflineReadings(authToken!, deviceToken);
-
-    // after successful export we must clear phone data back to 0
-    setMeters([]);
-    setStalls([]);
-    setReadings([]);
-    setBuildings([]);
-    setFormMeterId("");
-    setSelectedMeterId("");
-    setHasOfflinePackage(false);
-
-    notify("Synced", "Exported offline readings and cleared device data.");
-  } catch (e: any) {
-    notify("Sync failed", errorText(e, "Unable to sync right now."));
-  } finally {
-    setSyncingPackage(false);
-  }
-};
-
-
-  // Test function for image endpoint
   const testImageEndpoint = async () => {
     if (!readings.length) {
       notify("No readings available", "Please load some readings first.");
@@ -1020,39 +1206,53 @@ export default function MeterReadingPanel({
     }
 
     const testReading = readings[0];
-    console.log('🧪 Testing image endpoint for:', testReading.reading_id);
-    
+    console.log("🧪 Testing image endpoint for:", testReading.reading_id);
+
     try {
-      const response = await api.get(`${readingBase}/${testReading.reading_id}/image`, {
-        responseType: 'arraybuffer',
-        headers: {
-          'Accept': 'image/*',
-        }
-      });
-      
-      console.log('🧪 Test response status:', response.status);
-      console.log('🧪 Test data length:', response.data.byteLength);
-      console.log('🧪 Response headers:', response.headers);
-      
+      const response = await api.get(
+        `${readingBase}/${testReading.reading_id}/image`,
+        {
+          responseType: "arraybuffer",
+          headers: {
+            Accept: "image/*",
+          },
+        },
+      );
+
+      console.log("🧪 Test response status:", response.status);
+      console.log("🧪 Test data length:", response.data.byteLength);
+      console.log("🧪 Response headers:", response.headers);
+
       if (response.data.byteLength > 0) {
-        notify("Backend OK", `Image endpoint working. Received ${response.data.byteLength} bytes.`);
+        notify(
+          "Backend OK",
+          `Image endpoint working. Received ${response.data.byteLength} bytes.`,
+        );
       } else {
         notify("Backend Warning", "Image endpoint returned empty data.");
       }
     } catch (err: any) {
-      console.error('🧪 Test failed:', err);
+      console.error("🧪 Test failed:", err);
       notify("Backend Error", errorText(err, "Image endpoint not accessible."));
     }
   };
 
-  /* ---------- UI ---------- */
   return (
     <View style={styles.screen}>
-      {/* connectivity banner */}
-      <View style={[styles.infoBar, online ? styles.infoOnline : styles.infoOffline]}>
+      <View
+        style={[
+          styles.infoBar,
+          online ? styles.infoOnline : styles.infoOffline,
+        ]}
+      >
         <Text style={styles.infoText}>{online ? "Online" : "Offline"}</Text>
-        <TouchableOpacity style={styles.historyBtn} onPress={() => setHistoryVisible(true)}>
-          <Text style={styles.historyBtnText}>Offline History ({scans.length})</Text>
+        <TouchableOpacity
+          style={styles.historyBtn}
+          onPress={() => setHistoryVisible(true)}
+        >
+          <Text style={styles.historyBtnText}>
+            Offline History ({scans.length})
+          </Text>
         </TouchableOpacity>
         {!isAdmin && !isOperator && !isBiller && (
           <TouchableOpacity
@@ -1061,28 +1261,37 @@ export default function MeterReadingPanel({
             disabled={syncingPackage}
           >
             <Text style={styles.btnText}>
-              {syncingPackage ? "Syncing..." : hasOfflinePackage ? "Sync (Export)" : "Sync (Import)"}
+              {syncingPackage
+                ? "Syncing..."
+                : hasOfflinePackage
+                  ? "Sync (Export)"
+                  : "Sync (Import)"}
             </Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* meters card */}
       <View style={styles.card}>
-        {/* header */}
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Meter Readings</Text>
-        {canWrite && (!isReader || hasOfflinePackage) && (
-            <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+          {canWrite && (!isReader || hasOfflinePackage) && (
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => setCreateVisible(true)}
+            >
               <Text style={styles.btnText}>+ Create Reading</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {/* toolbar: search + Filters */}
         <View style={styles.filtersBar}>
           <View style={[styles.searchWrap, { flex: 1 }]}>
-            <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+            <Ionicons
+              name="search"
+              size={16}
+              color="#94a3b8"
+              style={{ marginRight: 6 }}
+            />
             <TextInput
               value={meterQuery}
               onChangeText={setMeterQuery}
@@ -1091,20 +1300,30 @@ export default function MeterReadingPanel({
               style={styles.search}
             />
           </View>
-          <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
-            <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+          <TouchableOpacity
+            style={styles.btnGhost}
+            onPress={() => setFiltersVisible(true)}
+          >
+            <Ionicons
+              name="options-outline"
+              size={16}
+              color="#394e6a"
+              style={{ marginRight: 6 }}
+            />
             <Text style={styles.btnGhostText}>Filters</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Building chips */}
         <View style={{ marginTop: 6, marginBottom: 10 }}>
           <View style={styles.buildingHeaderRow}>
             <Text style={styles.dropdownLabel}>Building</Text>
           </View>
 
           {isMobile ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRowHorizontal}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipsRowHorizontal}
+            >
               {buildingChipOptions.map((opt) => (
                 <Chip
                   key={opt.value || "all"}
@@ -1128,7 +1347,6 @@ export default function MeterReadingPanel({
           )}
         </View>
 
-        {/* LIST */}
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
@@ -1138,13 +1356,22 @@ export default function MeterReadingPanel({
             data={metersVisible}
             keyExtractor={(m) => m.meter_id}
             style={{ flex: 1 }}
-            contentContainerStyle={metersVisible.length === 0 ? { paddingVertical: 24 } : { paddingBottom: 12 }}
-            ListEmptyComponent={<Text style={styles.empty}>No meters found.</Text>}
+            contentContainerStyle={
+              metersVisible.length === 0
+                ? { paddingVertical: 24 }
+                : { paddingBottom: 12 }
+            }
+            ListEmptyComponent={
+              <Text style={styles.empty}>No meters found.</Text>
+            }
             renderItem={({ item }) => {
               const { latest, previous } = getLastTwo(readings, item.meter_id);
               const warn =
                 latest && previous
-                  ? (pctUp(Number(latest.reading_value), Number(previous.reading_value)) ?? 0) >= 0.20
+                  ? (pctUp(
+                      Number(latest.reading_value),
+                      Number(previous.reading_value),
+                    ) ?? 0) >= 0.2
                   : false;
 
               return (
@@ -1157,19 +1384,23 @@ export default function MeterReadingPanel({
                   }}
                   style={styles.row}
                 >
-                  {/* LEFT: meter details */}
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={styles.rowTitle}>
-                      <Text style={styles.meterLink}>{item.meter_id}</Text> • {item.meter_type.toUpperCase()}{" "}
-                      {warn && <Text style={styles.warnInline}>⚠ 20%+ up</Text>}
+                      <Text style={styles.meterLink}>{item.meter_id}</Text> •{" "}
+                      {item.meter_type.toUpperCase()}{" "}
+                      {warn && (
+                        <Text style={styles.warnInline}>⚠ 20%+ up</Text>
+                      )}
                     </Text>
                     <Text style={styles.rowMeta}>
-                      SN: {item.meter_sn} · Mult: {item.meter_mult} · Stall: {item.stall_id}
+                      SN: {item.meter_sn} · Mult: {item.meter_mult} · Stall:{" "}
+                      {item.stall_id}
                     </Text>
-                    <Text style={styles.rowMetaSmall}>Status: {item.meter_status.toUpperCase()}</Text>
+                    <Text style={styles.rowMetaSmall}>
+                      Status: {item.meter_status.toUpperCase()}
+                    </Text>
                   </View>
 
-                  {/* RIGHT: warning icon */}
                   <View style={styles.rightIconWrap} pointerEvents="none">
                     {warn ? (
                       <Ionicons
@@ -1187,8 +1418,12 @@ export default function MeterReadingPanel({
         )}
       </View>
 
-      {/* FILTERS modal */}
-      <Modal visible={filtersVisible} animationType="fade" transparent onRequestClose={() => setFiltersVisible(false)}>
+      <Modal
+        visible={filtersVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setFiltersVisible(false)}
+      >
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
@@ -1202,11 +1437,18 @@ export default function MeterReadingPanel({
                 { label: "Water", val: "water" },
                 { label: "LPG", val: "lpg" },
               ].map(({ label, val }) => (
-                <Chip key={label} label={label} active={typeFilter === (val as any)} onPress={() => setTypeFilter(val as any)} />
+                <Chip
+                  key={label}
+                  label={label}
+                  active={typeFilter === (val as any)}
+                  onPress={() => setTypeFilter(val as any)}
+                />
               ))}
             </View>
 
-            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
+            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>
+              Sort by
+            </Text>
             <View style={styles.chipsRow}>
               {[
                 { label: "Newest", val: "date_desc" },
@@ -1214,7 +1456,12 @@ export default function MeterReadingPanel({
                 { label: "ID ↑", val: "id_asc" },
                 { label: "ID ↓", val: "id_desc" },
               ].map(({ label, val }) => (
-                <Chip key={val} label={label} active={sortBy === (val as any)} onPress={() => setSortBy(val as any)} />
+                <Chip
+                  key={val}
+                  label={label}
+                  active={sortBy === (val as any)}
+                  onPress={() => setSortBy(val as any)}
+                />
               ))}
             </View>
 
@@ -1231,7 +1478,10 @@ export default function MeterReadingPanel({
               >
                 <Text style={styles.btnGhostText}>Reset</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={() => setFiltersVisible(false)}>
+              <TouchableOpacity
+                style={styles.btn}
+                onPress={() => setFiltersVisible(false)}
+              >
                 <Text style={styles.btnText}>Apply</Text>
               </TouchableOpacity>
             </View>
@@ -1239,19 +1489,30 @@ export default function MeterReadingPanel({
         </View>
       </Modal>
 
-      {/* MOBILE building picker */}
-      <Modal visible={buildingPickerVisible} transparent animationType="fade" onRequestClose={() => setBuildingPickerVisible(false)}>
+      <Modal
+        visible={buildingPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBuildingPickerVisible(false)}
+      >
         <View style={styles.overlay}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ width: "100%" }}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={{ width: "100%" }}
+          >
             <View
               style={[
                 styles.modalCard,
-                Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.9) },
+                Platform.OS !== "web" && {
+                  maxHeight: Math.round(Dimensions.get("window").height * 0.9),
+                },
               ]}
             >
               <View style={styles.modalHeaderRow}>
                 <Text style={styles.modalTitle}>Select Building</Text>
-                <TouchableOpacity onPress={() => setBuildingPickerVisible(false)}>
+                <TouchableOpacity
+                  onPress={() => setBuildingPickerVisible(false)}
+                >
                   <Ionicons name="close" size={20} color="#64748b" />
                 </TouchableOpacity>
               </View>
@@ -1263,13 +1524,22 @@ export default function MeterReadingPanel({
                   mode={Platform.OS === "android" ? "dropdown" : undefined}
                 >
                   {buildingChipOptions.map((opt) => (
-                    <Picker.Item key={opt.value || "all"} label={opt.label} value={opt.value} />
+                    <Picker.Item
+                      key={opt.value || "all"}
+                      label={opt.label}
+                      value={opt.value}
+                    />
                   ))}
                 </Picker>
               </View>
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.smallBtn, styles.ghostBtn]} onPress={() => setBuildingPickerVisible(false)}>
-                  <Text style={[styles.smallBtnText, styles.ghostBtnText]}>Done</Text>
+                <TouchableOpacity
+                  style={[styles.smallBtn, styles.ghostBtn]}
+                  onPress={() => setBuildingPickerVisible(false)}
+                >
+                  <Text style={[styles.smallBtnText, styles.ghostBtnText]}>
+                    Done
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1277,16 +1547,28 @@ export default function MeterReadingPanel({
         </View>
       </Modal>
 
-      {/* CREATE modal */}
-      <Modal visible={createVisible} animationType="slide" transparent onRequestClose={() => setCreateVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+      <Modal
+        visible={createVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCreateVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View
             style={[
               styles.modalCard,
-              Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.85) },
+              Platform.OS !== "web" && {
+                maxHeight: Math.round(Dimensions.get("window").height * 0.85),
+              },
             ]}
           >
-            <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 12 }}
+              keyboardShouldPersistTaps="handled"
+            >
               <Text style={styles.modalTitle}>Create Reading</Text>
               <View style={styles.rowWrap}>
                 <Dropdown
@@ -1297,7 +1579,7 @@ export default function MeterReadingPanel({
                     const v = Number(formValue);
                     const { latest } = getLastTwo(readings, id);
                     const p = latest ? pctUp(v, latest.reading_value) : null;
-                    setCreateWarn(!!p && p >= 0.20);
+                    setCreateWarn(!!p && p >= 0.2);
                   }}
                   options={meters.map((m) => ({
                     label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
@@ -1318,38 +1600,71 @@ export default function MeterReadingPanel({
                       const v = Number(val);
                       const { latest } = getLastTwo(readings, formMeterId);
                       const p = latest ? pctUp(v, latest.reading_value) : null;
-                      setCreateWarn(!!p && p >= 0.20);
+                      setCreateWarn(!!p && p >= 0.2);
                     }}
                     placeholder="Reading value"
                   />
                 </View>
-                <DatePickerField label="Date read" value={formDate} onChange={setFormDate} />
+                <DatePickerField
+                  label="Date read"
+                  value={formDate}
+                  onChange={setFormDate}
+                />
               </View>
 
               {createWarn && (
                 <View style={styles.warnBox}>
-                  <Ionicons name="warning-outline" size={16} color="#b45309" style={{ marginRight: 6 }} />
+                  <Ionicons
+                    name="warning-outline"
+                    size={16}
+                    color="#b45309"
+                    style={{ marginRight: 6 }}
+                  />
                   <Text style={styles.warnText}>
-                    This value is ≥20% higher than the previous reading. Remarks are required.
+                    This value is ≥20% higher than the previous reading. Remarks
+                    are required.
                   </Text>
                 </View>
               )}
 
               <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>Remarks {createWarn ? "(required)" : "(optional)"} </Text>
+                <Text style={styles.dropdownLabel}>
+                  Remarks {createWarn ? "(required)" : "(optional)"}{" "}
+                </Text>
                 <TextInput
-                  style={[styles.input, { minHeight: 44, borderColor: createWarn && !formRemarks.trim() ? '#f59e0b' : '#d9e2ec' }]}
+                  style={[
+                    styles.input,
+                    {
+                      minHeight: 44,
+                      borderColor:
+                        createWarn && !formRemarks.trim()
+                          ? "#f59e0b"
+                          : "#d9e2ec",
+                    },
+                  ]}
                   value={formRemarks}
                   onChangeText={setFormRemarks}
-                  placeholder={createWarn ? "Add remarks (required due to ≥20% increase)" : "Notes for this reading"}
+                  placeholder={
+                    createWarn
+                      ? "Add remarks (required due to ≥20% increase)"
+                      : "Notes for this reading"
+                  }
                 />
               </View>
 
               <View style={{ marginTop: 8 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
                   <Text style={styles.dropdownLabel}>Image (required)</Text>
                   <TouchableOpacity onPress={() => setImgToolVisible(true)}>
-                    <Text style={{ color: "#1d4ed8", fontWeight: "800" }}>Open Image ⇄ Base64</Text>
+                    <Text style={{ color: "#1d4ed8", fontWeight: "800" }}>
+                      Open Image ⇄ Base64
+                    </Text>
                   </TouchableOpacity>
                 </View>
                 <TextInput
@@ -1362,22 +1677,55 @@ export default function MeterReadingPanel({
                   <View style={{ marginTop: 8, alignItems: "flex-start" }}>
                     <RNImage
                       source={{ uri: toDataUrl(formImage) }}
-                      style={{ width: 200, height: 200, borderRadius: 8, backgroundColor: "#f1f5f9" }}
+                      style={{
+                        width: 200,
+                        height: 200,
+                        borderRadius: 8,
+                        backgroundColor: "#f1f5f9",
+                      }}
                       resizeMode="contain"
                     />
                   </View>
                 ) : null}
                 <Text style={styles.helpTxtSmall}>
-                  Tip: You can paste raw base64 (…AA==) or a full data URL. A preview will show automatically.
+                  Tip: You can paste raw base64 (…AA==) or a full data URL. A
+                  preview will show automatically.
                 </Text>
               </View>
 
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setCreateVisible(false)}>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={() => setCreateVisible(false)}
+                >
                   <Text style={styles.btnGhostText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting || (!!buildingIdForMeter(formMeterId) && isDateLockedFor(buildingIdForMeter(formMeterId)!, formDate))}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>{(() => { const b = buildingIdForMeter(formMeterId); return b && isDateLockedFor(b, formDate) ? 'Locked' : (online ? 'Save Reading' : 'Save Offline'); })()}</Text>}
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  onPress={onCreate}
+                  disabled={
+                    submitting ||
+                    (!!buildingIdForMeter(formMeterId) &&
+                      isDateLockedFor(
+                        buildingIdForMeter(formMeterId)!,
+                        formDate,
+                      ))
+                  }
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.btnText}>
+                      {(() => {
+                        const b = buildingIdForMeter(formMeterId);
+                        return b && isDateLockedFor(b, formDate)
+                          ? "Locked"
+                          : online
+                            ? "Save Reading"
+                            : "Save Offline";
+                      })()}
+                    </Text>
+                  )}
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1406,13 +1754,19 @@ export default function MeterReadingPanel({
                 (r) =>
                   r.reading_id.toLowerCase().includes(query.toLowerCase()) ||
                   r.lastread_date.toLowerCase().includes(query.toLowerCase()) ||
-                  String(r.reading_value).toLowerCase().includes(query.toLowerCase())
+                  String(r.reading_value)
+                    .toLowerCase()
+                    .includes(query.toLowerCase()),
               )
             : typed;
           const arr = [...searched];
           switch (sortBy) {
             case "date_asc":
-              arr.sort((a, b) => ts(a.lastread_date) - ts(b.lastread_date) || readNum(a.reading_id) - readNum(b.reading_id));
+              arr.sort(
+                (a, b) =>
+                  ts(a.lastread_date) - ts(b.lastread_date) ||
+                  readNum(a.reading_id) - readNum(b.reading_id),
+              );
               break;
             case "id_asc":
               arr.sort((a, b) => readNum(a.reading_id) - readNum(b.reading_id));
@@ -1422,7 +1776,11 @@ export default function MeterReadingPanel({
               break;
             case "date_desc":
             default:
-              arr.sort((a, b) => ts(b.lastread_date) - ts(a.lastread_date) || readNum(b.reading_id) - readNum(a.reading_id));
+              arr.sort(
+                (a, b) =>
+                  ts(b.lastread_date) - ts(a.lastread_date) ||
+                  readNum(b.reading_id) - readNum(a.reading_id),
+              );
           }
           return arr;
         })()}
@@ -1441,17 +1799,32 @@ export default function MeterReadingPanel({
         getReadingLockInfoFn={getReadingLockInfo}
       />
 
-      {/* EDIT modal */}
-      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+      <Modal
+        visible={editVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalWrap}
+        >
           <View
             style={[
               styles.modalCard,
-              Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.85) },
+              Platform.OS !== "web" && {
+                maxHeight: Math.round(Dimensions.get("window").height * 0.85),
+              },
             ]}
           >
-            <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalTitle}>Update {editRow?.reading_id}</Text>
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 12 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.modalTitle}>
+                Update {editRow?.reading_id}
+              </Text>
               <Dropdown
                 label="Meter"
                 value={editMeterId}
@@ -1460,11 +1833,14 @@ export default function MeterReadingPanel({
                   const v = Number(editValue);
                   const { latest, previous } = getLastTwo(readings, id);
                   const base =
-                    latest && editRow && latest.meter_id === editRow.meter_id && latest.lastread_date === editRow.lastread_date
+                    latest &&
+                    editRow &&
+                    latest.meter_id === editRow.meter_id &&
+                    latest.lastread_date === editRow.lastread_date
                       ? (previous?.reading_value ?? null)
                       : (latest?.reading_value ?? null);
                   const p = base != null ? pctUp(v, base) : null;
-                  setEditWarn(!!p && p >= 0.20);
+                  setEditWarn(!!p && p >= 0.2);
                 }}
                 options={meters.map((m) => ({
                   label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
@@ -1480,45 +1856,82 @@ export default function MeterReadingPanel({
                     onChangeText={(val) => {
                       setEditValue(val);
                       const v = Number(val);
-                      const { latest, previous } = getLastTwo(readings, editMeterId || editRow?.meter_id || "");
+                      const { latest, previous } = getLastTwo(
+                        readings,
+                        editMeterId || editRow?.meter_id || "",
+                      );
                       const base =
-                        latest && editRow && latest.meter_id === editRow.meter_id && latest.lastread_date === editRow.lastread_date
+                        latest &&
+                        editRow &&
+                        latest.meter_id === editRow.meter_id &&
+                        latest.lastread_date === editRow.lastread_date
                           ? (previous?.reading_value ?? null)
                           : (latest?.reading_value ?? null);
                       const p = base != null ? pctUp(v, base) : null;
-                      setEditWarn(!!p && p >= 0.20);
+                      setEditWarn(!!p && p >= 0.2);
                     }}
                     keyboardType="numeric"
                     placeholder="Reading value"
                   />
                 </View>
-                <DatePickerField label="Date read" value={editDate} onChange={setEditDate} />
+                <DatePickerField
+                  label="Date read"
+                  value={editDate}
+                  onChange={setEditDate}
+                />
               </View>
 
               {editWarn && (
                 <View style={styles.warnBox}>
-                  <Ionicons name="warning-outline" size={16} color="#b45309" style={{ marginRight: 6 }} />
+                  <Ionicons
+                    name="warning-outline"
+                    size={16}
+                    color="#b45309"
+                    style={{ marginRight: 6 }}
+                  />
                   <Text style={styles.warnText}>
-                    This value is ≥20% higher than the previous reading. Remarks are required.
+                    This value is ≥20% higher than the previous reading. Remarks
+                    are required.
                   </Text>
                 </View>
               )}
 
               <View style={{ marginTop: 8 }}>
-                <Text style={styles.dropdownLabel}>Remarks {editWarn ? "(required)" : "(optional)"} </Text>
+                <Text style={styles.dropdownLabel}>
+                  Remarks {editWarn ? "(required)" : "(optional)"}{" "}
+                </Text>
                 <TextInput
-                  style={[styles.input, { minHeight: 44, borderColor: editWarn && !editRemarks.trim() ? '#f59e0b' : '#d9e2ec' }]}
+                  style={[
+                    styles.input,
+                    {
+                      minHeight: 44,
+                      borderColor:
+                        editWarn && !editRemarks.trim() ? "#f59e0b" : "#d9e2ec",
+                    },
+                  ]}
                   value={editRemarks}
                   onChangeText={setEditRemarks}
-                  placeholder={editWarn ? "Add remarks (required due to ≥20% increase)" : "Notes for this reading"}
+                  placeholder={
+                    editWarn
+                      ? "Add remarks (required due to ≥20% increase)"
+                      : "Notes for this reading"
+                  }
                 />
               </View>
 
               <View style={{ marginTop: 8 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
                   <Text style={styles.dropdownLabel}>New Image (optional)</Text>
                   <TouchableOpacity onPress={() => setImgToolVisible(true)}>
-                    <Text style={{ color: "#1d4ed8", fontWeight: "800" }}>Open Image ⇄ Base64</Text>
+                    <Text style={{ color: "#1d4ed8", fontWeight: "800" }}>
+                      Open Image ⇄ Base64
+                    </Text>
                   </TouchableOpacity>
                 </View>
                 <TextInput
@@ -1531,20 +1944,42 @@ export default function MeterReadingPanel({
                   <View style={{ marginTop: 8, alignItems: "flex-start" }}>
                     <RNImage
                       source={{ uri: toDataUrl(editImage) }}
-                      style={{ width: 200, height: 200, borderRadius: 8, backgroundColor: "#f1f5f9" }}
+                      style={{
+                        width: 200,
+                        height: 200,
+                        borderRadius: 8,
+                        backgroundColor: "#f1f5f9",
+                      }}
                       resizeMode="contain"
                     />
                   </View>
                 ) : null}
-                <Text style={styles.helpTxtSmall}>Leave blank to keep the current image.</Text>
+                <Text style={styles.helpTxtSmall}>
+                  Leave blank to keep the current image.
+                </Text>
               </View>
 
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setEditVisible(false)}>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={() => setEditVisible(false)}
+                >
                   <Text style={styles.btnGhostText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting || (!!editRow && isReadingLocked(editRow))}>
-                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>{isReadingLocked(editRow!) ? 'Locked' : 'Save changes'}</Text>}
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  onPress={onUpdate}
+                  disabled={
+                    submitting || (!!editRow && isReadingLocked(editRow))
+                  }
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.btnText}>
+                      {isReadingLocked(editRow!) ? "Locked" : "Save changes"}
+                    </Text>
+                  )}
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1552,7 +1987,6 @@ export default function MeterReadingPanel({
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* OFFLINE HISTORY */}
       <HistoryModal
         visible={historyVisible}
         onClose={() => setHistoryVisible(false)}
@@ -1564,13 +1998,18 @@ export default function MeterReadingPanel({
         online={online}
       />
 
-      {/* IMAGE ⇄ BASE64 TOOL */}
       <ImageBase64Tool
         visible={imgToolVisible}
         onClose={() => setImgToolVisible(false)}
         onUseBase64={(b64) => {
-          if (editVisible) setEditImage(b64);
-          else setFormImage(b64);
+          if (editVisible) {
+            setEditImage(b64);
+          } else {
+            setImageError(null);
+            setFormImage(b64);
+            setImagePreview(`data:image/jpeg;base64,${b64}`);
+            setImageSizeKB(Math.round(base64Bytes(b64) / 1024));
+          }
           setImgToolVisible(false);
         }}
       />
@@ -1578,17 +2017,46 @@ export default function MeterReadingPanel({
   );
 }
 
-/* ---------- small components ---------- */
-function Chip({ label, active, onPress }: { label: string; active?: boolean; onPress?: () => void }) {
+function Chip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active?: boolean;
+  onPress?: () => void;
+}) {
   return (
-    <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
-      <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+    <TouchableOpacity
+      onPress={onPress}
+      style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
+    >
+      <Text
+        style={[
+          styles.chipText,
+          active ? styles.chipTextActive : styles.chipTextIdle,
+        ]}
+      >
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
-function PageBtn({ label, disabled, onPress }: { label: string; disabled?: boolean; onPress: () => void }) {
+function PageBtn({
+  label,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
   return (
-    <TouchableOpacity style={[styles.pageBtn, disabled && styles.pageBtnDisabled]} disabled={disabled} onPress={onPress}>
+    <TouchableOpacity
+      style={[styles.pageBtn, disabled && styles.pageBtnDisabled]}
+      disabled={disabled}
+      onPress={onPress}
+    >
       <Text style={styles.pageBtnText}>{label}</Text>
     </TouchableOpacity>
   );
@@ -1608,7 +2076,11 @@ function Dropdown({
     <View style={{ marginTop: 8, flex: 1 }}>
       <Text style={styles.dropdownLabel}>{label}</Text>
       <View style={styles.pickerWrapper}>
-        <Picker selectedValue={value} onValueChange={(itemValue) => onChange(String(itemValue))} style={styles.picker}>
+        <Picker
+          selectedValue={value}
+          onValueChange={(itemValue) => onChange(String(itemValue))}
+          style={styles.picker}
+        >
           {options.map((opt) => (
             <Picker.Item key={opt.value} label={opt.label} value={opt.value} />
           ))}
@@ -1617,14 +2089,28 @@ function Dropdown({
     </View>
   );
 }
-function DatePickerField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function DatePickerField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [y, m, d] = (value || todayStr()).split("-").map((n: string) => parseInt(n, 10));
+  const [y, m, d] = (value || todayStr())
+    .split("-")
+    .map((n: string) => parseInt(n, 10));
   const [year, setYear] = useState(y || new Date().getFullYear());
-  const [month, setMonth] = useState((m || new Date().getMonth() + 1) as number);
+  const [month, setMonth] = useState(
+    (m || new Date().getMonth() + 1) as number,
+  );
   const [day, setDay] = useState(d || new Date().getDate());
   useEffect(() => {
-    const [py, pm, pd] = (value || todayStr()).split("-").map((n: string) => parseInt(n, 10));
+    const [py, pm, pd] = (value || todayStr())
+      .split("-")
+      .map((n: string) => parseInt(n, 10));
     if (py && pm && pd) {
       setYear(py);
       setMonth(pm);
@@ -1640,21 +2126,36 @@ function DatePickerField({ label, value, onChange }: { label: string; value: str
   return (
     <View style={{ marginTop: 8 }}>
       <Text style={styles.dropdownLabel}>{label}</Text>
-      <TouchableOpacity style={[styles.input, styles.dateButton]} onPress={() => setOpen(true)}>
+      <TouchableOpacity
+        style={[styles.input, styles.dateButton]}
+        onPress={() => setOpen(true)}
+      >
         <Text style={styles.dateButtonText}>{value || todayStr()}</Text>
       </TouchableOpacity>
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+      <Modal
+        visible={open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOpen(false)}
+      >
         <View style={styles.modalWrap}>
           <View style={styles.dateModalCard}>
-            <Text style={[styles.modalTitle, { marginBottom: 8 }]}>Pick a date</Text>
+            <Text style={[styles.modalTitle, { marginBottom: 8 }]}>
+              Pick a date
+            </Text>
             <View style={styles.datePickersRow}>
               <View style={styles.datePickerCol}>
                 <Text style={styles.dropdownLabel}>Year</Text>
                 <View style={styles.pickerWrapper}>
-                  <Picker selectedValue={year} onValueChange={(v) => setYear(Number(v))}>
+                  <Picker
+                    selectedValue={year}
+                    onValueChange={(v) => setYear(Number(v))}
+                  >
                     {Array.from({ length: 80 }).map((_, i) => {
                       const yr = 1980 + i;
-                      return <Picker.Item key={yr} label={String(yr)} value={yr} />;
+                      return (
+                        <Picker.Item key={yr} label={String(yr)} value={yr} />
+                      );
                     })}
                   </Picker>
                 </View>
@@ -1662,9 +2163,16 @@ function DatePickerField({ label, value, onChange }: { label: string; value: str
               <View style={styles.datePickerCol}>
                 <Text style={styles.dropdownLabel}>Month</Text>
                 <View style={styles.pickerWrapper}>
-                  <Picker selectedValue={month} onValueChange={(v) => setMonth(Number(v))}>
+                  <Picker
+                    selectedValue={month}
+                    onValueChange={(v) => setMonth(Number(v))}
+                  >
                     {Array.from({ length: 12 }).map((_, i) => (
-                      <Picker.Item key={i + 1} label={String(i + 1)} value={i + 1} />
+                      <Picker.Item
+                        key={i + 1}
+                        label={String(i + 1)}
+                        value={i + 1}
+                      />
                     ))}
                   </Picker>
                 </View>
@@ -1672,16 +2180,26 @@ function DatePickerField({ label, value, onChange }: { label: string; value: str
               <View style={styles.datePickerCol}>
                 <Text style={styles.dropdownLabel}>Day</Text>
                 <View style={styles.pickerWrapper}>
-                  <Picker selectedValue={day} onValueChange={(v) => setDay(Number(v))}>
+                  <Picker
+                    selectedValue={day}
+                    onValueChange={(v) => setDay(Number(v))}
+                  >
                     {Array.from({ length: 31 }).map((_, i) => (
-                      <Picker.Item key={i + 1} label={String(i + 1)} value={i + 1} />
+                      <Picker.Item
+                        key={i + 1}
+                        label={String(i + 1)}
+                        value={i + 1}
+                      />
                     ))}
                   </Picker>
                 </View>
               </View>
             </View>
             <View style={[styles.modalActions, { marginTop: 16 }]}>
-              <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setOpen(false)}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnGhost]}
+                onPress={() => setOpen(false)}
+              >
                 <Text style={styles.btnGhostText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btn} onPress={commit}>
@@ -1718,14 +2236,11 @@ function ReadingsModal({
 }: any) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const total = readingsForSelected.length;
   const totalPages = Math.max(1, Math.ceil(total / 30));
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * 30;
   const pageData = readingsForSelected.slice(start, start + 30);
-
-  // ---- Print Proof state ----
   const [printProofVisible, setPrintProofVisible] = useState(false);
   const [printData, setPrintData] = useState<{
     reading: Reading | null;
@@ -1741,33 +2256,36 @@ function ReadingsModal({
   const [ledgerStart, setLedgerStart] = useState<string>(todayStr());
   const [ledgerEnd, setLedgerEnd] = useState<string>(todayStr());
 
-
   const openPrintProof = async (reading: Reading) => {
     setPrintLoading(true);
     setPrintProofVisible(true);
-    
+
     try {
       const endpoint = `${readingBase}/${encodeURIComponent(reading.reading_id)}/image`;
-      console.log('🖼️ Fetching image from:', endpoint);
-      
+      console.log("🖼️ Fetching image from:", endpoint);
+
       const response = await api.get(endpoint, {
-        responseType: 'arraybuffer',
+        responseType: "arraybuffer",
         headers: {
-          'Accept': 'image/*',
+          Accept: "image/*",
         },
         timeout: 10000,
         validateStatus: (status: number) => status < 500,
       });
-      
-      console.log('🖼️ Image response status:', response.status);
-      console.log('🖼️ Image data length:', response.data?.byteLength || 0);
-      
+
+      console.log("🖼️ Image response status:", response.status);
+      console.log("🖼️ Image data length:", response.data?.byteLength || 0);
+
       let imageUri = null;
-      
-      if (response.status === 200 && response.data && response.data.byteLength > 0) {
+
+      if (
+        response.status === 200 &&
+        response.data &&
+        response.data.byteLength > 0
+      ) {
         try {
           const uint8Array = new Uint8Array(response.data);
-          let binary = '';
+          let binary = "";
           for (let i = 0; i < uint8Array.length; i++) {
             binary += String.fromCharCode(uint8Array[i]);
           }
@@ -1775,27 +2293,40 @@ function ReadingsModal({
             const base64 = btoa(binary);
             imageUri = asDataUrl(base64);
           } else {
-            imageUri = null; // native: skip base64 conversion
+            imageUri = null;
           }
           if (Platform.OS !== "web") {
-            notify("Print Proof", "Image preview/printing is available on the web app.");
+            notify(
+              "Print Proof",
+              "Image preview/printing is available on the web app.",
+            );
           }
-          console.log('🖼️ Image converted to data URL successfully');
+          console.log("🖼️ Image converted to data URL successfully");
         } catch (convertError) {
-          console.error('❌ Error converting image to base64:', convertError);
+          console.error("❌ Error converting image to base64:", convertError);
         }
       } else if (response.status === 404) {
-        console.warn('🖼️ Image not found (404) for reading:', reading.reading_id);
+        console.warn(
+          "🖼️ Image not found (404) for reading:",
+          reading.reading_id,
+        );
       } else {
-        console.warn('🖼️ No image data received or empty response');
+        console.warn("🖼️ No image data received or empty response");
       }
 
       const allReadingsForMeter = readingsForSelected
         .filter((r: Reading) => r.meter_id === reading.meter_id)
-        .sort((a: Reading, b: Reading) => ts(b.lastread_date) - ts(a.lastread_date));
-      
-      const currentIndex = allReadingsForMeter.findIndex((r: Reading) => r.reading_id === reading.reading_id);
-      const previousReading = currentIndex < allReadingsForMeter.length - 1 ? allReadingsForMeter[currentIndex + 1] : null;
+        .sort(
+          (a: Reading, b: Reading) => ts(b.lastread_date) - ts(a.lastread_date),
+        );
+
+      const currentIndex = allReadingsForMeter.findIndex(
+        (r: Reading) => r.reading_id === reading.reading_id,
+      );
+      const previousReading =
+        currentIndex < allReadingsForMeter.length - 1
+          ? allReadingsForMeter[currentIndex + 1]
+          : null;
 
       setPrintData({
         reading,
@@ -1803,44 +2334,45 @@ function ReadingsModal({
         previousReading,
       });
     } catch (err: any) {
-      console.error('❌ Error loading print data:', err);
-      console.error('❌ Error details:', errorText(err));
-      
+      console.error("❌ Error loading print data:", err);
+      console.error("❌ Error details:", errorText(err));
+
       setPrintData({
         reading,
         imageUri: null,
         previousReading: null,
       });
-      
+
       if (err.response?.status !== 404) {
-        notify("Warning", "Image not available for this reading. Other data loaded successfully.");
+        notify(
+          "Warning",
+          "Image not available for this reading. Other data loaded successfully.",
+        );
       }
     } finally {
       setPrintLoading(false);
     }
   };
 
-const handlePrint = () => {
-  if (Platform.OS === "web") {
-    const printWindow = window.open("", "_blank");
-    if (printWindow) {
-      const meter = metersById.get(printData.reading?.meter_id || "");
-      const meterType = meter?.meter_type || "Unknown";
+  const handlePrint = () => {
+    if (Platform.OS === "web") {
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        const meter = metersById.get(printData.reading?.meter_id || "");
+        const meterType = meter?.meter_type || "Unknown";
+        const tenantName =
+          (meter as any)?.tenant_name ||
+          (meter as any)?.tenant ||
+          (meter as any)?.tenant_fullname ||
+          "";
+        const tenantCode =
+          (meter as any)?.tenant_sn ||
+          (meter as any)?.tenant_id ||
+          (meter as any)?.account_no ||
+          "";
+        const tenantLine = [tenantCode, tenantName].filter(Boolean).join(" - ");
 
-      // NEW: tenant details coming from updated /meters backend
-      const tenantName =
-        (meter as any)?.tenant_name ||
-        (meter as any)?.tenant ||
-        (meter as any)?.tenant_fullname ||
-        "";
-      const tenantCode =
-        (meter as any)?.tenant_sn ||
-        (meter as any)?.tenant_id ||
-        (meter as any)?.account_no ||
-        "";
-      const tenantLine = [tenantCode, tenantName].filter(Boolean).join(" - ");
-
-      printWindow.document.write(`
+        printWindow.document.write(`
         <!DOCTYPE html>
         <html>
           <head>
@@ -1929,20 +2461,24 @@ const handlePrint = () => {
                 <div class="reading-card previous">
                   <h3>Previous Reading</h3>
                   ${
-                    printData.previousReading 
+                    printData.previousReading
                       ? `<p><strong>Value:</strong> ${fmtValue(printData.previousReading.reading_value)}</p>
                          <p><strong>Date:</strong> ${printData.previousReading.lastread_date}</p>`
-                      : '<p>No previous reading available</p>'
+                      : "<p>No previous reading available</p>"
                   }
                 </div>
               </div>
 
-              ${printData.imageUri ? `
+              ${
+                printData.imageUri
+                  ? `
                 <div class="image-section">
                   <h3>Meter Image</h3>
                   <img src="${printData.imageUri}" alt="Meter Reading Image" />
                 </div>
-              ` : '<p>No image available for this reading</p>'}
+              `
+                  : "<p>No image available for this reading</p>"
+              }
             </div>
 
             <div class="footer">
@@ -1969,10 +2505,12 @@ const handlePrint = () => {
         printWindow.document.close();
       }
     } else {
-      notify("Print", "Print functionality is available on web platform. On mobile, you can take a screenshot of this proof.");
+      notify(
+        "Print",
+        "Print functionality is available on web platform. On mobile, you can take a screenshot of this proof.",
+      );
     }
   };
-
 
   const handlePrintLedger = () => {
     if (!selectedMeterId) {
@@ -1989,7 +2527,10 @@ const handlePrint = () => {
     const endDate = parseYmd(ledgerEnd);
 
     if (!startDate || !endDate) {
-      notify("Invalid dates", "Please enter valid start and end dates (YYYY-MM-DD).");
+      notify(
+        "Invalid dates",
+        "Please enter valid start and end dates (YYYY-MM-DD).",
+      );
       return;
     }
     if (startDate > endDate) {
@@ -2003,16 +2544,16 @@ const handlePrint = () => {
       .sort(
         (a: Reading, b: Reading) =>
           new Date(a.lastread_date).getTime() -
-          new Date(b.lastread_date).getTime()
+          new Date(b.lastread_date).getTime(),
       );
 
-
     if (!allForMeter.length) {
-      notify("No data", "There are no readings for this meter in the selected range.");
+      notify(
+        "No data",
+        "There are no readings for this meter in the selected range.",
+      );
       return;
     }
-
-    // last reading before range for PRE column
     let lastValue: number | null = null;
     for (const row of allForMeter) {
       const d = new Date(row.lastread_date);
@@ -2030,7 +2571,10 @@ const handlePrint = () => {
       if (d >= startDate && d <= endDate) {
         const key = d.toISOString().slice(0, 10);
         const existing = byDate[key];
-        if (!existing || new Date(existing.lastread_date).getTime() < d.getTime()) {
+        if (
+          !existing ||
+          new Date(existing.lastread_date).getTime() < d.getTime()
+        ) {
           byDate[key] = row;
         }
       }
@@ -2056,7 +2600,9 @@ const handlePrint = () => {
         const currentVal = Number(reading.reading_value);
         const prevVal = lastValue;
         const consVal =
-          prevVal != null && !Number.isNaN(currentVal) ? currentVal - prevVal : null;
+          prevVal != null && !Number.isNaN(currentVal)
+            ? currentVal - prevVal
+            : null;
 
         const prevStr = prevVal != null ? String(prevVal) : "";
         const currStr = !Number.isNaN(currentVal)
@@ -2098,7 +2644,9 @@ const handlePrint = () => {
 
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const meter = metersById.get ? metersById.get(selectedMeterId) : null;
-      const meterType = String((meter as any)?.meter_type || "Meter").toUpperCase();
+      const meterType = String(
+        (meter as any)?.meter_type || "Meter",
+      ).toUpperCase();
 
       const tenantName =
         (meter as any)?.tenant_name ||
@@ -2122,7 +2670,7 @@ const handlePrint = () => {
             <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">${r.cons}</td>
             <td style="border:1px solid #d1d5db;padding:4px 6px;">${r.remarks}</td>
           </tr>
-        `
+        `,
         )
         .join("");
 
@@ -2227,30 +2775,46 @@ const handlePrint = () => {
     setLedgerVisible(false);
   };
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.modalWrap}
+      >
         <View
           style={[
             styles.modalCardWide,
-            Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.9) },
+            Platform.OS !== "web" && {
+              maxHeight: Math.round(Dimensions.get("window").height * 0.9),
+            },
           ]}
         >
           <FlatList
             data={pageData}
             keyExtractor={(item) => item.reading_id}
             contentContainerStyle={{ paddingBottom: 12 }}
-            ListEmptyComponent={<Text style={styles.empty}>No readings for this meter.</Text>}
+            ListEmptyComponent={
+              <Text style={styles.empty}>No readings for this meter.</Text>
+            }
             renderItem={({ item }) => {
               const { locked, header } = getReadingLockInfoFn(item);
 
               return (
-                <View style={[styles.listRow, isMobile && styles.listRowMobile]}>
+                <View
+                  style={[styles.listRow, isMobile && styles.listRowMobile]}
+                >
                   <View style={{ flex: 1 }}>
                     {isMobile ? (
                       <>
                         <Text style={styles.rowTitle}>
-                          <Text style={styles.meterLink}>{item.reading_id}</Text> •{" "}
-                          <Text>{item.lastread_date}</Text>
+                          <Text style={styles.meterLink}>
+                            {item.reading_id}
+                          </Text>{" "}
+                          • <Text>{item.lastread_date}</Text>
                         </Text>
                         <Text style={styles.rowSub}>
                           Value: {fmtValue(item.reading_value)}
@@ -2260,7 +2824,8 @@ const handlePrint = () => {
                       <>
                         <Text style={styles.rowTitle}>{item.reading_id}</Text>
                         <Text style={styles.rowSub}>
-                          {item.lastread_date} • Value: {fmtValue(item.reading_value)}
+                          {item.lastread_date} • Value:{" "}
+                          {fmtValue(item.reading_value)}
                         </Text>
                       </>
                     )}
@@ -2268,14 +2833,15 @@ const handlePrint = () => {
                     {locked && (
                       <View style={styles.lockBadge}>
                         <Text style={styles.lockBadgeText}>
-                          🔒 Locked (Billing{" "}
-                          {header?.period?.start ?? "?"} → {header?.period?.end ?? "?"})
+                          🔒 Locked (Billing {header?.period?.start ?? "?"} →{" "}
+                          {header?.period?.end ?? "?"})
                         </Text>
                       </View>
                     )}
 
                     <Text style={styles.rowSubSmall}>
-                      Updated {formatDateTime(item.last_updated)} by {item.updated_by}
+                      Updated {formatDateTime(item.last_updated)} by{" "}
+                      {item.updated_by}
                     </Text>
                   </View>
 
@@ -2310,22 +2876,42 @@ const handlePrint = () => {
             }}
             ListHeaderComponent={
               <>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
                   <Text style={styles.modalTitle}>
-                    Readings for <Text style={styles.meterLink}>{selectedMeterId || "—"}</Text>
+                    Readings for{" "}
+                    <Text style={styles.meterLink}>
+                      {selectedMeterId || "—"}
+                    </Text>
                   </Text>
                   <View style={{ flexDirection: "row", gap: 8 }}>
-                    <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setLedgerVisible(true)}>
+                    <TouchableOpacity
+                      style={[styles.btn, styles.btnGhost]}
+                      onPress={() => setLedgerVisible(true)}
+                    >
                       <Text style={styles.btnGhostText}>Print Ledger</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={onClose}>
+                    <TouchableOpacity
+                      style={[styles.btn, styles.btnGhost]}
+                      onPress={onClose}
+                    >
                       <Text style={styles.btnGhostText}>Close</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
 
                 <View style={[styles.searchWrap, { marginTop: 8 }]}>
-                  <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+                  <Ionicons
+                    name="search"
+                    size={16}
+                    color="#94a3b8"
+                    style={{ marginRight: 6 }}
+                  />
                   <TextInput
                     style={styles.search}
                     placeholder="Search readings (ID, date, value…)"
@@ -2337,7 +2923,9 @@ const handlePrint = () => {
                   />
                 </View>
 
-                <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>Sort readings</Text>
+                <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>
+                  Sort readings
+                </Text>
                 <View style={styles.chipsRow}>
                   {[
                     { label: "Newest", val: "date_desc" },
@@ -2362,20 +2950,36 @@ const handlePrint = () => {
               <>
                 <View style={styles.pageBar}>
                   <Text style={styles.pageInfo}>
-                    Page {safePage} of {totalPages} • {total} item{total === 1 ? "" : "s"}
+                    Page {safePage} of {totalPages} • {total} item
+                    {total === 1 ? "" : "s"}
                   </Text>
                   <View style={styles.pageBtns}>
-                    <PageBtn label="First" disabled={safePage === 1} onPress={() => setPage(1)} />
-                    <PageBtn label="Prev" disabled={safePage === 1} onPress={() => setPage(safePage - 1)} />
-                    <PageBtn label="Next" disabled={safePage >= totalPages} onPress={() => setPage(safePage + 1)} />
-                    <PageBtn label="Last" disabled={safePage >= totalPages} onPress={() => setPage(totalPages)} />
+                    <PageBtn
+                      label="First"
+                      disabled={safePage === 1}
+                      onPress={() => setPage(1)}
+                    />
+                    <PageBtn
+                      label="Prev"
+                      disabled={safePage === 1}
+                      onPress={() => setPage(safePage - 1)}
+                    />
+                    <PageBtn
+                      label="Next"
+                      disabled={safePage >= totalPages}
+                      onPress={() => setPage(safePage + 1)}
+                    />
+                    <PageBtn
+                      label="Last"
+                      disabled={safePage >= totalPages}
+                      onPress={() => setPage(totalPages)}
+                    />
                   </View>
                 </View>
               </>
             }
           />
 
-          {/* Ledger date range modal */}
           <Modal
             visible={ledgerVisible}
             animationType="fade"
@@ -2386,57 +2990,88 @@ const handlePrint = () => {
               <View style={styles.promptCard}>
                 <Text style={styles.modalTitle}>Print Ledger</Text>
                 <View style={styles.modalDivider} />
-                <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Start date (YYYY-MM-DD)</Text>
+                <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>
+                  Start date (YYYY-MM-DD)
+                </Text>
                 <TextInput
                   value={ledgerStart}
                   onChangeText={setLedgerStart}
                   style={styles.input}
                   placeholder="2025-01-01"
                 />
-                <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>End date (YYYY-MM-DD)</Text>
+                <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>
+                  End date (YYYY-MM-DD)
+                </Text>
                 <TextInput
                   value={ledgerEnd}
                   onChangeText={setLedgerEnd}
                   style={styles.input}
                   placeholder="2025-01-31"
                 />
-                <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 16, gap: 8 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "flex-end",
+                    marginTop: 16,
+                    gap: 8,
+                  }}
+                >
                   <TouchableOpacity
                     style={[styles.btn, styles.btnGhost]}
                     onPress={() => setLedgerVisible(false)}
                   >
                     <Text style={styles.btnGhostText}>Cancel</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.btn} onPress={handlePrintLedger}>
-                    <Text style={styles.btnText}>{Platform.OS === "web" ? "Print Ledger" : "Generate"}</Text>
+                  <TouchableOpacity
+                    style={styles.btn}
+                    onPress={handlePrintLedger}
+                  >
+                    <Text style={styles.btnText}>
+                      {Platform.OS === "web" ? "Print Ledger" : "Generate"}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
           </Modal>
 
-          {/* ---- Print Proof Modal ---- */}
-          <Modal visible={printProofVisible} transparent animationType="slide" onRequestClose={() => setPrintProofVisible(false)}>
+          <Modal
+            visible={printProofVisible}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setPrintProofVisible(false)}
+          >
             <View style={styles.modalWrap}>
-              <View style={[styles.modalCard, { maxWidth: 800, maxHeight: '90%' }]}>
+              <View
+                style={[styles.modalCard, { maxWidth: 800, maxHeight: "90%" }]}
+              >
                 <View style={styles.modalHeaderRow}>
                   <Text style={styles.modalTitle}>Print Reading Proof</Text>
                   <TouchableOpacity onPress={() => setPrintProofVisible(false)}>
                     <Ionicons name="close" size={24} color="#64748b" />
                   </TouchableOpacity>
                 </View>
-                
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+
+                <ScrollView
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ padding: 16 }}
+                >
                   {printLoading ? (
                     <View style={{ padding: 40, alignItems: "center" }}>
                       <ActivityIndicator size="large" color="#2563eb" />
-                      <Text style={{ marginTop: 16, color: "#64748b" }}>Loading print data...</Text>
+                      <Text style={{ marginTop: 16, color: "#64748b" }}>
+                        Loading print data...
+                      </Text>
                     </View>
                   ) : printData.reading ? (
                     <View style={styles.printProofContent}>
                       <View style={styles.printHeader}>
-                        <Text style={styles.printTitle}>Meter Reading Proof</Text>
-                        <Text style={styles.printSubtitle}>Generated on: {new Date().toLocaleString()}</Text>
+                        <Text style={styles.printTitle}>
+                          Meter Reading Proof
+                        </Text>
+                        <Text style={styles.printSubtitle}>
+                          Generated on: {new Date().toLocaleString()}
+                        </Text>
                       </View>
 
                       <View style={styles.printSection}>
@@ -2444,40 +3079,58 @@ const handlePrint = () => {
                         <View style={styles.detailsGrid}>
                           <View style={styles.detailItem}>
                             <Text style={styles.detailLabel}>Reading ID:</Text>
-                            <Text style={styles.detailValue}>{printData.reading.reading_id}</Text>
+                            <Text style={styles.detailValue}>
+                              {printData.reading.reading_id}
+                            </Text>
                           </View>
                           <View style={styles.detailItem}>
                             <Text style={styles.detailLabel}>Meter ID:</Text>
-                            <Text style={styles.detailValue}>{printData.reading.meter_id}</Text>
+                            <Text style={styles.detailValue}>
+                              {printData.reading.meter_id}
+                            </Text>
                           </View>
                           <View style={styles.detailItem}>
                             <Text style={styles.detailLabel}>Meter Type:</Text>
                             <Text style={styles.detailValue}>
-                              {metersById.get(printData.reading.meter_id)?.meter_type.toUpperCase() || 'Unknown'}
+                              {metersById
+                                .get(printData.reading.meter_id)
+                                ?.meter_type.toUpperCase() || "Unknown"}
                             </Text>
                           </View>
                           <View style={styles.detailItem}>
                             <Text style={styles.detailLabel}>Date Read:</Text>
-                            <Text style={styles.detailValue}>{printData.reading.lastread_date}</Text>
+                            <Text style={styles.detailValue}>
+                              {printData.reading.lastread_date}
+                            </Text>
                           </View>
                           <View style={styles.detailItem}>
                             <Text style={styles.detailLabel}>Read By:</Text>
-                            <Text style={styles.detailValue}>{printData.reading.read_by}</Text>
+                            <Text style={styles.detailValue}>
+                              {printData.reading.read_by}
+                            </Text>
                           </View>
                           {printData.reading.remarks && (
                             <View style={styles.detailItem}>
                               <Text style={styles.detailLabel}>Remarks:</Text>
-                              <Text style={styles.detailValue}>{printData.reading.remarks}</Text>
+                              <Text style={styles.detailValue}>
+                                {printData.reading.remarks}
+                              </Text>
                             </View>
                           )}
                         </View>
                       </View>
 
                       <View style={styles.printSection}>
-                        <Text style={styles.sectionTitle}>Reading Comparison</Text>
+                        <Text style={styles.sectionTitle}>
+                          Reading Comparison
+                        </Text>
                         <View style={styles.comparisonGrid}>
-                          <View style={[styles.readingCard, styles.currentReading]}>
-                            <Text style={styles.cardTitle}>Current Reading</Text>
+                          <View
+                            style={[styles.readingCard, styles.currentReading]}
+                          >
+                            <Text style={styles.cardTitle}>
+                              Current Reading
+                            </Text>
                             <Text style={styles.readingValue}>
                               {fmtValue(printData.reading.reading_value)}
                             </Text>
@@ -2485,20 +3138,29 @@ const handlePrint = () => {
                               Date: {printData.reading.lastread_date}
                             </Text>
                           </View>
-                          
-                          <View style={[styles.readingCard, styles.previousReading]}>
-                            <Text style={styles.cardTitle}>Previous Reading</Text>
+
+                          <View
+                            style={[styles.readingCard, styles.previousReading]}
+                          >
+                            <Text style={styles.cardTitle}>
+                              Previous Reading
+                            </Text>
                             {printData.previousReading ? (
                               <>
                                 <Text style={styles.readingValue}>
-                                  {fmtValue(printData.previousReading.reading_value)}
+                                  {fmtValue(
+                                    printData.previousReading.reading_value,
+                                  )}
                                 </Text>
                                 <Text style={styles.readingDate}>
-                                  Date: {printData.previousReading.lastread_date}
+                                  Date:{" "}
+                                  {printData.previousReading.lastread_date}
                                 </Text>
                               </>
                             ) : (
-                              <Text style={styles.noData}>No previous reading available</Text>
+                              <Text style={styles.noData}>
+                                No previous reading available
+                              </Text>
                             )}
                           </View>
                         </View>
@@ -2513,18 +3175,38 @@ const handlePrint = () => {
                               style={styles.proofImage}
                               resizeMode="contain"
                               onError={(error) => {
-                                console.error('❌ Image loading error:', error.nativeEvent.error);
-                                setPrintData(prev => ({ ...prev, imageUri: null }));
+                                console.error(
+                                  "❌ Image loading error:",
+                                  error.nativeEvent.error,
+                                );
+                                setPrintData((prev) => ({
+                                  ...prev,
+                                  imageUri: null,
+                                }));
                               }}
-                              onLoad={() => console.log('✅ Image loaded successfully')}
+                              onLoad={() =>
+                                console.log("✅ Image loaded successfully")
+                              }
                             />
                           </View>
                         ) : (
                           <View style={styles.noImageContainer}>
-                            <Ionicons name="image-outline" size={48} color="#94a3b8" />
-                            <Text style={styles.noData}>No image available for this reading</Text>
-                            <Text style={[styles.noData, { fontSize: 12, marginTop: 8 }]}>
-                              The image may not have been uploaded or the endpoint is not available.
+                            <Ionicons
+                              name="image-outline"
+                              size={48}
+                              color="#94a3b8"
+                            />
+                            <Text style={styles.noData}>
+                              No image available for this reading
+                            </Text>
+                            <Text
+                              style={[
+                                styles.noData,
+                                { fontSize: 12, marginTop: 8 },
+                              ]}
+                            >
+                              The image may not have been uploaded or the
+                              endpoint is not available.
                             </Text>
                           </View>
                         )}
@@ -2532,7 +3214,8 @@ const handlePrint = () => {
 
                       <View style={styles.printFooter}>
                         <Text style={styles.footerText}>
-                          This is an official meter reading record. Generated automatically by the system.
+                          This is an official meter reading record. Generated
+                          automatically by the system.
                         </Text>
                       </View>
                     </View>
@@ -2542,7 +3225,10 @@ const handlePrint = () => {
                 </ScrollView>
 
                 <View style={styles.modalActions}>
-                  <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={() => setPrintProofVisible(false)}>
+                  <TouchableOpacity
+                    style={[styles.btn, styles.btnGhost]}
+                    onPress={() => setPrintProofVisible(false)}
+                  >
                     <Text style={styles.btnGhostText}>Close</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.btn} onPress={handlePrint}>
@@ -2554,7 +3240,6 @@ const handlePrint = () => {
               </View>
             </View>
           </Modal>
-          {/* ---- end Print Proof Modal ---- */}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -2572,12 +3257,22 @@ function HistoryModal({
   online,
 }: any) {
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.modalWrap}
+      >
         <View
           style={[
             styles.modalCardWide,
-            Platform.OS !== "web" && { maxHeight: Math.round(Dimensions.get("window").height * 0.9) },
+            Platform.OS !== "web" && {
+              maxHeight: Math.round(Dimensions.get("window").height * 0.9),
+            },
           ]}
         >
           <View style={styles.modalHeader}>
@@ -2585,18 +3280,26 @@ function HistoryModal({
 
             <View style={styles.headerActions}>
               <TouchableOpacity
-                style={[styles.actionBtn, scans.length ? null : styles.actionBtnDisabled]}
+                style={[
+                  styles.actionBtn,
+                  scans.length ? null : styles.actionBtnDisabled,
+                ]}
                 disabled={!scans.length || syncing || !online}
                 onPress={onSync}
               >
                 {syncing ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.actionBtnText}>{online ? "Sync" : "Offline"}</Text>
+                  <Text style={styles.actionBtnText}>
+                    {online ? "Sync" : "Offline"}
+                  </Text>
                 )}
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={onClose}>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.actionBtnGhost]}
+                onPress={onClose}
+              >
                 <Text style={styles.actionBtnGhostText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -2605,7 +3308,9 @@ function HistoryModal({
           <FlatList
             data={scans}
             keyExtractor={(it) => it.id}
-            ListEmptyComponent={<Text style={styles.empty}>No items in this tab.</Text>}
+            ListEmptyComponent={
+              <Text style={styles.empty}>No items in this tab.</Text>
+            }
             style={{ marginTop: 8 }}
             contentContainerStyle={{ paddingBottom: 12 }}
             renderItem={({ item }) => (
@@ -2613,19 +3318,37 @@ function HistoryModal({
                 <View style={styles.rowLeft}>
                   <Text style={styles.rowTitle}>{item.meter_id}</Text>
                   <Text style={styles.rowSub}>
-                    Value: {Number(item.reading_value).toFixed(2)} • Date: {item.lastread_date}
+                    Value: {Number(item.reading_value).toFixed(2)} • Date:{" "}
+                    {item.lastread_date}
                   </Text>
-                  <Text style={styles.rowSubSmall}>Saved: {new Date(item.createdAt).toLocaleString()}</Text>
-                  {!!item.remarks && <Text style={styles.rowSubSmall}>Remarks: {item.remarks}</Text>}
+                  <Text style={styles.rowSubSmall}>
+                    Saved: {new Date(item.createdAt).toLocaleString()}
+                  </Text>
+                  {!!item.remarks && (
+                    <Text style={styles.rowSubSmall}>
+                      Remarks: {item.remarks}
+                    </Text>
+                  )}
 
                   <View style={styles.badgesRow}>
-                    {(item.status === "pending" || item.status === "failed") && (
-                      <Text style={[styles.statusBadge, item.status === "pending" ? styles.statusPending : styles.statusFailed]}>
+                    {(item.status === "pending" ||
+                      item.status === "failed") && (
+                      <Text
+                        style={[
+                          styles.statusBadge,
+                          item.status === "pending"
+                            ? styles.statusPending
+                            : styles.statusFailed,
+                        ]}
+                      >
                         {item.status === "pending" ? "Pending" : "Failed"}
                       </Text>
                     )}
                     {!!item.error && (
-                      <Text style={[styles.statusBadge, styles.statusWarn]} numberOfLines={1}>
+                      <Text
+                        style={[styles.statusBadge, styles.statusWarn]}
+                        numberOfLines={1}
+                      >
                         Error: {item.error}
                       </Text>
                     )}
@@ -2633,11 +3356,17 @@ function HistoryModal({
                 </View>
 
                 <View style={styles.rowRight}>
-                  <TouchableOpacity style={[styles.smallBtn, styles.smallBtnGhost]} onPress={() => markPending(item.id)}>
+                  <TouchableOpacity
+                    style={[styles.smallBtn, styles.smallBtnGhost]}
+                    onPress={() => markPending(item.id)}
+                  >
                     <Text style={styles.smallBtnGhostText}>Mark Pending</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={[styles.smallBtn, styles.smallBtnDanger]} onPress={() => removeScan(item.id)}>
+                  <TouchableOpacity
+                    style={[styles.smallBtn, styles.smallBtnDanger]}
+                    onPress={() => removeScan(item.id)}
+                  >
                     <Text style={styles.smallBtnText}>Delete</Text>
                   </TouchableOpacity>
                 </View>
@@ -2650,7 +3379,6 @@ function HistoryModal({
   );
 }
 
-/* ---------- Image ⇄ Base64 Tool ---------- */
 function ImageBase64Tool({
   visible,
   onClose,
@@ -2660,57 +3388,143 @@ function ImageBase64Tool({
   onClose: () => void;
   onUseBase64: (b64: string) => void;
 }) {
-  const [input, setInput] = React.useState<string>("");
+  const [tab, setTab] = React.useState<"quick" | "paste">("quick");
   const [mime, setMime] = React.useState<string>("image/jpeg");
   const [base64, setBase64] = React.useState<string>("");
   const [dataUrl, setDataUrl] = React.useState<string>("");
+  const [paste, setPaste] = React.useState<string>("");
+  const [busy, setBusy] = React.useState<boolean>(false);
 
   const fileRef = React.useRef<HTMLInputElement | null>(null);
-  const openFilePicker = () => {
+  const openFilePickerWeb = () => {
     if (Platform.OS === "web") fileRef.current?.click?.();
   };
-  const onPickFile = (e: any) => {
+
+  React.useEffect(() => {
+    if (!visible) return;
+    setTab("quick");
+    setBusy(false);
+  }, [visible]);
+
+  const applyB64 = async (rawB64: string, nextMime?: string) => {
+    const mm = (nextMime || mime || "image/jpeg").trim() || "image/jpeg";
+    const clean = (rawB64 || "").replace(/\s+/g, "");
+    if (!clean) return;
+    try {
+      setBusy(true);
+      const sized = await ensureSizedBase64(clean, mm);
+      setMime(mm);
+      setBase64(sized);
+      setDataUrl(asDataUrl(sized, mm));
+      setPaste(asDataUrl(sized, mm));
+      notify("Ready", "Preview generated. Tap 'Use in Form' to attach it.");
+    } catch (e: any) {
+      notify("Image too large", e?.message || "Please choose a smaller image.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onPickFileWeb = (e: any) => {
     const f = e?.target?.files?.[0];
     if (!f) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const result = String(reader.result || "");
-      setInput(result);
-      const b64 = extractBase64(result);
-      setBase64(b64);
-      setMime(f.type || "image/jpeg");
-      setDataUrl(`data:${f.type || "image/jpeg"};base64,${b64}`);
+      const comma = result.indexOf(",");
+      const raw = comma >= 0 ? result.slice(comma + 1) : result;
+      await applyB64(raw, f.type || "image/jpeg");
     };
     reader.readAsDataURL(f);
     e.target.value = "";
   };
 
-  function extractBase64(s: string) {
-    const str = (s || "").trim();
-    if (str.startsWith("data:")) {
-      const comma = str.indexOf(",");
-      return comma >= 0 ? str.slice(comma + 1) : "";
-    }
-    return str.replace(/\s+/g, "");
-  }
-  function buildDataUrl(b64: string, m: string) {
-    const clean = (b64 || "").replace(/\s+/g, "");
-    const mm = (m || "image/jpeg").trim() || "image/jpeg";
-    return `data:${mm};base64,${clean}`;
-  }
-
-  const decodeInput = () => {
-    const b64 = extractBase64(input);
-    if (!b64) {
-      notify("Invalid input", "Please paste a valid base64 or data URL.");
+  const pickFromLibrary = async () => {
+    if (Platform.OS === "web") {
+      openFilePickerWeb();
       return;
     }
-    setBase64(b64);
-    setDataUrl(buildDataUrl(b64, mime));
+    try {
+      setBusy(true);
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        notify("Permission needed", "Please allow photo library access.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.6,
+        base64: false,
+        allowsEditing: true,
+      });
+      if ((res as any).canceled) return;
+      const asset = (res as any).assets?.[0];
+      if (!asset?.uri) {
+        notify("Failed", "No photo captured.");
+        return;
+      }
+
+      const compressedB64 = await compressUriToSizedBase64Native(asset.uri);
+      await applyB64(compressedB64, "image/jpeg");
+    } catch (e: any) {
+      notify("Failed", e?.message || "Unable to pick photo.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const takePhoto = async () => {
+    if (Platform.OS === "web") {
+      openFilePickerWeb();
+      return;
+    }
+    try {
+      setBusy(true);
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        notify("Permission needed", "Please allow camera access.");
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        quality: 0.6,
+        base64: false,
+        allowsEditing: true,
+      });
+      if ((res as any).canceled) return;
+      const asset = (res as any).assets?.[0];
+      const b64 = asset?.base64;
+      if (!b64) {
+        notify("Failed", "No base64 returned. Please try again.");
+        return;
+      }
+      await applyB64(b64, asset?.mimeType || "image/jpeg");
+    } catch (e: any) {
+      notify("Failed", e?.message || "Unable to take photo.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decodePaste = async () => {
+    const str = (paste || "").trim();
+    if (!str) {
+      notify("Empty", "Paste a base64 or data URL first.");
+      return;
+    }
+    if (str.startsWith("data:")) {
+      const comma = str.indexOf(",");
+      const header = comma >= 0 ? str.slice(0, comma) : "";
+      const raw = comma >= 0 ? str.slice(comma + 1) : "";
+      const m = header.includes(";") ? header.slice(5).split(";")[0] : mime;
+      await applyB64(raw, m || mime);
+      return;
+    }
+    await applyB64(str, mime);
   };
 
   const copyBase64ToClipboard = async () => {
     try {
+      if (!base64) return;
       if (Platform.OS === "web") {
         await navigator.clipboard.writeText(base64);
         notify("Copied", "Base64 copied to clipboard.");
@@ -2722,134 +3536,383 @@ function ImageBase64Tool({
     }
   };
 
-  const downloadImage = () => {
-    if (Platform.OS !== "web" || !dataUrl) return;
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = "image";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  const clearAll = () => {
+    setBase64("");
+    setDataUrl("");
+    setPaste("");
+    setMime("image/jpeg");
   };
 
+  const sizeKB = base64 ? Math.round(base64Bytes(base64) / 1024) : 0;
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.modalWrap}
+      >
         <View style={styles.modalCardWide}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Image ⇄ Base64 Tool</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalTitle}>Attach meter photo</Text>
+              <Text style={styles.helpTxtSmall}>
+                Take a photo or choose one — it auto-converts to base64.
+              </Text>
+            </View>
             <View style={styles.headerActions}>
-              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnGhost]} onPress={onClose}>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.actionBtnGhost]}
+                onPress={onClose}
+              >
                 <Text style={styles.actionBtnGhostText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
 
-          {Platform.OS === "web" && (
-            <>
-              <input ref={fileRef as any} type="file" accept="image/*" style={{ display: "none" }} onChange={onPickFile} />
-              <TouchableOpacity style={[styles.btn, { alignSelf: "flex-start", marginBottom: 8 }]} onPress={openFilePicker}>
-                <Text style={styles.btnText}>Pick image (web)</Text>
-              </TouchableOpacity>
-            </>
-          )}
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 8,
+              marginBottom: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <TouchableOpacity
+              style={[
+                styles.smallBtn,
+                tab === "quick" ? styles.smallBtn : styles.ghostBtn,
+              ]}
+              onPress={() => setTab("quick")}
+            >
+              <Text
+                style={
+                  tab === "quick"
+                    ? styles.smallBtnText
+                    : [styles.smallBtnText, styles.ghostBtnText]
+                }
+              >
+                Photo
+              </Text>
+            </TouchableOpacity>
 
-          <Text style={styles.dropdownLabel}>MIME type (for data URL)</Text>
-          <View style={styles.pickerWrapper}>
-            <Picker selectedValue={mime} onValueChange={(v) => setMime(String(v))}>
-              {["image/jpeg", "image/png", "image/webp"].map((m) => (
-                <Picker.Item key={m} label={m} value={m} />
-              ))}
-            </Picker>
+            <TouchableOpacity
+              style={[
+                styles.smallBtn,
+                tab === "paste" ? styles.smallBtn : styles.ghostBtn,
+              ]}
+              onPress={() => setTab("paste")}
+            >
+              <Text
+                style={
+                  tab === "paste"
+                    ? styles.smallBtnText
+                    : [styles.smallBtnText, styles.ghostBtnText]
+                }
+              >
+                Paste base64
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>
-            Paste Base64 or Data URL (left) → Decode / Preview → Copy/Use (right)
-          </Text>
-          <View style={{ flexDirection: "row", gap: 12, flexWrap: "wrap" }}>
-            <TextInput
-              multiline
-              value={input}
-              onChangeText={setInput}
-              placeholder="Paste base64 (…AA==) or data URL (data:image/png;base64,…) here"
-              style={[styles.input, { minHeight: 120, flex: 1 }]}
+          {Platform.OS === "web" && (
+            <input
+              ref={fileRef as any}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={onPickFileWeb}
             />
-            <View style={{ flex: 1, minWidth: 280 }}>
-              <TouchableOpacity style={[styles.smallBtn, styles.ghostBtn]} onPress={decodeInput}>
-                <Text style={[styles.smallBtnText, styles.ghostBtnText]}>Decode / Preview</Text>
-              </TouchableOpacity>
+          )}
 
-              {dataUrl ? (
-                <View style={{ marginTop: 8, alignItems: "center" }}>
-                  <RNImage
-                    source={{ uri: dataUrl }}
-                    style={{ width: 240, height: 240, resizeMode: "contain", backgroundColor: "#f8fafc", borderRadius: 10 }}
-                  />
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-                    {Platform.OS === "web" && (
-                      <TouchableOpacity style={[styles.smallBtn, styles.ghostBtn]} onPress={downloadImage}>
-                        <Text style={[styles.smallBtnText, styles.ghostBtnText]}>Download</Text>
+          {tab === "quick" ? (
+            <>
+              <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
+                <TouchableOpacity
+                  style={[styles.btn, busy && styles.btnDisabled]}
+                  onPress={takePhoto}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.btnText}>Take Photo</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.btn,
+                    styles.btnGhost,
+                    busy && styles.btnDisabled,
+                  ]}
+                  onPress={pickFromLibrary}
+                  disabled={busy}
+                >
+                  <Text style={styles.btnGhostText}>Choose Photo</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={clearAll}
+                >
+                  <Text style={styles.btnGhostText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ marginTop: 14 }}>
+                <Text style={styles.dropdownLabel}>Preview</Text>
+
+                <View
+                  style={{
+                    marginTop: 8,
+                    borderWidth: 1,
+                    borderColor: "#e2e8f0",
+                    borderRadius: 12,
+                    padding: 12,
+                    backgroundColor: "#f8fafc",
+                  }}
+                >
+                  {dataUrl ? (
+                    <RNImage
+                      source={{ uri: dataUrl }}
+                      style={{
+                        width: "100%",
+                        height: 260,
+                        borderRadius: 10,
+                        backgroundColor: "#fff",
+                      }}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        height: 260,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Ionicons
+                        name="image-outline"
+                        size={48}
+                        color="#94a3b8"
+                      />
+                      <Text style={[styles.helpTxtSmall, { marginTop: 8 }]}>
+                        No image selected yet.
+                      </Text>
+                    </View>
+                  )}
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginTop: 10,
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <Text style={styles.helpTxtSmall}>
+                      {base64
+                        ? `Size: ${sizeKB} KB (max ${(MAX_IMAGE_BYTES / 1024).toFixed(0)} KB)`
+                        : "Pick a photo to see size."}
+                    </Text>
+
+                    <View
+                      style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}
+                    >
+                      <TouchableOpacity
+                        style={[styles.smallBtn, styles.ghostBtn]}
+                        onPress={copyBase64ToClipboard}
+                        disabled={!base64}
+                      >
+                        <Text
+                          style={[styles.smallBtnText, styles.ghostBtnText]}
+                        >
+                          Copy
+                        </Text>
                       </TouchableOpacity>
-                    )}
-                    <TouchableOpacity style={[styles.smallBtn]} onPress={() => onUseBase64(base64)}>
+
+                      <TouchableOpacity
+                        style={[styles.smallBtn, !base64 && styles.btnDisabled]}
+                        disabled={!base64}
+                        onPress={() => {
+                          onUseBase64(base64);
+                          onClose();
+                        }}
+                      >
+                        <Text style={styles.smallBtnText}>Use in Form</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={styles.dropdownLabel}>MIME type</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker
+                  selectedValue={mime}
+                  onValueChange={(v) => setMime(String(v))}
+                >
+                  {["image/jpeg", "image/png", "image/webp"].map((m) => (
+                    <Picker.Item key={m} label={m} value={m} />
+                  ))}
+                </Picker>
+              </View>
+
+              <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>
+                Paste base64 or full data URL
+              </Text>
+              <TextInput
+                multiline
+                value={paste}
+                onChangeText={setPaste}
+                placeholder="Paste base64 (…AA==) or data URL (data:image/png;base64,…) here"
+                style={[styles.input, { minHeight: 140 }]}
+              />
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  marginTop: 10,
+                }}
+              >
+                <TouchableOpacity
+                  style={[styles.btn, busy && styles.btnDisabled]}
+                  onPress={decodePaste}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.btnText}>Decode / Preview</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={clearAll}
+                >
+                  <Text style={styles.btnGhostText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ marginTop: 14 }}>
+                <Text style={styles.dropdownLabel}>Preview</Text>
+
+                <View
+                  style={{
+                    marginTop: 8,
+                    borderWidth: 1,
+                    borderColor: "#e2e8f0",
+                    borderRadius: 12,
+                    padding: 12,
+                    backgroundColor: "#f8fafc",
+                  }}
+                >
+                  {dataUrl ? (
+                    <RNImage
+                      source={{ uri: dataUrl }}
+                      style={{
+                        width: "100%",
+                        height: 260,
+                        borderRadius: 10,
+                        backgroundColor: "#fff",
+                      }}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        height: 260,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Ionicons
+                        name="image-outline"
+                        size={48}
+                        color="#94a3b8"
+                      />
+                      <Text style={[styles.helpTxtSmall, { marginTop: 8 }]}>
+                        No preview yet.
+                      </Text>
+                    </View>
+                  )}
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginTop: 10,
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <Text style={styles.helpTxtSmall}>
+                      {base64
+                        ? `Size: ${sizeKB} KB (max ${(MAX_IMAGE_BYTES / 1024).toFixed(0)} KB)`
+                        : "Decode to see size."}
+                    </Text>
+
+                    <TouchableOpacity
+                      style={[styles.smallBtn, !base64 && styles.btnDisabled]}
+                      disabled={!base64}
+                      onPress={() => {
+                        onUseBase64(base64);
+                        onClose();
+                      }}
+                    >
                       <Text style={styles.smallBtnText}>Use in Form</Text>
                     </TouchableOpacity>
                   </View>
-                  <Text style={styles.helpTxtSmall}>&nbsp;Size: {(base64Bytes(base64)/1024).toFixed(0)} KB (target ≤ {(MAX_IMAGE_BYTES/1024).toFixed(0)} KB)</Text>
                 </View>
-              ) : (
-                <Text style={styles.helpTxtSmall}>No preview yet.</Text>
-              )}
-            </View>
-          </View>
-
-          <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Raw Base64</Text>
-          <View style={{ gap: 8 }}>
-            <TextInput
-              multiline
-              value={base64}
-              onChangeText={setBase64}
-              placeholder="This will contain just the base64 (no data URL prefix)."
-              style={[styles.input, { minHeight: 120 }]}
-            />
-            <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-              <TouchableOpacity style={[styles.smallBtn, styles.ghostBtn]} onPress={copyBase64ToClipboard}>
-                <Text style={[styles.smallBtnText, styles.ghostBtnText]}>Copy Base64</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.smallBtn]}
-                onPress={() => {
-                  const url = `data:${mime};base64,${base64}`;
-                  setDataUrl(url);
-                  setInput(url);
-                }}
-              >
-                <Text style={styles.smallBtnText}>Make Data URL</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.smallBtn]} onPress={() => onUseBase64(base64)}>
-                <Text style={styles.smallBtnText}>Use in Form</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+              </View>
+            </>
+          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-/* ---------- styles ---------- */
 const styles = StyleSheet.create({
-  modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", alignItems: "center", padding: 16 },
-  modalCardWide: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 960, height: "95%" },
+  modalWrap: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  modalCardWide: {
+    backgroundColor: "#fff",
+    padding: 16,
+    borderRadius: 16,
+    width: "100%",
+    maxWidth: 960,
+    height: "95%",
+  },
 
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-
-  // page + list layout
-  pageBar: { marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  pageBar: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   pageInfo: { color: "#334e68", fontWeight: "600" },
   pageBtns: { flexDirection: "row", gap: 6, alignItems: "center" },
-
-  // list row
   listRow: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -2869,45 +3932,84 @@ const styles = StyleSheet.create({
 
   meterLink: { color: "#2563eb", textDecorationLine: "underline" },
 
-  actionBtn: { height: 36, paddingHorizontal: 12, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#2563eb" },
+  actionBtn: {
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#2563eb",
+  },
   actionBtnGhost: { backgroundColor: "#e0ecff" },
   actionBtnDanger: { backgroundColor: "#ef4444" },
   actionBtnText: { fontWeight: "700", color: "#fff" },
   actionBtnGhostText: { color: "#1d4ed8", fontWeight: "700" },
   actionBtnDisabled: { opacity: 0.5, backgroundColor: "#e2e8f0" },
-
-  // page button
-  pageBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", backgroundColor: "#fff" },
+  pageBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
+  },
   pageBtnText: { fontSize: 14, fontWeight: "700", color: "#102a43" },
   pageBtnDisabled: { opacity: 0.5 },
-
-  // input + search bar
-  searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: "#e2e8f0" },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
   search: { flex: 1, fontSize: 14, color: "#0b1f33" },
-
   empty: { textAlign: "center", color: "#627d98", paddingVertical: 16 },
-
-  // loader
   loader: { paddingVertical: 24, alignItems: "center" },
-
-  // chips
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8, alignItems: "center" },
-  chip: { borderWidth: 1, borderColor: "#cbd5e1", backgroundColor: "#f8fafc", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  chip: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f8fafc",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
   chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
   chipIdle: {},
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
-  // page + card
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
-
-  infoBar: { padding: 10, borderRadius: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  infoOnline: { backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#10b98155" },
-  infoOffline: { backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#f59e0b55" },
+  infoBar: {
+    padding: 10,
+    borderRadius: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  infoOnline: {
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#10b98155",
+  },
+  infoOffline: {
+    backgroundColor: "#fff7ed",
+    borderWidth: 1,
+    borderColor: "#f59e0b55",
+  },
   infoText: { fontWeight: "800", color: "#111827" },
-  historyBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#082cac" },
+  historyBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "#082cac",
+  },
   historyBtnText: { color: "#fff", fontWeight: "800" },
 
   card: {
@@ -2918,13 +4020,25 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     backgroundColor: "#fff",
-    ...(Platform.select({ web: { boxShadow: "0 10px 30px rgba(2,6,23,0.06)" as any }, default: { elevation: 2 } }) as any),
+    ...(Platform.select({
+      web: { boxShadow: "0 10px 30px rgba(2,6,23,0.06)" as any },
+      default: { elevation: 2 },
+    }) as any),
   },
-  cardHeader: { marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  cardHeader: {
+    marginBottom: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   cardTitle: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
-
-  // buttons
-  btn: { backgroundColor: "#2563eb", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  btn: {
+    backgroundColor: "#2563eb",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: "#fff", fontWeight: "700" },
   btnGhost: {
@@ -2938,14 +4052,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-
-  // toolbar
-  filtersBar: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" },
-
-  // building chips block
-  buildingHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-
-  // list rows
+  filtersBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+    flexWrap: "wrap",
+  },
+  buildingHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -2958,59 +4077,173 @@ const styles = StyleSheet.create({
   },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
-
-  // RIGHT warning icon container
   rightIconWrap: {
     width: 28,
     alignItems: "flex-end",
     justifyContent: "center",
   },
-
-  // modal shared
-  overlay: { flex: 1, backgroundColor: "rgba(2,6,23,0.45)", justifyContent: "center", alignItems: "center", padding: 16 },
-  modalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 480, ...(Platform.select({ web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" } as any, default: { elevation: 4 } }) as any) },
-  modalHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(2,6,23,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    padding: 16,
+    borderRadius: 16,
+    width: "100%",
+    maxWidth: 480,
+    ...(Platform.select({
+      web: { boxShadow: "0 14px 36px rgba(2,6,23,0.25)" } as any,
+      default: { elevation: 4 },
+    }) as any),
+  },
+  modalHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   modalDivider: { height: 1, backgroundColor: "#edf2f7", marginVertical: 8 },
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
-
-  // small buttons
-  smallBtn: { minHeight: 36, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 12,
+  },
+  smallBtn: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
   smallBtnText: { fontSize: 13, fontWeight: "800" },
-  ghostBtn: { backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0" },
+  ghostBtn: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
   ghostBtnText: { color: "#1f2937" },
-
-  // dropdowns / inputs
-  dropdownLabel: { fontWeight: "800", color: "#0f172a", marginBottom: 8, textTransform: "none" },
-  pickerWrapper: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, overflow: "hidden", backgroundColor: "#fff" },
+  dropdownLabel: {
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 8,
+    textTransform: "none",
+  },
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: "#d9e2ec",
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+  },
   picker: { height: 50 },
   dateButton: { minWidth: 160, justifyContent: "center" },
   dateButtonText: { color: "#102a43" },
-  dateModalCard: { backgroundColor: "#fff", padding: 16, borderRadius: 16, width: "100%", maxWidth: 520 },
+  dateModalCard: {
+    backgroundColor: "#fff",
+    padding: 16,
+    borderRadius: 16,
+    width: "100%",
+    maxWidth: 520,
+  },
   datePickersRow: { flexDirection: "row", gap: 12 },
   datePickerCol: { flex: 1 },
-  input: { borderWidth: 1, borderColor: "#d9e2ec", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#fff", color: "#102a43", marginTop: 6, minWidth: 160 },
-
-  // history
-  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
+  input: {
+    borderWidth: 1,
+    borderColor: "#d9e2ec",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#fff",
+    color: "#102a43",
+    marginTop: 6,
+    minWidth: 160,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 8,
+  },
   headerActions: { flexDirection: "row", gap: 8 },
 
-  centerText: { textAlign: "center", width: "100%", color: "#082cac", fontWeight: "900", fontSize: 15, marginLeft: 75 },
+  centerText: {
+    textAlign: "center",
+    width: "100%",
+    color: "#082cac",
+    fontWeight: "900",
+    fontSize: 15,
+    marginLeft: 75,
+  },
 
-  historyRow: { borderWidth: 1, borderColor: "#edf2f7", borderRadius: 12, backgroundColor: "#fff", ...(Platform.select({ web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" } as any, default: { elevation: 1 } }) as any), padding: 12, marginTop: 10, flexDirection: "row", alignItems: "stretch", gap: 12 },
+  historyRow: {
+    borderWidth: 1,
+    borderColor: "#edf2f7",
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    ...(Platform.select({
+      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.06)" } as any,
+      default: { elevation: 1 },
+    }) as any),
+    padding: 12,
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 12,
+  },
   rowLeft: { flex: 1, gap: 4 },
-  rowRight: { justifyContent: "center", alignItems: "flex-end", gap: 6, minWidth: 110 },
+  rowRight: {
+    justifyContent: "center",
+    alignItems: "flex-end",
+    gap: 6,
+    minWidth: 110,
+  },
   badgesRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
-  statusBadge: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, fontSize: 12, overflow: "hidden" },
-  statusPending: { backgroundColor: "#fff7ed", color: "#9a3412", borderWidth: 1, borderColor: "#f59e0b55" },
-  statusFailed: { backgroundColor: "#fef2f2", color: "#7f1d1d", borderWidth: 1, borderColor: "#ef444455" },
-  statusApproved: { backgroundColor: "#ecfdf5", color: "#065f46", borderWidth: 1, borderColor: "#10b98155" },
-  statusWarn: { backgroundColor: "#fefce8", color: "#713f12", borderWidth: 1, borderColor: "#facc1555" },
-
-  // links + badges
-  badge: { backgroundColor: "#bfbfbfff", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  statusBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    fontSize: 12,
+    overflow: "hidden",
+  },
+  statusPending: {
+    backgroundColor: "#fff7ed",
+    color: "#9a3412",
+    borderWidth: 1,
+    borderColor: "#f59e0b55",
+  },
+  statusFailed: {
+    backgroundColor: "#fef2f2",
+    color: "#7f1d1d",
+    borderWidth: 1,
+    borderColor: "#ef444455",
+  },
+  statusApproved: {
+    backgroundColor: "#ecfdf5",
+    color: "#065f46",
+    borderWidth: 1,
+    borderColor: "#10b98155",
+  },
+  statusWarn: {
+    backgroundColor: "#fefce8",
+    color: "#713f12",
+    borderWidth: 1,
+    borderColor: "#facc1555",
+  },
+  badge: {
+    backgroundColor: "#bfbfbfff",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   badgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-
-  // select wrapper used in mobile building picker
   select: {
     borderRadius: 10,
     overflow: "hidden",
@@ -3022,7 +4255,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
 
-  rowWrap: { flexDirection: "row", alignItems: "flex-end", gap: 10, flexWrap: "wrap" },
+  rowWrap: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 10,
+    flexWrap: "wrap",
+  },
 
   smallBtnGhost: {
     backgroundColor: "#f1f5f9",
@@ -3043,10 +4281,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   smallBtnGhostText: { color: "#1f2937", fontWeight: "800", fontSize: 13 },
-
   helpTxtSmall: { color: "#6b7280", fontSize: 12, marginTop: 4 },
-
-  // 20% guard styles
   warnBox: {
     marginTop: 8,
     padding: 10,
@@ -3065,8 +4300,6 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     marginLeft: 6,
   },
-
-  // prompt styles (for Filters modal)
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -3085,27 +4318,25 @@ const styles = StyleSheet.create({
       default: { elevation: 4 },
     }) as any),
   },
-
-  // Print Proof Styles
   printProofContent: {
     flex: 1,
     gap: 16,
   },
   printHeader: {
-    alignItems: 'center',
+    alignItems: "center",
     borderBottomWidth: 2,
-    borderBottomColor: '#333',
+    borderBottomColor: "#333",
     paddingBottom: 10,
     marginBottom: 10,
   },
   printTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: "bold",
+    color: "#333",
   },
   printSubtitle: {
     fontSize: 14,
-    color: '#666',
+    color: "#666",
     marginTop: 4,
   },
   printSection: {
@@ -3113,92 +4344,92 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: "bold",
+    color: "#333",
     marginBottom: 8,
   },
   detailsGrid: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: "#f5f5f5",
     padding: 15,
     borderRadius: 5,
     gap: 8,
   },
   detailItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   detailLabel: {
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: "bold",
+    color: "#333",
     flex: 1,
   },
   detailValue: {
-    color: '#666',
+    color: "#666",
     flex: 2,
   },
   comparisonGrid: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 16,
   },
   readingCard: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: "#ddd",
     padding: 15,
     borderRadius: 5,
   },
   currentReading: {
-    backgroundColor: '#e8f5e8',
+    backgroundColor: "#e8f5e8",
   },
   previousReading: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: "#f0f0f0",
   },
   readingValue: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#2563eb',
+    fontWeight: "bold",
+    color: "#2563eb",
     marginBottom: 4,
   },
   readingDate: {
     fontSize: 14,
-    color: '#666',
+    color: "#666",
   },
   imageContainer: {
-    alignItems: 'center',
+    alignItems: "center",
   },
   proofImage: {
-    width: '100%',
+    width: "100%",
     height: 300,
     borderRadius: 8,
-    backgroundColor: '#f8fafc',
+    backgroundColor: "#f8fafc",
   },
   printFooter: {
     marginTop: 20,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#ddd',
-    alignItems: 'center',
+    borderTopColor: "#ddd",
+    alignItems: "center",
   },
   footerText: {
     fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
+    color: "#666",
+    textAlign: "center",
   },
   noData: {
-    color: '#999',
-    fontStyle: 'italic',
-    textAlign: 'center',
+    color: "#999",
+    fontStyle: "italic",
+    textAlign: "center",
     padding: 20,
   },
   noImageContainer: {
-    alignItems: 'center',
+    alignItems: "center",
     padding: 20,
-    backgroundColor: '#f8fafc',
+    backgroundColor: "#f8fafc",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderStyle: 'dashed',
+    borderColor: "#e2e8f0",
+    borderStyle: "dashed",
   },
   lockBadge: {
     marginTop: 4,

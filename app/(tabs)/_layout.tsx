@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, StyleSheet, Platform, Modal, Text, TouchableOpacity } from "react-native";
+import {
+  View,
+  StyleSheet,
+  Platform,
+  Modal,
+  Text,
+  TouchableOpacity,
+} from "react-native";
 import { Slot, useRouter, Tabs } from "expo-router";
 import SideNav, { TabKey } from "../../components/SideNav";
 import { Ionicons } from "@expo/vector-icons";
@@ -10,7 +17,9 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { logout } = useAuth();
   const [warnVisible, setWarnVisible] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(Math.round(WARN_BEFORE_MS / 1000));
+  const [secondsLeft, setSecondsLeft] = useState(
+    Math.round(WARN_BEFORE_MS / 1000),
+  );
   const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -51,7 +60,10 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const handleActivity = () => onActivity();
       const onVisible = () => {
-        if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        if (
+          typeof document !== "undefined" &&
+          document.visibilityState === "visible"
+        ) {
           onActivity();
         }
       };
@@ -63,11 +75,19 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
         "touchstart",
         "focus",
       ];
-      winEvents.forEach((ev) => window.addEventListener(ev, handleActivity as EventListener, { passive: true } as any));
+      winEvents.forEach((ev) =>
+        window.addEventListener(
+          ev,
+          handleActivity as EventListener,
+          { passive: true } as any,
+        ),
+      );
       document.addEventListener("visibilitychange", onVisible);
       return () => {
         clearAll();
-        winEvents.forEach((ev) => window.removeEventListener(ev, handleActivity as EventListener));
+        winEvents.forEach((ev) =>
+          window.removeEventListener(ev, handleActivity as EventListener),
+        );
         document.removeEventListener("visibilitychange", onVisible);
       };
     }
@@ -87,7 +107,8 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
           <View style={styles.promptCard}>
             <Text style={styles.promptTitle}>Idle session will expire!</Text>
             <Text style={styles.promptBody}>
-              Your session will expire in {secondsLeft} second{secondsLeft === 1 ? "" : "s"} due to inactivity!
+              Your session will expire in {secondsLeft} second
+              {secondsLeft === 1 ? "" : "s"} due to inactivity!
               {"\n"}Do you want to break the timeout?
             </Text>
             <View style={styles.promptActions}>
@@ -151,7 +172,10 @@ export default function TabLayout() {
           options={{
             title: "Admin",
             tabBarIcon: ({ color, focused }) => (
-              <TabBarIcon name={focused ? "person-circle" : "person-circle-outline"} color={color} />
+              <TabBarIcon
+                name={focused ? "person-circle" : "person-circle-outline"}
+                color={color}
+              />
             ),
           }}
         />
@@ -160,7 +184,10 @@ export default function TabLayout() {
           options={{
             title: "Scanner",
             tabBarIcon: ({ color, focused }) => (
-              <TabBarIcon name={focused ? "scan" : "scan-outline"} color={color} />
+              <TabBarIcon
+                name={focused ? "scan" : "scan-outline"}
+                color={color}
+              />
             ),
           }}
         />
@@ -169,7 +196,10 @@ export default function TabLayout() {
           options={{
             title: "Billing",
             tabBarIcon: ({ color, focused }) => (
-              <TabBarIcon name={focused ? "card" : "card-outline"} color={color} />
+              <TabBarIcon
+                name={focused ? "card" : "card-outline"}
+                color={color}
+              />
             ),
           }}
         />
@@ -178,7 +208,10 @@ export default function TabLayout() {
           options={{
             title: "Dashboard",
             tabBarIcon: ({ color, focused }) => (
-              <TabBarIcon name={focused ? "grid" : "grid-outline"} color={color} />
+              <TabBarIcon
+                name={focused ? "grid" : "grid-outline"}
+                color={color}
+              />
             ),
           }}
         />
@@ -232,7 +265,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 6,
-    marginLeft: 10, 
+    marginLeft: 10,
   },
   promptBtnText: {
     color: "#fff",

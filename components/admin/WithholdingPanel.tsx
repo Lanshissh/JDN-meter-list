@@ -17,7 +17,7 @@ import {
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-import { useAuth } from "../../contexts/AuthContext";  // <-- ADD THIS
+import { useAuth } from "../../contexts/AuthContext"; // <-- ADD THIS
 
 type Props = { token: string | null };
 
@@ -61,17 +61,38 @@ function errorText(err: any, fallback = "Server error.") {
   if (d?.error) return String(d.error);
   if (d?.message) return String(d.message);
   if (err?.message) return String(err.message);
-  try { return JSON.stringify(d ?? err); } catch { return fallback; }
+  try {
+    return JSON.stringify(d ?? err);
+  } catch {
+    return fallback;
+  }
 }
 
-const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
-  <TouchableOpacity onPress={onPress} style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}>
-    <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextIdle]}>{label}</Text>
+const Chip = ({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) => (
+  <TouchableOpacity
+    onPress={onPress}
+    style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
+  >
+    <Text
+      style={[
+        styles.chipText,
+        active ? styles.chipTextActive : styles.chipTextIdle,
+      ]}
+    >
+      {label}
+    </Text>
   </TouchableOpacity>
 );
 
 export default function WithholdingPanel({ token }: Props) {
-
   // ==========================
   //  ROLE ACCESS (NEW)
   // ==========================
@@ -110,12 +131,21 @@ export default function WithholdingPanel({ token }: Props) {
   const [e_w, setE_w] = useState("");
   const [e_l, setE_l] = useState("");
 
-  const authHeader = useMemo(() => ({ Authorization: `Bearer ${token ?? ""}` }), [token]);
-  const api = useMemo(() => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }), [authHeader]);
+  const authHeader = useMemo(
+    () => ({ Authorization: `Bearer ${token ?? ""}` }),
+    [token],
+  );
+  const api = useMemo(
+    () =>
+      axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
+    [authHeader],
+  );
 
   const basePath = "/wt";
 
-  useEffect(() => { loadAll(); }, [token]);
+  useEffect(() => {
+    loadAll();
+  }, [token]);
 
   const loadAll = async () => {
     if (!token) {
@@ -137,13 +167,17 @@ export default function WithholdingPanel({ token }: Props) {
   // Filters & sorting
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const nz = (v: number | null) => (v == null ? false : (onlyNonZero ? Number(v) > 0 : true));
+    const nz = (v: number | null) =>
+      v == null ? false : onlyNonZero ? Number(v) > 0 : true;
     return rows.filter((r) => {
       const textOk = !q
         ? true
-        : [r.wt_id, r.wt_code, r.wt_description, r.updated_by]
-            .some((v) => String(v ?? "").toLowerCase().includes(q));
-      const rateOk = hasAnyRate ? (nz(r.e_wt) || nz(r.w_wt) || nz(r.l_wt)) : true;
+        : [r.wt_id, r.wt_code, r.wt_description, r.updated_by].some((v) =>
+            String(v ?? "")
+              .toLowerCase()
+              .includes(q),
+          );
+      const rateOk = hasAnyRate ? nz(r.e_wt) || nz(r.w_wt) || nz(r.l_wt) : true;
       return textOk && rateOk;
     });
   }, [rows, query, onlyNonZero, hasAnyRate]);
@@ -152,14 +186,26 @@ export default function WithholdingPanel({ token }: Props) {
     const arr = [...filtered];
     switch (sortMode) {
       case "codeAsc":
-        return arr.sort((a, b) => a.wt_code.localeCompare(b.wt_code, undefined, { numeric: true }));
+        return arr.sort((a, b) =>
+          a.wt_code.localeCompare(b.wt_code, undefined, { numeric: true }),
+        );
       case "codeDesc":
-        return arr.sort((a, b) => b.wt_code.localeCompare(a.wt_code, undefined, { numeric: true }));
+        return arr.sort((a, b) =>
+          b.wt_code.localeCompare(a.wt_code, undefined, { numeric: true }),
+        );
       case "oldest":
-        return arr.sort((a, b) => (Date.parse(a.last_updated || "") || 0) - (Date.parse(b.last_updated || "") || 0));
+        return arr.sort(
+          (a, b) =>
+            (Date.parse(a.last_updated || "") || 0) -
+            (Date.parse(b.last_updated || "") || 0),
+        );
       case "newest":
       default:
-        return arr.sort((a, b) => (Date.parse(b.last_updated || "") || 0) - (Date.parse(a.last_updated || "") || 0));
+        return arr.sort(
+          (a, b) =>
+            (Date.parse(b.last_updated || "") || 0) -
+            (Date.parse(a.last_updated || "") || 0),
+        );
     }
   }, [filtered, sortMode]);
 
@@ -182,7 +228,11 @@ export default function WithholdingPanel({ token }: Props) {
         l_wt: toNumOrNull(c_l),
       });
       setCreateVisible(false);
-      setC_code(""); setC_desc(""); setC_e(""); setC_w(""); setC_l("");
+      setC_code("");
+      setC_desc("");
+      setC_e("");
+      setC_w("");
+      setC_l("");
       await loadAll();
       notify("Success", "Withholding code created.");
     } catch (err) {
@@ -262,13 +312,15 @@ export default function WithholdingPanel({ token }: Props) {
     <View style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
-          
           {/* HEADER ======================== */}
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Withholding Codes</Text>
 
             {canEdit && (
-              <TouchableOpacity style={styles.btn} onPress={() => setCreateVisible(true)}>
+              <TouchableOpacity
+                style={styles.btn}
+                onPress={() => setCreateVisible(true)}
+              >
                 <Text style={styles.btnText}>+ New</Text>
               </TouchableOpacity>
             )}
@@ -277,7 +329,12 @@ export default function WithholdingPanel({ token }: Props) {
           {/* SEARCH + FILTERS ============== */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
-              <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+              <Ionicons
+                name="search"
+                size={16}
+                color="#94a3b8"
+                style={{ marginRight: 6 }}
+              />
               <TextInput
                 value={query}
                 onChangeText={setQuery}
@@ -287,86 +344,151 @@ export default function WithholdingPanel({ token }: Props) {
               />
             </View>
 
-            <TouchableOpacity style={styles.btnGhost} onPress={() => setFiltersVisible(true)}>
-              <Ionicons name="options-outline" size={16} color="#394e6a" style={{ marginRight: 6 }} />
+            <TouchableOpacity
+              style={styles.btnGhost}
+              onPress={() => setFiltersVisible(true)}
+            >
+              <Ionicons
+                name="options-outline"
+                size={16}
+                color="#394e6a"
+                style={{ marginRight: 6 }}
+              />
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
 
           {/* LIST ========================== */}
           {busy ? (
-            <View style={styles.loader}><ActivityIndicator /></View>
+            <View style={styles.loader}>
+              <ActivityIndicator />
+            </View>
           ) : (
             <FlatList
               data={sorted}
               keyExtractor={(r) => r.wt_id}
               style={{ flex: 1 }}
-              contentContainerStyle={sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }}
+              contentContainerStyle={
+                sorted.length === 0 ? styles.emptyPad : { paddingBottom: 24 }
+              }
               ListEmptyComponent={
                 <View style={styles.empty}>
                   <Ionicons name="cash-outline" size={42} color="#cbd5e1" />
                   <Text style={styles.emptyTitle}>No withholding codes</Text>
-                  <Text style={styles.emptyText}>Try adjusting your search or create a new one.</Text>
+                  <Text style={styles.emptyText}>
+                    Try adjusting your search or create a new one.
+                  </Text>
                 </View>
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
-                  
                   {/* MAIN TEXT BLOCK */}
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
-                      {item.wt_code} <Text style={styles.rowSub}>({item.wt_id})</Text>
+                      {item.wt_code}{" "}
+                      <Text style={styles.rowSub}>({item.wt_id})</Text>
                     </Text>
-                    <Text style={styles.rowMeta}>{item.wt_description || "—"}</Text>
                     <Text style={styles.rowMeta}>
-                      ELECTRIC: {item.e_wt ?? "—"} • WATER: {item.w_wt ?? "—"} • LPG: {item.l_wt ?? "—"}
+                      {item.wt_description || "—"}
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      ELECTRIC: {item.e_wt ?? "—"} • WATER: {item.w_wt ?? "—"} •
+                      LPG: {item.l_wt ?? "—"}
                     </Text>
 
                     {item.last_updated ? (
                       <Text style={styles.rowMetaSmall}>
-                        Updated {fmtDate(item.last_updated)} {item.updated_by ? `• by ${item.updated_by}` : ""}
+                        Updated {fmtDate(item.last_updated)}{" "}
+                        {item.updated_by ? `• by ${item.updated_by}` : ""}
                       </Text>
                     ) : null}
                   </View>
 
                   {/* ACTIONS (Shown only if admin/biller) */}
-                  {canEdit && (
-                    isMobile ? (
+                  {canEdit &&
+                    (isMobile ? (
                       <View style={styles.rowActionsMobile}>
-                        <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
-                          <Ionicons name="create-outline" size={16} color="#1f2937" />
-                          <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, styles.actionEdit]}
+                          onPress={() => openEdit(item)}
+                        >
+                          <Ionicons
+                            name="create-outline"
+                            size={16}
+                            color="#1f2937"
+                          />
+                          <Text
+                            style={[styles.actionText, styles.actionEditText]}
+                          >
+                            Update
+                          </Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
-                          <Ionicons name="trash-outline" size={16} color="#fff" />
-                          <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, styles.actionDelete]}
+                          onPress={() => onDelete(item)}
+                        >
+                          <Ionicons
+                            name="trash-outline"
+                            size={16}
+                            color="#fff"
+                          />
+                          <Text
+                            style={[styles.actionText, styles.actionDeleteText]}
+                          >
+                            Delete
+                          </Text>
                         </TouchableOpacity>
                       </View>
                     ) : (
                       <View style={styles.rowActions}>
-                        <TouchableOpacity style={[styles.actionBtn, styles.actionEdit]} onPress={() => openEdit(item)}>
-                          <Ionicons name="create-outline" size={16} color="#1f2937" />
-                          <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, styles.actionEdit]}
+                          onPress={() => openEdit(item)}
+                        >
+                          <Ionicons
+                            name="create-outline"
+                            size={16}
+                            color="#1f2937"
+                          />
+                          <Text
+                            style={[styles.actionText, styles.actionEditText]}
+                          >
+                            Update
+                          </Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => onDelete(item)}>
-                          <Ionicons name="trash-outline" size={16} color="#fff" />
-                          <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, styles.actionDelete]}
+                          onPress={() => onDelete(item)}
+                        >
+                          <Ionicons
+                            name="trash-outline"
+                            size={16}
+                            color="#fff"
+                          />
+                          <Text
+                            style={[styles.actionText, styles.actionDeleteText]}
+                          >
+                            Delete
+                          </Text>
                         </TouchableOpacity>
                       </View>
-                    )
-                  )}
+                    ))}
                 </View>
               )}
             />
           )}
-
         </View>
       </View>
 
       {/* FILTERS MODAL ======================= */}
-      <Modal visible={filtersVisible} transparent animationType="fade" onRequestClose={() => setFiltersVisible(false)}>
+      <Modal
+        visible={filtersVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFiltersVisible(false)}
+      >
         <View style={styles.promptOverlay}>
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
@@ -374,17 +496,41 @@ export default function WithholdingPanel({ token }: Props) {
 
             <Text style={styles.dropdownLabel}>Sort by</Text>
             <View style={styles.chipsRow}>
-              <Chip label="Newest"  active={sortMode === "newest"}  onPress={() => setSortMode("newest")} />
-              <Chip label="Oldest"  active={sortMode === "oldest"}  onPress={() => setSortMode("oldest")} />
-              <Chip label="Code ↑"  active={sortMode === "codeAsc"} onPress={() => setSortMode("codeAsc")} />
-              <Chip label="Code ↓"  active={sortMode === "codeDesc"} onPress={() => setSortMode("codeDesc")} />
+              <Chip
+                label="Newest"
+                active={sortMode === "newest"}
+                onPress={() => setSortMode("newest")}
+              />
+              <Chip
+                label="Oldest"
+                active={sortMode === "oldest"}
+                onPress={() => setSortMode("oldest")}
+              />
+              <Chip
+                label="Code ↑"
+                active={sortMode === "codeAsc"}
+                onPress={() => setSortMode("codeAsc")}
+              />
+              <Chip
+                label="Code ↓"
+                active={sortMode === "codeDesc"}
+                onPress={() => setSortMode("codeDesc")}
+              />
             </View>
 
             <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
 
             <View style={styles.chipsRow}>
-              <Chip label="Only non-zero" active={onlyNonZero} onPress={() => setOnlyNonZero((v) => !v)} />
-              <Chip label="Has any rate" active={hasAnyRate} onPress={() => setHasAnyRate((v) => !v)} />
+              <Chip
+                label="Only non-zero"
+                active={onlyNonZero}
+                onPress={() => setOnlyNonZero((v) => !v)}
+              />
+              <Chip
+                label="Has any rate"
+                active={hasAnyRate}
+                onPress={() => setHasAnyRate((v) => !v)}
+              />
             </View>
 
             <View style={styles.modalActions}>
@@ -399,24 +545,37 @@ export default function WithholdingPanel({ token }: Props) {
                 <Text style={styles.btnGhostTextAlt}>Reset</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.btn]} onPress={() => setFiltersVisible(false)}>
+              <TouchableOpacity
+                style={[styles.btn]}
+                onPress={() => setFiltersVisible(false)}
+              >
                 <Text style={styles.btnText}>Done</Text>
               </TouchableOpacity>
             </View>
-
           </View>
         </View>
       </Modal>
 
       {/* CREATE MODAL (Admin + Biller) */}
       {canEdit && (
-        <Modal visible={createVisible} animationType="fade" transparent onRequestClose={() => setCreateVisible(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+        <Modal
+          visible={createVisible}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setCreateVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.modalWrap}
+          >
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>New Withholding Code</Text>
               <View style={styles.modalDivider} />
 
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Code</Text>
                   <TextInput
@@ -482,21 +641,29 @@ export default function WithholdingPanel({ token }: Props) {
                 </View>
 
                 <Text style={styles.helpText}>
-                  Leave blank to save as <Text style={{ fontWeight: "700" }}>null</Text>.
+                  Leave blank to save as{" "}
+                  <Text style={{ fontWeight: "700" }}>null</Text>.
                 </Text>
-
               </ScrollView>
 
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setCreateVisible(false)}>
+                <TouchableOpacity
+                  style={[styles.btnGhostAlt]}
+                  onPress={() => setCreateVisible(false)}
+                >
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onCreate} disabled={submitting}>
-                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Create"}</Text>
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  onPress={onCreate}
+                  disabled={submitting}
+                >
+                  <Text style={styles.btnText}>
+                    {submitting ? "Saving…" : "Create"}
+                  </Text>
                 </TouchableOpacity>
               </View>
-
             </View>
           </KeyboardAvoidingView>
         </Modal>
@@ -504,14 +671,28 @@ export default function WithholdingPanel({ token }: Props) {
 
       {/* EDIT MODAL (Admin + Biller) */}
       {canEdit && (
-        <Modal visible={editVisible} animationType="fade" transparent onRequestClose={() => setEditVisible(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
+        <Modal
+          visible={editVisible}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setEditVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.modalWrap}
+          >
             <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>{editRow ? `Edit • ${editRow.wt_code}` : "Edit Withholding Code"}</Text>
+              <Text style={styles.modalTitle}>
+                {editRow
+                  ? `Edit • ${editRow.wt_code}`
+                  : "Edit Withholding Code"}
+              </Text>
               <View style={styles.modalDivider} />
 
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
-
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Code</Text>
                   <TextInput
@@ -578,31 +759,37 @@ export default function WithholdingPanel({ token }: Props) {
 
                 {editRow?.last_updated ? (
                   <Text style={styles.helpText}>
-                    Last updated: {fmtDate(editRow.last_updated)} {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
+                    Last updated: {fmtDate(editRow.last_updated)}{" "}
+                    {editRow.updated_by ? `• ${editRow.updated_by}` : ""}
                   </Text>
                 ) : null}
-
               </ScrollView>
 
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.btnGhostAlt]} onPress={() => setEditVisible(false)}>
+                <TouchableOpacity
+                  style={[styles.btnGhostAlt]}
+                  onPress={() => setEditVisible(false)}
+                >
                   <Text style={styles.btnGhostTextAlt}>Close</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={[styles.btn, submitting && styles.btnDisabled]} onPress={onUpdate} disabled={submitting}>
-                  <Text style={styles.btnText}>{submitting ? "Saving…" : "Save"}</Text>
+                <TouchableOpacity
+                  style={[styles.btn, submitting && styles.btnDisabled]}
+                  onPress={onUpdate}
+                  disabled={submitting}
+                >
+                  <Text style={styles.btnText}>
+                    {submitting ? "Saving…" : "Save"}
+                  </Text>
                 </TouchableOpacity>
               </View>
-
             </View>
           </KeyboardAvoidingView>
         </Modal>
       )}
-
     </View>
   );
 }
-
 
 // ============================================================
 // STYLES
@@ -679,7 +866,11 @@ const styles = StyleSheet.create({
 
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
 
-  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
+  loader: {
+    paddingVertical: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   row: {
     borderWidth: 1,
@@ -803,7 +994,12 @@ const styles = StyleSheet.create({
     color: "#0f172a",
   },
 
-  sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
+  sectionTitle: {
+    marginTop: 10,
+    marginBottom: 6,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
 
   helpText: { color: "#94a3b8", fontSize: 12, lineHeight: 16, marginTop: 2 },
 
@@ -862,5 +1058,4 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
-
 });

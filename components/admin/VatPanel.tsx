@@ -153,11 +153,12 @@ export default function VatPanel({ token }: { token: string | null }) {
 
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token]
+    [token],
   );
   const api = useMemo(
-    () => axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
-    [authHeader]
+    () =>
+      axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
+    [authHeader],
   );
   const basePath = "/vat";
 
@@ -189,14 +190,12 @@ export default function VatPanel({ token }: { token: string | null }) {
       v == null ? false : onlyNonZero ? Number(v) > 0 : true;
     let list = rows;
     if (hasAnyRate)
-      list = list.filter(
-        (r) => nz(r.e_vat) || nz(r.w_vat) || nz(r.l_vat)
-      );
+      list = list.filter((r) => nz(r.e_vat) || nz(r.w_vat) || nz(r.l_vat));
     if (q) {
       list = list.filter((r) =>
         [r.vat_code, r.vat_description, r.updated_by, r.tax_id]
           .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q))
+          .some((v) => String(v).toLowerCase().includes(q)),
       );
     }
     return list;
@@ -210,41 +209,29 @@ export default function VatPanel({ token }: { token: string | null }) {
       case "codeDesc":
         return arr.sort((a, b) => cmp(b.vat_code, a.vat_code));
       case "eAsc":
-        return arr.sort(
-          (a, b) => Number(a.e_vat ?? 0) - Number(b.e_vat ?? 0)
-        );
+        return arr.sort((a, b) => Number(a.e_vat ?? 0) - Number(b.e_vat ?? 0));
       case "eDesc":
-        return arr.sort(
-          (a, b) => Number(b.e_vat ?? 0) - Number(a.e_vat ?? 0)
-        );
+        return arr.sort((a, b) => Number(b.e_vat ?? 0) - Number(a.e_vat ?? 0));
       case "wAsc":
-        return arr.sort(
-          (a, b) => Number(a.w_vat ?? 0) - Number(b.w_vat ?? 0)
-        );
+        return arr.sort((a, b) => Number(a.w_vat ?? 0) - Number(b.w_vat ?? 0));
       case "wDesc":
-        return arr.sort(
-          (a, b) => Number(b.w_vat ?? 0) - Number(a.w_vat ?? 0)
-        );
+        return arr.sort((a, b) => Number(b.w_vat ?? 0) - Number(a.w_vat ?? 0));
       case "lAsc":
-        return arr.sort(
-          (a, b) => Number(a.l_vat ?? 0) - Number(b.l_vat ?? 0)
-        );
+        return arr.sort((a, b) => Number(a.l_vat ?? 0) - Number(b.l_vat ?? 0));
       case "lDesc":
-        return arr.sort(
-          (a, b) => Number(b.l_vat ?? 0) - Number(a.l_vat ?? 0)
-        );
+        return arr.sort((a, b) => Number(b.l_vat ?? 0) - Number(a.l_vat ?? 0));
       case "oldest":
         return arr.sort(
           (a, b) =>
             (Date.parse(a.last_updated || "") || 0) -
-            (Date.parse(b.last_updated || "") || 0)
+            (Date.parse(b.last_updated || "") || 0),
         );
       case "newest":
       default:
         return arr.sort(
           (a, b) =>
             (Date.parse(b.last_updated || "") || 0) -
-            (Date.parse(a.last_updated || "") || 0)
+            (Date.parse(a.last_updated || "") || 0),
         );
     }
   }, [filtered, sortMode]);
@@ -295,13 +282,16 @@ export default function VatPanel({ token }: { token: string | null }) {
     if (!editRow || !canEdit) return;
     try {
       setSubmitting(true);
-      await api.put(`${basePath}/${encodeURIComponent(String(editRow.tax_id))}`, {
-        vat_code: e_code.trim(),
-        vat_description: e_desc.trim() || null,
-        e_vat: toNumOrNull(e_e),
-        w_vat: toNumOrNull(e_w),
-        l_vat: toNumOrNull(e_l),
-      });
+      await api.put(
+        `${basePath}/${encodeURIComponent(String(editRow.tax_id))}`,
+        {
+          vat_code: e_code.trim(),
+          vat_description: e_desc.trim() || null,
+          e_vat: toNumOrNull(e_e),
+          w_vat: toNumOrNull(e_w),
+          l_vat: toNumOrNull(e_l),
+        },
+      );
       setEditVisible(false);
       await loadAll();
       notify("Updated", "VAT code updated.");
@@ -339,7 +329,9 @@ export default function VatPanel({ token }: { token: string | null }) {
         <Text style={styles.rowMetaSmall}>
           ELECTRIC: {fmtPct(item.e_vat)} • WATER: {fmtPct(item.w_vat)} • LPG:{" "}
           {fmtPct(item.l_vat)}
-          {item.last_updated ? `  •  updated ${fmtDate(item.last_updated)}` : ""}
+          {item.last_updated
+            ? `  •  updated ${fmtDate(item.last_updated)}`
+            : ""}
           {item.updated_by ? `  •  by ${item.updated_by}` : ""}
         </Text>
       </View>
@@ -454,11 +446,7 @@ export default function VatPanel({ token }: { token: string | null }) {
               }
               ListEmptyComponent={
                 <View style={styles.empty}>
-                  <Ionicons
-                    name="pricetag-outline"
-                    size={42}
-                    color="#cbd5e1"
-                  />
+                  <Ionicons name="pricetag-outline" size={42} color="#cbd5e1" />
                   <Text style={styles.emptyTitle}>No VAT codes found</Text>
                   <Text style={styles.emptySub}>
                     Try adjusting your search or create a new one.
@@ -530,9 +518,7 @@ export default function VatPanel({ token }: { token: string | null }) {
                 onPress={() => setSortMode("lDesc")}
               />
             </View>
-            <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>
-              Other
-            </Text>
+            <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Other</Text>
             <View style={styles.chipsRow}>
               <Chip
                 label="Only non-zero"
@@ -841,7 +827,11 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
-  loader: { paddingVertical: 24, alignItems: "center", justifyContent: "center" },
+  loader: {
+    paddingVertical: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -951,7 +941,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     color: "#0f172a",
   },
-  sectionTitle: { marginTop: 10, marginBottom: 6, fontWeight: "800", color: "#0f172a" },
+  sectionTitle: {
+    marginTop: 10,
+    marginBottom: 6,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
   helpText: { color: "#94a3b8", fontSize: 12, lineHeight: 16, marginTop: 2 },
   grid3: {
     gap: 10,
