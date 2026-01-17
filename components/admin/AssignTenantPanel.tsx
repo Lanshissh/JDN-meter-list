@@ -19,6 +19,7 @@ import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
+
 type Building = { building_id: string; building_name: string };
 type Tenant = {
   tenant_id: string;
@@ -35,6 +36,7 @@ type Stall = {
   last_updated?: string;
   updated_by?: string;
 };
+
 function notify(title: string, message?: string) {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.alert) {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -42,6 +44,7 @@ function notify(title: string, message?: string) {
     Alert.alert(title, message);
   }
 }
+
 function errorText(err: any, fallback = "Server error.") {
   const d = err?.response?.data;
   if (typeof d === "string") return d;
@@ -54,34 +57,46 @@ function errorText(err: any, fallback = "Server error.") {
     return fallback;
   }
 }
+
 const cmp = (a: string | number, b: string | number) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, {
     numeric: true,
     sensitivity: "base",
   });
+
 export default function AssignTenantPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
+
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
     [token],
   );
+
   const api = useMemo(
     () =>
       axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
     [authHeader],
   );
+
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
+
+  // ✅ gate: no building selected by default
   const [buildingId, setBuildingId] = useState<string>("");
+
   const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
+
   const [search, setSearch] = useState("");
+
   const [assignVisible, setAssignVisible] = useState(false);
   const [assignStall, setAssignStall] = useState<Stall | null>(null);
   const [assignTenantId, setAssignTenantId] = useState("");
+
   useEffect(() => {
     (async () => {
       if (!token) {
@@ -98,44 +113,63 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
           api.get<Stall[]>("/stalls"),
           api.get<Tenant[]>("/tenants"),
         ]);
+
         const b = bRes.data || [];
         const s = sRes.data || [];
         const t = tRes.data || [];
+
         setBuildings(b);
         setStalls(s);
         setTenants(t);
-        if (!buildingId && b.length) setBuildingId(String(b[0].building_id));
+
+        // ✅ IMPORTANT: do NOT auto-select first building.
+        // user must choose a building chip first.
       } catch (err) {
         notify("Load failed", errorText(err, "Connection error."));
       } finally {
         setBusy(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
   const visibleStalls = useMemo(() => {
     const q = search.trim().toLowerCase();
+
+    // ✅ Gate: until building is selected, show nothing
+    if (!buildingId) return [];
+
     let list = (stalls || []).filter((s) => s.stall_status === "available");
-    if (buildingId) list = list.filter((s) => s.building_id === buildingId);
-    if (q)
+    list = list.filter((s) => s.building_id === buildingId);
+
+    if (q) {
       list = list.filter(
         (s) =>
           (s.stall_sn || "").toLowerCase().includes(q) ||
-          s.stall_id.toLowerCase().includes(q),
+          String(s.stall_id || "").toLowerCase().includes(q),
       );
+    }
+
     return [...list].sort((a, b) => cmp(a.stall_sn, b.stall_sn));
   }, [stalls, buildingId, search]);
+
   const activeTenants = useMemo(() => {
+    // ✅ Gate: until building is selected, show nothing
+    if (!buildingId) return [];
+
     let list = (tenants || []).filter(
       (t) => (t.tenant_status || "").toLowerCase() === "active",
     );
-    if (buildingId) list = list.filter((t) => t.building_id === buildingId);
+    list = list.filter((t) => t.building_id === buildingId);
     return [...list].sort((a, b) => cmp(a.tenant_name, b.tenant_name));
   }, [tenants, buildingId]);
+
   function openAssignModal(stall: Stall) {
     setAssignStall(stall);
     setAssignTenantId("");
     setAssignVisible(true);
   }
+
   const onAssign = async () => {
     if (!assignStall || !assignTenantId) {
       notify("Missing info", "Please select a tenant.");
@@ -143,19 +177,23 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
     }
     try {
       setSubmitting(true);
+
       await api.put(`/stalls/${encodeURIComponent(assignStall.stall_id)}`, {
         stall_sn: assignStall.stall_sn,
         building_id: assignStall.building_id,
         stall_status: "occupied",
         tenant_id: assignTenantId,
       });
+
       setAssignVisible(false);
       setAssignStall(null);
       setAssignTenantId("");
+
       setBusy(true);
       const sRes = await api.get<Stall[]>("/stalls");
       setStalls(sRes.data || []);
       setBusy(false);
+
       notify("Success", "Tenant assigned to stall.");
     } catch (err) {
       notify("Assign failed", errorText(err));
@@ -163,6 +201,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const Chip = ({
     label,
     active,
@@ -188,6 +227,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
       </Text>
     </TouchableOpacity>
   );
+
   const Header = () => (
     <View style={styles.headerRow}>
       <Text style={styles.title}>Assign Tenant</Text>
@@ -197,6 +237,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
       </Text>
     </View>
   );
+
   const Toolbar = () => (
     <>
       <View style={styles.filtersBar}>
@@ -217,22 +258,31 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
             clearButtonMode="while-editing"
           />
         </View>
+
+        {/* optional: quick picker button if you want (kept your modal available) */}
+        <TouchableOpacity
+          style={styles.quickSelectBtn}
+          onPress={() => setBuildingPickerVisible(true)}
+        >
+          <Ionicons name="business-outline" size={14} color="#1d4ed8" />
+          <Text style={styles.quickSelectText}>
+            {buildingId ? "Change" : "Pick"} Building
+          </Text>
+        </TouchableOpacity>
       </View>
+
       <View style={{ marginTop: 6, marginBottom: 10 }}>
         <View style={styles.buildingHeaderRow}>
           <Text style={styles.label}>Building</Text>
         </View>
+
+        {/* ✅ NO "All" chip — force selection */}
         {isMobile ? (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.chipsRowHorizontal}
           >
-            <Chip
-              label="All"
-              active={!buildingId}
-              onPress={() => setBuildingId("")}
-            />
             {buildings
               .slice()
               .sort((a, b) => a.building_name.localeCompare(b.building_name))
@@ -247,11 +297,6 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
           </ScrollView>
         ) : (
           <View style={styles.chipsRow}>
-            <Chip
-              label="All"
-              active={!buildingId}
-              onPress={() => setBuildingId("")}
-            />
             {buildings
               .slice()
               .sort((a, b) => a.building_name.localeCompare(b.building_name))
@@ -268,6 +313,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
       </View>
     </>
   );
+
   const Row = ({ item }: { item: Stall }) => (
     <View style={[styles.rowCard, isMobile && styles.rowCardMobile]}>
       <View style={{ flex: 1, paddingRight: 6 }}>
@@ -276,44 +322,41 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
           ID: {item.stall_id} · Building {item.building_id}
         </Text>
       </View>
-      {isMobile ? (
-        <View style={styles.rowActionsMobile}>
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.primaryBtn]}
-            onPress={() => openAssignModal(item)}
-            accessibilityLabel={`Assign ${item.stall_sn}`}
-          >
-            <Ionicons name="person-add-outline" size={16} color="#fff" />
-            <Text style={[styles.actionText, styles.actionTextPrimary]}>
-              Assign
-            </Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.rowActions}>
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.primaryBtn]}
-            onPress={() => openAssignModal(item)}
-            accessibilityLabel={`Assign ${item.stall_sn}`}
-          >
-            <Ionicons name="person-add-outline" size={16} color="#fff" />
-            <Text style={[styles.actionText, styles.actionTextPrimary]}>
-              Assign
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
+
+      <View style={isMobile ? styles.rowActionsMobile : styles.rowActions}>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.primaryBtn]}
+          onPress={() => openAssignModal(item)}
+          accessibilityLabel={`Assign ${item.stall_sn}`}
+        >
+          <Ionicons name="person-add-outline" size={16} color="#fff" />
+          <Text style={[styles.actionText, styles.actionTextPrimary]}>
+            Assign
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
+
   return (
     <View style={styles.screen}>
       <View style={styles.card}>
         <Header />
         <Toolbar />
+
         {busy ? (
           <View style={styles.loader}>
             <ActivityIndicator />
             <Text style={styles.loadingText}>Loading available stalls…</Text>
+          </View>
+        ) : !buildingId ? (
+          // ✅ Gate: nothing shown until building is selected
+          <View style={styles.selectBuildingEmpty}>
+            <Ionicons name="business-outline" size={44} color="#cbd5e1" />
+            <Text style={styles.emptyTitle}>Select a building</Text>
+            <Text style={styles.emptyHint}>
+              Choose a building above to show available stalls and tenants.
+            </Text>
           </View>
         ) : visibleStalls.length === 0 ? (
           <View style={styles.emptyWrap}>
@@ -333,6 +376,8 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
           />
         )}
       </View>
+
+      {/* Building picker modal (kept, but removed "All") */}
       <Modal
         visible={buildingPickerVisible}
         transparent
@@ -360,14 +405,16 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
                   <Ionicons name="close" size={20} color="#64748b" />
                 </TouchableOpacity>
               </View>
+
               <View style={styles.modalDivider} />
+
               <View style={styles.select}>
                 <Picker
                   selectedValue={buildingId}
                   onValueChange={(v) => setBuildingId(String(v))}
                   mode={Platform.OS === "android" ? "dropdown" : undefined}
                 >
-                  <Picker.Item label="All" value="" />
+                  <Picker.Item label="Select building…" value="" />
                   {buildings.map((b) => (
                     <Picker.Item
                       key={b.building_id}
@@ -377,6 +424,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
                   ))}
                 </Picker>
               </View>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.smallBtn, styles.ghostBtn]}
@@ -391,6 +439,8 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
           </KeyboardAvoidingView>
         </View>
       </Modal>
+
+      {/* Assign modal */}
       <Modal
         visible={assignVisible}
         transparent
@@ -416,7 +466,9 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
                   <Ionicons name="close" size={20} color="#64748b" />
                 </TouchableOpacity>
               </View>
+
               <View style={styles.modalDivider} />
+
               <ScrollView
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={{ paddingBottom: 12, gap: 10 }}
@@ -433,6 +485,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
                       : "—"}
                   </Text>
                 </View>
+
                 <View>
                   <Text style={styles.label}>Tenant</Text>
                   <View style={[styles.select, styles.selectEmphasis]}>
@@ -451,13 +504,15 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
                       ))}
                     </Picker>
                   </View>
+
                   {activeTenants.length === 0 ? (
                     <Text style={styles.helpText}>
-                      No active tenants{buildingId ? " for this building" : ""}.
+                      No active tenants for this building.
                     </Text>
                   ) : null}
                 </View>
               </ScrollView>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.smallBtn, styles.ghostBtn]}
@@ -468,6 +523,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
                     Cancel
                   </Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   style={[
                     styles.smallBtn,
@@ -498,6 +554,7 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
   card: {
@@ -516,6 +573,7 @@ const styles = StyleSheet.create({
   headerRow: { gap: 4, marginBottom: 6 },
   title: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
   subtitle: { fontSize: 12, color: "#475569" },
+
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -539,23 +597,14 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     paddingVertical: Platform.OS === "web" ? 8 : 6,
   },
-  btnGhost: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#e2e8f0",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-  },
-  btnGhostText: { color: "#394e6a", fontWeight: "700" },
+
   buildingHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 6,
   },
+
   quickSelectBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -565,6 +614,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
+    gap: 6,
   },
   quickSelectText: {
     color: "#1d4ed8",
@@ -572,6 +622,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     fontSize: 12,
   },
+
   chipsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -595,6 +646,7 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
+
   rowCard: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -613,6 +665,7 @@ const styles = StyleSheet.create({
   rowCardMobile: { flexDirection: "column", alignItems: "stretch" },
   rowTitle: { fontSize: 15, fontWeight: "900", color: "#0f172a" },
   rowSub: { fontSize: 12, color: "#64748b", marginTop: 2 },
+
   rowActions: {
     width: 160,
     flexDirection: "row",
@@ -626,6 +679,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     alignItems: "center",
   },
+
   actionBtn: {
     height: 36,
     paddingHorizontal: 12,
@@ -638,11 +692,22 @@ const styles = StyleSheet.create({
   actionTextPrimary: { color: "#fff" },
   primaryBtn: { backgroundColor: "#2563eb" },
   btnDisabled: { opacity: 0.65 },
+
   loader: { paddingVertical: 20, alignItems: "center", gap: 8 },
   loadingText: { color: "#64748b", fontSize: 12 },
+
   emptyWrap: { alignItems: "center", paddingVertical: 40, gap: 6 },
   emptyTitle: { fontSize: 14, color: "#475569", fontWeight: "800" },
-  emptyHint: { fontSize: 12, color: "#94a3b8" },
+  emptyHint: { fontSize: 12, color: "#94a3b8", textAlign: "center" },
+
+  selectBuildingEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 30,
+  },
+
   overlay: {
     flex: 1,
     backgroundColor: "rgba(2,6,23,0.45)",
@@ -676,6 +741,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#e5e7eb",
     marginVertical: 10,
   },
+
   summaryBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -687,13 +753,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   summaryText: { fontSize: 13, color: "#1e40af" },
+
   helpText: { marginTop: 6, fontSize: 12, color: "#94a3b8" },
+
   modalActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: 8,
     marginTop: 12,
   },
+
   label: {
     fontSize: 12,
     color: "#475569",
@@ -701,6 +770,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     marginBottom: 6,
   },
+
   select: {
     borderRadius: 10,
     overflow: "hidden",
@@ -715,6 +785,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(8,44,172,0.25)",
     backgroundColor: "rgba(8,44,172,0.03)",
   },
+
   smallBtn: {
     minHeight: 36,
     paddingHorizontal: 12,
@@ -728,6 +799,7 @@ const styles = StyleSheet.create({
   smallBtnText: {
     fontSize: 13,
     fontWeight: "800",
+    color: "#fff",
   },
   ghostBtn: {
     backgroundColor: "#f1f5f9",

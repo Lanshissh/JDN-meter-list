@@ -679,9 +679,8 @@ export default function MeterReadingPanel({
           setBuildings([]);
         }
       }
-      if (!isAdmin && userBuildingId) {
-        setBuildingFilter((prev) => prev || userBuildingId);
-      }
+      // Keep building unselected by default.
+      // User must choose a building chip first before the meter list shows.
 
       await reloadBillingHeaders();
     } catch (err: any) {
@@ -835,23 +834,22 @@ export default function MeterReadingPanel({
 
   const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
-      return [{ label: "All", value: "" }].concat(
-        buildings
-          .slice()
-          .sort((a, b) => a.building_name.localeCompare(b.building_name))
-          .map((b) => ({
-            label: b.building_name || b.building_id,
-            value: b.building_id,
-          })),
-      );
+      return buildings
+        .slice()
+        .sort((a, b) => a.building_name.localeCompare(b.building_name))
+        .map((b) => ({
+          label: b.building_name || b.building_id,
+          value: b.building_id,
+        }));
     }
-    const base = [{ label: "All", value: "" }];
-    if (userBuildingId)
-      return base.concat([{ label: userBuildingId, value: userBuildingId }]);
+    if (userBuildingId) {
+      // Non-admin users may only have one building; still require explicit selection.
+      return [{ label: userBuildingId, value: userBuildingId }];
+    }
     const ids = Array.from(
       new Set(stalls.map((s) => s.building_id).filter(Boolean) as string[]),
     ).sort();
-    return base.concat(ids.map((id) => ({ label: id, value: id })));
+    return ids.map((id) => ({ label: id, value: id }));
   }, [isAdmin, buildings, stalls, userBuildingId]);
 
   const metersVisible = useMemo(() => {
@@ -1331,8 +1329,13 @@ export default function MeterReadingPanel({
             <TextInput
               value={meterQuery}
               onChangeText={setMeterQuery}
-              placeholder="Search meters by ID, SN, stall, status…"
+              placeholder={
+                buildingFilter
+                  ? "Search meters by ID, SN, stall, status…"
+                  : "Select a building first"
+              }
               placeholderTextColor="#9aa5b1"
+              editable={!!buildingFilter}
               style={styles.search}
             />
           </View>
@@ -1387,6 +1390,12 @@ export default function MeterReadingPanel({
           <View style={styles.loader}>
             <ActivityIndicator />
           </View>
+        ) : !buildingFilter ? (
+          <View style={{ paddingVertical: 28 }}>
+            <Text style={styles.empty}>
+              Select a building to show the meter reading list.
+            </Text>
+          </View>
         ) : (
           <FlatList
             data={metersVisible}
@@ -1397,9 +1406,7 @@ export default function MeterReadingPanel({
                 ? { paddingVertical: 24 }
                 : { paddingBottom: 12 }
             }
-            ListEmptyComponent={
-              <Text style={styles.empty}>No meters found.</Text>
-            }
+            ListEmptyComponent={<Text style={styles.empty}>No meters found.</Text>}
             renderItem={({ item }) => {
               const { latest, previous } = getLastTwo(readings, item.meter_id);
               const prevLine =

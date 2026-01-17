@@ -250,7 +250,12 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [vatCodes, setVatCodes] = useState<VatRow[]>([]);
   const [wtCodes, setWtCodes] = useState<WtRow[]>([]);
   const [query, setQuery] = useState("");
-  const [buildingFilter, setBuildingFilter] = useState<string>("");
+
+  // ✅ Gate list: default empty unless user has an assigned building
+  const [buildingFilter, setBuildingFilter] = useState<string>(
+    userBuildingId ? userBuildingId : "",
+  );
+
   const [statusFilter, setStatusFilter] = useState<"" | "active" | "inactive">(
     "",
   );
@@ -267,7 +272,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [stallsBusy, setStallsBusy] = useState(false);
 
   const [createVisible, setCreateVisible] = useState(false);
-  const [cBuildingId, setCBuildingId] = useState<string>("");
+  const [cBuildingId, setCBuildingId] = useState<string>(userBuildingId || "");
   const [cTenantSn, setCTenantSn] = useState<string>("");
   const [cTenantName, setCTenantName] = useState<string>("");
   const [cPenalty, setCPenalty] = useState<boolean>(false);
@@ -306,19 +311,18 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       try {
         const bRes = await api.get<Building[]>("/buildings");
         setBuildings(bRes.data || []);
+        // helpful default for create flow if empty and user has no building_id
+        if (!cBuildingId && (bRes.data?.length ?? 0) > 0) {
+          setCBuildingId(bRes.data[0].building_id);
+        }
       } catch {
         setBuildings([]);
       }
 
-      setBuildingFilter((prev) => prev || userBuildingId || "");
-      setCBuildingId((prev) => prev || userBuildingId || "");
-
-      if (!userBuildingId && tRows.length > 0) {
-        const fb = String(tRows[0].building_id || "");
-        if (fb) {
-          setBuildingFilter((prev) => prev || fb);
-          setCBuildingId((prev) => prev || fb);
-        }
+      // ✅ If user has building_id, ensure filter is set to it (never force for admin/no building)
+      if (userBuildingId) {
+        setBuildingFilter(userBuildingId);
+        setCBuildingId((prev) => prev || userBuildingId);
       }
 
       try {
@@ -356,11 +360,16 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = tenants;
+
+    // ✅ only show after a building is selected
     if (buildingFilter)
       list = list.filter((t) => t.building_id === buildingFilter);
+
     if (statusFilter)
       list = list.filter((t) => t.tenant_status === statusFilter);
+
     if (!q) return list;
+
     return list.filter((t) =>
       [
         t.tenant_id,
@@ -582,29 +591,55 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
-            <View style={styles.chipsRow}>
-              <Chip
-                label="All"
-                active={buildingFilter === ""}
-                onPress={() => setBuildingFilter("")}
-              />
-              {buildings
-                .slice()
-                .sort((a, b) => a.building_name.localeCompare(b.building_name))
-                .map((b) => (
-                  <Chip
-                    key={b.building_id}
-                    label={b.building_name || b.building_id}
-                    active={buildingFilter === b.building_id}
-                    onPress={() => setBuildingFilter(b.building_id)}
-                  />
-                ))}
-            </View>
+
+            {/* ✅ NO "All" chip — force building selection */}
+            {isMobile ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipsRowHorizontal}
+              >
+                {buildings
+                  .slice()
+                  .sort((a, b) => a.building_name.localeCompare(b.building_name))
+                  .map((b) => (
+                    <Chip
+                      key={b.building_id}
+                      label={b.building_name || b.building_id}
+                      active={buildingFilter === b.building_id}
+                      onPress={() => setBuildingFilter(b.building_id)}
+                    />
+                  ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.chipsRow}>
+                {buildings
+                  .slice()
+                  .sort((a, b) => a.building_name.localeCompare(b.building_name))
+                  .map((b) => (
+                    <Chip
+                      key={b.building_id}
+                      label={b.building_name || b.building_id}
+                      active={buildingFilter === b.building_id}
+                      onPress={() => setBuildingFilter(b.building_id)}
+                    />
+                  ))}
+              </View>
+            )}
           </View>
 
+          {/* ✅ Gate list: hide until building selected */}
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />
+            </View>
+          ) : !buildingFilter ? (
+            <View style={styles.selectBuildingEmpty}>
+              <Ionicons name="business-outline" size={44} color="#cbd5e1" />
+              <Text style={styles.emptyTitle}>Select a building</Text>
+              <Text style={styles.emptyText}>
+                Choose a building above to show its tenant list.
+              </Text>
             </View>
           ) : (
             <FlatList
@@ -630,9 +665,8 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     </Text>
                     <Text style={styles.rowMetaSmall}>
                       Status: {item.tenant_status.toUpperCase()} · VAT:{" "}
-                      {vatLabelFor(item.vat_code)} · WT:{" "}
-                      {wtLabelFor(item.wt_code)} · Penalty:{" "}
-                      {item.for_penalty ? "Yes" : "No"}
+                      {vatLabelFor(item.vat_code)} · WT: {wtLabelFor(item.wt_code)}{" "}
+                      · Penalty: {item.for_penalty ? "Yes" : "No"}
                     </Text>
                   </View>
                   <View style={styles.rowActions}>
@@ -889,9 +923,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                         </PickerField>
                       ) : (
                         <View>
-                          <Text style={styles.fieldLabel}>
-                            Building (type ID)
-                          </Text>
+                          <Text style={styles.fieldLabel}>Building (type ID)</Text>
                           <Input
                             placeholder="e.g., BLDG-001"
                             value={tenantDraft?.building_id || ""}
@@ -926,9 +958,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                             <Picker.Item
                               key={String(v.tax_id)}
                               label={`${v.vat_code}${
-                                v.vat_description
-                                  ? ` — ${v.vat_description}`
-                                  : ""
+                                v.vat_description ? ` — ${v.vat_description}` : ""
                               }`}
                               value={v.vat_code}
                             />
@@ -972,9 +1002,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           </View>
                         </View>
                         <View>
-                          <Text style={styles.fieldLabel}>
-                            Withholding Code
-                          </Text>
+                          <Text style={styles.fieldLabel}>Withholding Code</Text>
                           <View style={styles.readonlyBox}>
                             <Ionicons
                               name="lock-closed-outline"
@@ -988,10 +1016,8 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                           </View>
                         </View>
                         <Text style={styles.helpText}>
-                          Tax codes are{" "}
-                          <Text style={{ fontWeight: "700" }}>read-only</Text>{" "}
-                          for operator accounts. Please contact an admin or
-                          biller if you need these values changed.
+                          Tax codes are <Text style={{ fontWeight: "700" }}>read-only</Text>{" "}
+                          for operator accounts. Please contact an admin or biller if you need these values changed.
                         </Text>
                       </View>
                     )}
@@ -1045,10 +1071,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                               Status: {String(s.stall_status).toUpperCase()}
                             </Text>
                           </View>
-                          <Button
-                            variant="ghost"
-                            onPress={() => unassignStall(s)}
-                          >
+                          <Button variant="ghost" onPress={() => unassignStall(s)}>
                             Unassign
                           </Button>
                           <Button onPress={() => saveStall(s)}>Save</Button>
@@ -1078,10 +1101,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                 onPress={async () => {
                   const building_id = cBuildingId.trim();
                   if (!building_id) {
-                    notify(
-                      "Building required",
-                      "Please choose or enter a building.",
-                    );
+                    notify("Building required", "Please choose or enter a building.");
                     return;
                   }
                   if (!cTenantName.trim()) {
@@ -1108,10 +1128,7 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                     await loadAll();
                     notify("Created", "Tenant created successfully.");
                   } catch (err) {
-                    notify(
-                      "Create failed",
-                      errorText(err, "Unable to create tenant."),
-                    );
+                    notify("Create failed", errorText(err, "Unable to create tenant."));
                   } finally {
                     setSubmitting(false);
                   }
@@ -1315,6 +1332,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chipsRowHorizontal: { paddingRight: 4, gap: 8 },
   chip: {
     borderWidth: 1,
     borderColor: "#cbd5e1",
@@ -1371,6 +1389,15 @@ const styles = StyleSheet.create({
   },
   emptyPad: { paddingVertical: 30 },
   empty: { paddingVertical: 12, textAlign: "center", color: "#64748b" },
+  selectBuildingEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 30,
+  },
+  emptyTitle: { fontWeight: "800", color: "#0f172a" },
+  emptyText: { color: "#94a3b8" },
   fieldLabel: {
     fontSize: 12,
     color: tokens.color.inkSubtle,
@@ -1447,7 +1474,6 @@ const styles = StyleSheet.create({
   },
   sheetScroll: { maxHeight: MOBILE_MODAL_MAX_HEIGHT },
   sheetContent: { paddingVertical: 12, gap: 12, paddingBottom: 96 },
-  sep: { height: 1, backgroundColor: tokens.color.line, marginVertical: 10 },
   disabledField: {
     backgroundColor: "#f1f5f9",
     borderColor: "#cbd5e1",

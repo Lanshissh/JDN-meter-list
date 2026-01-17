@@ -19,6 +19,7 @@ import { Picker } from "@react-native-picker/picker";
 import QRCode from "react-native-qrcode-svg";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
+
 function notify(title: string, message?: string) {
   if (
     Platform.OS === "web" &&
@@ -30,6 +31,7 @@ function notify(title: string, message?: string) {
     Alert.alert(title, message);
   }
 }
+
 function errorText(err: any, fallback = "Server error.") {
   const d = err?.response?.data;
   if (typeof d === "string") return d;
@@ -42,6 +44,7 @@ function errorText(err: any, fallback = "Server error.") {
     return fallback;
   }
 }
+
 function confirm(title: string, message: string): Promise<boolean> {
   if (Platform.OS === "web" && typeof window !== "undefined") {
     return Promise.resolve(!!(window as any).confirm(`${title}\n\n${message}`));
@@ -53,6 +56,7 @@ function confirm(title: string, message: string): Promise<boolean> {
     ]);
   });
 }
+
 export type Meter = {
   meter_id: string;
   meter_type: "electric" | "water" | "lpg";
@@ -63,12 +67,15 @@ export type Meter = {
   last_updated?: string;
   updated_by?: string;
 };
+
 export type Stall = {
   stall_id: string;
   stall_sn: string;
   building_id?: string;
 };
+
 type Building = { building_id: string; building_name: string };
+
 function decodeJwtPayload(token: string | null): any | null {
   if (!token) return null;
   try {
@@ -103,33 +110,42 @@ function decodeJwtPayload(token: string | null): any | null {
     return null;
   }
 }
+
 export default function MeterPanel({ token }: { token: string | null }) {
   const jwt = useMemo(() => decodeJwtPayload(token), [token]);
   const isAdmin = String(jwt?.user_level || "").toLowerCase() === "admin";
   const userBuildingId = String(jwt?.building_id || "");
+
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
+
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
   const [meters, setMeters] = useState<Meter[]>([]);
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
+
   const [query, setQuery] = useState("");
   const [filterType, setFilterType] = useState<
     "all" | "electric" | "water" | "lpg"
   >("all");
   const [buildingFilter, setBuildingFilter] = useState<string>("");
+
   type SortMode = "id_asc" | "id_desc" | "type" | "stall" | "status";
   const [sortBy, setSortBy] = useState<SortMode>("id_asc");
+
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   const [editVisible, setEditVisible] = useState(false);
   const [qrVisible, setQrVisible] = useState(false);
+
   const [type, setType] = useState<Meter["meter_type"]>("electric");
   const [sn, setSn] = useState("");
   const [mult, setMult] = useState("");
   const [stallId, setStallId] = useState("");
   const [status, setStatus] = useState<Meter["meter_status"]>("inactive");
+
   const [editRow, setEditRow] = useState<Meter | null>(null);
   const [editType, setEditType] = useState<Meter["meter_type"]>("electric");
   const [editSn, setEditSn] = useState("");
@@ -137,56 +153,74 @@ export default function MeterPanel({ token }: { token: string | null }) {
   const [editStallId, setEditStallId] = useState("");
   const [editStatus, setEditStatus] =
     useState<Meter["meter_status"]>("inactive");
+
   const [qrMeterId, setQrMeterId] = useState("");
   const qrCodeRef = useRef<any>(null);
+
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
     [token],
   );
+
   const api = useMemo(
     () =>
       axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
     [authHeader],
   );
+
   useEffect(() => {
     loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
       notify("Not logged in", "Please log in to manage meters.");
       return;
     }
+
     try {
       setBusy(true);
       const [metersRes, stallsRes] = await Promise.all([
         api.get<Meter[]>("/meters"),
         api.get<Stall[]>("/stalls"),
       ]);
+
       setMeters(metersRes.data || []);
       setStalls(stallsRes.data || []);
-      if (isAdmin) {
-        try {
-          const bRes = await api.get<Building[]>("/buildings");
-          setBuildings(bRes.data || []);
-        } catch {
-          setBuildings([]);
-        }
-      } else {
+
+      // ✅ Try to load buildings for BOTH admin + non-admin
+      // (If server blocks it, we fallback to showing building_id)
+      try {
+        const bRes = await api.get<Building[]>("/buildings");
+        setBuildings(bRes.data || []);
+      } catch {
         setBuildings([]);
       }
-      if (!isAdmin && userBuildingId)
-        setBuildingFilter((prev) => prev || userBuildingId);
+
+      // NOTE: We intentionally do NOT auto-select a building.
+      // The list stays hidden until the user picks a building chip.
     } catch (err: any) {
       notify("Load failed", errorText(err, "Could not load meters/stalls."));
     } finally {
       setBusy(false);
     }
   };
+
+  const buildingNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    buildings.forEach((b) => {
+      if (b?.building_id) m.set(b.building_id, b.building_name || b.building_id);
+    });
+    return m;
+  }, [buildings]);
+
   const mtrNum = (id: string) => {
     const m = /^MTR-(\d+)/i.exec(id || "");
     return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
   };
+
   const stallToBuilding = useMemo(() => {
     const m = new Map<string, string>();
     stalls.forEach((s) => {
@@ -194,44 +228,68 @@ export default function MeterPanel({ token }: { token: string | null }) {
     });
     return m;
   }, [stalls]);
+
+  // ✅ Building chips show building_name (fallback to building_id)
   const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
-      return [{ label: "All", value: "" }].concat(
-        buildings
-          .slice()
-          .sort((a, b) => a.building_name.localeCompare(b.building_name))
-          .map((b) => ({
-            label: b.building_name || b.building_id,
-            value: b.building_id,
-          })),
-      );
+      return buildings
+        .slice()
+        .sort((a, b) => a.building_name.localeCompare(b.building_name))
+        .map((b) => ({
+          label: b.building_name || b.building_id,
+          value: b.building_id,
+        }));
     }
+
+    // If token has building_id, show it as a chip (common for non-admin)
+    if (userBuildingId) {
+      return [
+        {
+          value: userBuildingId,
+          label: buildingNameById.get(userBuildingId) || userBuildingId,
+        },
+      ];
+    }
+
+    // Else derive from stalls (if no building_id in token)
     const ids = new Set<string>();
     stalls.forEach((s) => s?.building_id && ids.add(s.building_id));
     const arr = Array.from(ids);
-    const base = [{ label: "All", value: "" }];
-    if (userBuildingId)
-      return base.concat([{ label: userBuildingId, value: userBuildingId }]);
-    if (arr.length)
-      return base.concat(arr.sort().map((id) => ({ label: id, value: id })));
-    return base;
-  }, [isAdmin, buildings, stalls, userBuildingId]);
+
+    if (arr.length) {
+      return arr.sort().map((id) => ({
+        value: id,
+        label: buildingNameById.get(id) || id,
+      }));
+    }
+
+    return [];
+  }, [isAdmin, buildings, stalls, userBuildingId, buildingNameById]);
+
   const filtered = useMemo(() => {
+    // Hide list until user selects a building
+    if (!buildingFilter) return [];
+
     const q = query.trim().toLowerCase();
     let list = meters;
-    if (filterType !== "all")
+
+    if (filterType !== "all") {
       list = list.filter((m) => m.meter_type === filterType);
-    if (buildingFilter)
-      list = list.filter(
-        (m) => stallToBuilding.get(m.stall_id) === buildingFilter,
-      );
+    }
+
+    list = list.filter(
+      (m) => stallToBuilding.get(m.stall_id) === buildingFilter,
+    );
+
     if (!q) return list;
+
     return list.filter((m) =>
       [m.meter_id, m.meter_sn, m.meter_type, m.stall_id, m.meter_status].some(
         (v) => String(v).toLowerCase().includes(q),
       ),
     );
   }, [meters, query, filterType, buildingFilter, stallToBuilding]);
+
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortBy) {
@@ -269,17 +327,20 @@ export default function MeterPanel({ token }: { token: string | null }) {
         );
     }
   }, [filtered, sortBy]);
+
   const onCreate = async () => {
     if (!sn.trim() || !stallId.trim()) {
       notify("Missing info", "Serial number and Stall are required.");
       return;
     }
+
     const payload: any = {
       meter_type: type,
       meter_sn: sn.trim(),
       stall_id: stallId.trim(),
       meter_status: status,
     };
+
     if (mult.trim() !== "") {
       const asNum = Number(mult);
       if (!Number.isFinite(asNum)) {
@@ -291,6 +352,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       }
       payload.meter_mult = asNum;
     }
+
     try {
       setSubmitting(true);
       await api.post("/meters", payload);
@@ -311,6 +373,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const openEdit = (m: Meter) => {
     setEditRow(m);
     setEditType(m.meter_type);
@@ -320,14 +383,17 @@ export default function MeterPanel({ token }: { token: string | null }) {
     setEditStatus(m.meter_status);
     setEditVisible(true);
   };
+
   const onUpdate = async () => {
     if (!editRow) return;
+
     const body: any = {
       meter_type: editType,
       meter_sn: editSn.trim(),
       stall_id: editStallId.trim(),
       meter_status: editStatus,
     };
+
     if (editMult.trim() !== "") {
       const asNum = Number(editMult);
       if (!Number.isFinite(asNum)) {
@@ -339,6 +405,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       }
       body.meter_mult = asNum;
     }
+
     try {
       setSubmitting(true);
       await api.put(`/meters/${encodeURIComponent(editRow.meter_id)}`, body);
@@ -354,12 +421,14 @@ export default function MeterPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const onDelete = async (m: Meter) => {
     const ok = await confirm(
       "Delete meter",
       `Are you sure you want to delete ${m.meter_id}?`,
     );
     if (!ok) return;
+
     try {
       setSubmitting(true);
       await api.delete(`/meters/${encodeURIComponent(m.meter_id)}`);
@@ -373,10 +442,12 @@ export default function MeterPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const openQr = (meter_id: string) => {
     setQrMeterId(meter_id);
     setQrVisible(true);
   };
+
   const downloadQr = () => {
     if (!qrCodeRef.current) return;
     try {
@@ -397,6 +468,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       notify("Download failed", "Could not generate QR image.");
     }
   };
+
   const printQr = () => {
     if (!qrCodeRef.current) {
       notify("Print QR", "QR code is not ready yet.");
@@ -410,10 +482,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         if (Platform.OS === "web" && typeof window !== "undefined") {
           const printWindow = window.open("", "_blank");
           if (!printWindow) {
-            notify(
-              "Print QR",
-              "Pop-up blocked. Please allow pop-ups and try again.",
-            );
+            notify("Print QR", "Pop-up blocked. Please allow pop-ups and try again.");
             return;
           }
 
@@ -434,24 +503,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
                     height: 100vh;
                     background: #ffffff;
                   }
-                  .wrap {
-                    text-align: center;
-                  }
-                  img {
-                    width: 60px;
-                    height: 60px;
-                  }
-                  h1 {
-                    font-size: 18px;
-                    margin-bottom: 8px;
-                  }
-                  p {
-                    font-size: 14px;
-                    color: #6b7280;
-                  }
-                  @media print {
-                    body { margin: 0; }
-                  }
+                  .wrap { text-align: center; }
+                  img { width: 60px; height: 60px; }
+                  p { font-size: 14px; color: #6b7280; }
+                  @media print { body { margin: 0; } }
                 </style>
               </head>
               <body>
@@ -460,16 +515,13 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   <img src="${dataUrl}" alt="Meter QR" />
                 </div>
                 <script>
-                  setTimeout(function () {
-                    window.print();
-                  }, 500);
+                  setTimeout(function () { window.print(); }, 500);
                 </script>
               </body>
             </html>
           `);
           printWindow.document.close();
         } else {
-          // Native apps: just show a hint for now
           notify(
             "Print QR",
             "Direct printing is only available on web. On mobile, please download or screenshot the QR.",
@@ -493,6 +545,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       </View>
     );
   }
+
   return (
     <View style={styles.screen}>
       <View style={styles.card}>
@@ -505,6 +558,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
             <Text style={styles.btnText}>+ Create Meter</Text>
           </TouchableOpacity>
         </View>
+
         <View style={styles.filtersBar}>
           <View style={[styles.searchWrap, { flex: 1 }]}>
             <Ionicons
@@ -514,14 +568,20 @@ export default function MeterPanel({ token }: { token: string | null }) {
               style={{ marginRight: 6 }}
             />
             <TextInput
-              placeholder="Search by ID, SN, type, stall…"
+              placeholder={
+                buildingFilter
+                  ? "Search by ID, SN, type, stall…"
+                  : "Select a building first"
+              }
               placeholderTextColor="#9aa5b1"
               value={query}
               onChangeText={setQuery}
+              editable={!!buildingFilter}
               style={styles.search}
               returnKeyType="search"
             />
           </View>
+
           <TouchableOpacity
             style={styles.btnGhost}
             onPress={() => setFiltersVisible(true)}
@@ -535,10 +595,12 @@ export default function MeterPanel({ token }: { token: string | null }) {
             <Text style={styles.btnGhostText}>Filters</Text>
           </TouchableOpacity>
         </View>
+
         <View style={{ marginTop: 6, marginBottom: 12 }}>
           <View style={styles.buildingHeaderRow}>
             <Text style={styles.dropdownLabel}>Building</Text>
           </View>
+
           {isMobile ? (
             <ScrollView
               horizontal
@@ -547,10 +609,15 @@ export default function MeterPanel({ token }: { token: string | null }) {
             >
               {buildingChipOptions.map((opt) => (
                 <Chip
-                  key={opt.value || "all"}
+                  key={opt.value}
                   label={opt.label}
                   active={buildingFilter === opt.value}
-                  onPress={() => setBuildingFilter(opt.value)}
+                  onPress={() => {
+                    // Tap the active chip again to hide list (toggle off)
+                    const next = buildingFilter === opt.value ? "" : opt.value;
+                    setBuildingFilter(next);
+                    if (!next) setQuery("");
+                  }}
                 />
               ))}
             </ScrollView>
@@ -558,16 +625,29 @@ export default function MeterPanel({ token }: { token: string | null }) {
             <View style={styles.chipsRow}>
               {buildingChipOptions.map((opt) => (
                 <Chip
-                  key={opt.value || "all"}
+                  key={opt.value}
                   label={opt.label}
                   active={buildingFilter === opt.value}
-                  onPress={() => setBuildingFilter(opt.value)}
+                  onPress={() => {
+                    // Tap the active chip again to hide list (toggle off)
+                    const next = buildingFilter === opt.value ? "" : opt.value;
+                    setBuildingFilter(next);
+                    if (!next) setQuery("");
+                  }}
                 />
               ))}
             </View>
           )}
         </View>
-        {sorted.length === 0 ? (
+
+        {!buildingFilter ? (
+          <View style={styles.emptyWrap}>
+            <Ionicons name="business-outline" size={22} color="#94a3b8" />
+            <Text style={styles.empty}>
+              Select a building to show the meter list.
+            </Text>
+          </View>
+        ) : sorted.length === 0 ? (
           <View style={styles.emptyWrap}>
             <Ionicons name="archive-outline" size={22} color="#94a3b8" />
             <Text style={styles.empty}>No meters found.</Text>
@@ -595,6 +675,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                     Status: {item.meter_status.toUpperCase()}
                   </Text>
                 </View>
+
                 {isMobile ? (
                   <View style={styles.rowActionsMobile}>
                     <TouchableOpacity
@@ -610,6 +691,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                         Update
                       </Text>
                     </TouchableOpacity>
+
                     <TouchableOpacity
                       style={[styles.actionBtn, styles.actionDelete]}
                       onPress={() => onDelete(item)}
@@ -621,6 +703,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                         Delete
                       </Text>
                     </TouchableOpacity>
+
                     <TouchableOpacity
                       style={[styles.actionBtn, styles.actionGhost]}
                       onPress={() => openQr(item.meter_id)}
@@ -650,6 +733,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                         QR
                       </Text>
                     </TouchableOpacity>
+
                     <TouchableOpacity
                       style={[styles.actionBtn, styles.actionEdit]}
                       onPress={() => openEdit(item)}
@@ -663,6 +747,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                         Update
                       </Text>
                     </TouchableOpacity>
+
                     <TouchableOpacity
                       style={[styles.actionBtn, styles.actionDelete]}
                       onPress={() => onDelete(item)}
@@ -681,6 +766,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
           />
         )}
       </View>
+
+      {/* Filters modal */}
       <Modal
         visible={filtersVisible}
         animationType="fade"
@@ -691,6 +778,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
           <View style={styles.promptCard}>
             <Text style={styles.modalTitle}>Filters & Sort</Text>
             <View style={styles.modalDivider} />
+
             <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Type</Text>
             <View style={styles.chipsRow}>
               {["all", "electric", "water", "lpg"].map((t) => (
@@ -702,9 +790,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 />
               ))}
             </View>
-            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>
-              Sort by
-            </Text>
+
+            <Text style={[styles.dropdownLabel, { marginTop: 12 }]}>Sort by</Text>
             <View style={styles.chipsRow}>
               {[
                 { label: "ID ↑", val: "id_asc" },
@@ -721,12 +808,13 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 />
               ))}
             </View>
+
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
                 onPress={() => {
                   setQuery("");
-                  setBuildingFilter(isAdmin ? "" : userBuildingId || "");
+                  setBuildingFilter("");
                   setFilterType("all");
                   setSortBy("id_asc");
                   setFiltersVisible(false);
@@ -734,6 +822,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
               >
                 <Text style={styles.btnGhostText}>Reset</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.btn}
                 onPress={() => setFiltersVisible(false)}
@@ -744,6 +833,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
           </View>
         </View>
       </Modal>
+
+      {/* Create modal */}
       <Modal
         visible={createVisible}
         animationType="slide"
@@ -772,6 +863,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   <Picker.Item label="LPG (Gas)" value="lpg" />
                 </Picker>
               </View>
+
               <Text style={styles.dropdownLabel}>Serial Number</Text>
               <TextInput
                 value={sn}
@@ -779,6 +871,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 placeholder="e.g. UGF-E-000111"
                 style={styles.input}
               />
+
               <Text style={styles.dropdownLabel}>
                 Multiplier{" "}
                 <Text style={{ color: "#64748b", fontWeight: "400" }}>
@@ -796,6 +889,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 Water defaults to 93.00; Electric/LPG default to 1.00 when left
                 blank.
               </Text>
+
               <Text style={styles.dropdownLabel}>Stall</Text>
               <View style={styles.pickerWrapper}>
                 <Picker
@@ -813,6 +907,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   ))}
                 </Picker>
               </View>
+
               <Text style={styles.dropdownLabel}>Status</Text>
               <View style={styles.pickerWrapper}>
                 <Picker
@@ -825,6 +920,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 </Picker>
               </View>
             </ScrollView>
+
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
@@ -832,6 +928,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
               >
                 <Text style={styles.btnGhostText}>Cancel</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[styles.btn, submitting && styles.btnDisabled]}
                 onPress={onCreate}
@@ -847,6 +944,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Edit modal */}
       <Modal
         visible={editVisible}
         animationType="slide"
@@ -875,12 +974,14 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   <Picker.Item label="LPG (Gas)" value="lpg" />
                 </Picker>
               </View>
+
               <Text style={styles.dropdownLabel}>Serial Number</Text>
               <TextInput
                 value={editSn}
                 onChangeText={setEditSn}
                 style={styles.input}
               />
+
               <Text style={styles.dropdownLabel}>
                 Multiplier{" "}
                 <Text style={{ color: "#64748b", fontWeight: "400" }}>
@@ -893,6 +994,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 keyboardType="numeric"
                 style={styles.input}
               />
+
               <Text style={styles.dropdownLabel}>Stall</Text>
               <View style={styles.pickerWrapper}>
                 <Picker
@@ -909,6 +1011,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   ))}
                 </Picker>
               </View>
+
               <Text style={styles.dropdownLabel}>Status</Text>
               <View style={styles.pickerWrapper}>
                 <Picker
@@ -921,6 +1024,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 </Picker>
               </View>
             </ScrollView>
+
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
@@ -928,6 +1032,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
               >
                 <Text style={styles.btnGhostText}>Cancel</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[styles.btn, submitting && styles.btnDisabled]}
                 onPress={onUpdate}
@@ -943,6 +1048,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* QR modal */}
       <Modal
         visible={qrVisible}
         animationType="fade"
@@ -959,6 +1066,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 getRef={(c) => (qrCodeRef.current = c)}
               />
             </View>
+
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnGhost]}
@@ -979,6 +1087,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
     </View>
   );
 }
+
 function Chip({
   label,
   active,
@@ -1004,6 +1113,7 @@ function Chip({
     </TouchableOpacity>
   );
 }
+
 const styles = StyleSheet.create({
   screen: { flex: 1, minHeight: 0, padding: 12, backgroundColor: "#f8fafc" },
   card: {

@@ -19,6 +19,7 @@ import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
+
 type Stall = {
   stall_id: string;
   stall_sn: string;
@@ -37,6 +38,7 @@ type Tenant = {
   tenant_name: string;
   building_id: string;
 };
+
 function notify(title: string, message?: string) {
   if (
     Platform.OS === "web" &&
@@ -60,12 +62,14 @@ function errorText(err: any, fallback = "Server error.") {
     return fallback;
   }
 }
+
 const cmp = (a: string | number, b: string | number) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, {
     numeric: true,
     sensitivity: "base",
   });
 const dateOf = (s?: string) => (s ? Date.parse(s) || 0 : 0);
+
 const Chip = ({
   label,
   active,
@@ -89,36 +93,47 @@ const Chip = ({
     </Text>
   </TouchableOpacity>
 );
+
 export default function StallsPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
+
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
+
   const [query, setQuery] = useState("");
-  const [buildingFilter, setBuildingFilter] = useState<string>("");
+  const [buildingFilter, setBuildingFilter] = useState<string>(""); // <-- default empty, forces selection
   const [statusFilter, setStatusFilter] = useState<"" | Stall["stall_status"]>(
     "",
   );
+
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
+
   const [filtersVisible, setFiltersVisible] = useState(false);
+
   const [createVisible, setCreateVisible] = useState(false);
   const [c_stallSn, setC_stallSn] = useState("");
   const [c_buildingId, setC_buildingId] = useState("");
+
   const [editVisible, setEditVisible] = useState(false);
   const [editStall, setEditStall] = useState<Stall | null>(null);
+
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
     [token],
   );
+
   const api = useMemo(
     () =>
       axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
     [authHeader],
   );
+
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
@@ -135,24 +150,30 @@ export default function StallsPanel({ token }: { token: string | null }) {
       setStalls(stRes.data || []);
       setBuildings(bRes.data || []);
       setTenants(tRes.data || []);
-      if (!c_buildingId && (bRes.data?.length ?? 0) > 0)
+      if (!c_buildingId && (bRes.data?.length ?? 0) > 0) {
         setC_buildingId(bRes.data[0].building_id);
+      }
     } catch (err: any) {
       notify("Load failed", errorText(err, "Connection error."));
     } finally {
       setBusy(false);
     }
   };
+
   useEffect(() => {
     loadAll();
   }, [token]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+
     let list = stalls;
-    if (buildingFilter)
-      list = list.filter((s) => s.building_id === buildingFilter);
-    if (statusFilter)
-      list = list.filter((s) => s.stall_status === statusFilter);
+
+    // Only show stalls from chosen building (once selected)
+    if (buildingFilter) list = list.filter((s) => s.building_id === buildingFilter);
+
+    if (statusFilter) list = list.filter((s) => s.stall_status === statusFilter);
+
     if (q) {
       list = list.filter((s) =>
         [s.stall_id, s.stall_sn, s.building_id, s.tenant_id, s.stall_status]
@@ -160,8 +181,10 @@ export default function StallsPanel({ token }: { token: string | null }) {
           .some((v) => String(v).toLowerCase().includes(q)),
       );
     }
+
     return list;
   }, [stalls, query, buildingFilter, statusFilter]);
+
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
@@ -181,6 +204,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
     }
     return arr;
   }, [filtered, sortMode]);
+
   const onCreate = async () => {
     const stall_sn = c_stallSn.trim();
     if (!stall_sn || !c_buildingId) {
@@ -192,8 +216,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
       await api.post("/stalls", {
         stall_sn,
         building_id: c_buildingId,
-        stall_status: "available", // Always set to "available" for new stalls
-        tenant_id: null, // Always null for new stalls
+        stall_status: "available",
+        tenant_id: null,
       });
       setCreateVisible(false);
       setC_stallSn("");
@@ -205,10 +229,12 @@ export default function StallsPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const openEdit = (s: Stall) => {
     setEditStall({ ...s });
     setEditVisible(true);
   };
+
   const onUpdate = async () => {
     if (!editStall) return;
     try {
@@ -231,6 +257,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const onDelete = async (s: Stall) => {
     if (
       Platform.OS === "web" &&
@@ -252,13 +279,11 @@ export default function StallsPanel({ token }: { token: string | null }) {
           },
         },
       ];
-      return Alert.alert(
-        "Delete stall?",
-        `${s.stall_sn} (${s.stall_id})`,
-        buttons,
-      );
+      return Alert.alert("Delete stall?", `${s.stall_sn} (${s.stall_id})`, buttons);
     }
+
     await doDelete();
+
     async function doDelete() {
       try {
         setSubmitting(true);
@@ -272,6 +297,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
       }
     }
   };
+
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
@@ -285,6 +311,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
               <Text style={styles.btnText}>+ Create Stall</Text>
             </TouchableOpacity>
           </View>
+
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons
@@ -314,21 +341,19 @@ export default function StallsPanel({ token }: { token: string | null }) {
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
+
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
+
+            {/* Building chips (NO "All" option) */}
             {isMobile ? (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.chipsRowHorizontal}
               >
-                <Chip
-                  label="All"
-                  active={buildingFilter === ""}
-                  onPress={() => setBuildingFilter("")}
-                />
                 {buildings.map((b) => (
                   <Chip
                     key={b.building_id}
@@ -340,11 +365,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
               </ScrollView>
             ) : (
               <View style={styles.chipsRow}>
-                <Chip
-                  label="All"
-                  active={buildingFilter === ""}
-                  onPress={() => setBuildingFilter("")}
-                />
                 {buildings.map((b) => (
                   <Chip
                     key={b.building_id}
@@ -356,9 +376,19 @@ export default function StallsPanel({ token }: { token: string | null }) {
               </View>
             )}
           </View>
+
+          {/* List gate: hide stalls until a building is selected */}
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />
+            </View>
+          ) : !buildingFilter ? (
+            <View style={styles.selectBuildingEmpty}>
+              <Ionicons name="business-outline" size={44} color="#cbd5e1" />
+              <Text style={styles.emptyTitle}>Select a building</Text>
+              <Text style={styles.emptyText}>
+                Choose a building above to show its stall list.
+              </Text>
             </View>
           ) : (
             <FlatList
@@ -395,6 +425,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                       </Text>
                     ) : null}
                   </View>
+
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity
@@ -406,12 +437,11 @@ export default function StallsPanel({ token }: { token: string | null }) {
                           size={16}
                           color="#1f2937"
                         />
-                        <Text
-                          style={[styles.actionText, styles.actionEditText]}
-                        >
+                        <Text style={[styles.actionText, styles.actionEditText]}>
                           Update
                         </Text>
                       </TouchableOpacity>
+
                       <TouchableOpacity
                         style={[styles.actionBtn, styles.actionDelete]}
                         onPress={() => onDelete(item)}
@@ -435,12 +465,11 @@ export default function StallsPanel({ token }: { token: string | null }) {
                           size={16}
                           color="#1f2937"
                         />
-                        <Text
-                          style={[styles.actionText, styles.actionEditText]}
-                        >
+                        <Text style={[styles.actionText, styles.actionEditText]}>
                           Update
                         </Text>
                       </TouchableOpacity>
+
                       <TouchableOpacity
                         style={[styles.actionBtn, styles.actionDelete]}
                         onPress={() => onDelete(item)}
@@ -459,6 +488,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
             />
           )}
         </View>
+
+        {/* Filters modal */}
         <Modal
           visible={filtersVisible}
           transparent
@@ -469,6 +500,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
             <View style={styles.promptCard}>
               <Text style={styles.modalTitle}>Filters & Sort</Text>
               <View style={styles.modalDivider} />
+
               <Text style={styles.dropdownLabel}>Status</Text>
               <View style={styles.chipsRow}>
                 {[
@@ -485,9 +517,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   />
                 ))}
               </View>
-              <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>
-                Sort by
-              </Text>
+
+              <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>Sort by</Text>
               <View style={styles.chipsRow}>
                 <Chip
                   label="Newest"
@@ -510,6 +541,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   onPress={() => setSortMode("idDesc")}
                 />
               </View>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.btn]}
@@ -521,6 +553,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
             </View>
           </View>
         </Modal>
+
+        {/* Create modal */}
         <Modal
           visible={createVisible}
           animationType="fade"
@@ -556,6 +590,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     </Picker>
                   </View>
                 </View>
+
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Stall ID</Text>
                   <TextInput
@@ -566,7 +601,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                     style={styles.input}
                   />
                 </View>
-                {/* Show locked status field */}
+
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Status</Text>
                   <View style={[styles.pickerWrapper, styles.disabledField]}>
@@ -585,6 +620,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   </Text>
                 </View>
               </ScrollView>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.btnGhostAlt]}
@@ -605,6 +641,8 @@ export default function StallsPanel({ token }: { token: string | null }) {
             </View>
           </KeyboardAvoidingView>
         </Modal>
+
+        {/* Edit modal */}
         <Modal
           visible={editVisible}
           animationType="fade"
@@ -646,6 +684,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
+
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Stall ID</Text>
                       <TextInput
@@ -658,6 +697,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         style={styles.input}
                       />
                     </View>
+
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Status</Text>
                       <View style={styles.pickerWrapper}>
@@ -679,6 +719,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
+
                     {editStall.stall_status !== "available" && (
                       <View style={styles.inputRow}>
                         <Text style={styles.inputLabel}>Tenant</Text>
@@ -694,9 +735,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                           >
                             <Picker.Item label="-- select tenant --" value="" />
                             {tenants
-                              .filter(
-                                (t) => t.building_id === editStall.building_id,
-                              )
+                              .filter((t) => t.building_id === editStall.building_id)
                               .map((t) => (
                                 <Picker.Item
                                   key={t.tenant_id}
@@ -711,6 +750,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
                   </>
                 )}
               </ScrollView>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.btnGhostAlt]}
@@ -735,7 +775,9 @@ export default function StallsPanel({ token }: { token: string | null }) {
     </View>
   );
 }
+
 const W = Dimensions.get("window").width;
+
 const styles = StyleSheet.create({
   page: {
     flex: 1,
@@ -866,6 +908,13 @@ const styles = StyleSheet.create({
   actionDeleteText: { color: "#fff" },
   emptyPad: { paddingVertical: 30 },
   empty: { alignItems: "center", gap: 6 },
+  selectBuildingEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 30,
+  },
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
   emptyText: { color: "#94a3b8" },
   buildingHeaderRow: {
@@ -979,7 +1028,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textTransform: "none",
   },
-  // New styles for locked status field
   disabledField: {
     backgroundColor: "#f1f5f9",
     borderColor: "#cbd5e1",

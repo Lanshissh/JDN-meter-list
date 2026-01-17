@@ -19,8 +19,10 @@ import axios from "axios";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
+
 type Role = "admin" | "operator" | "biller" | "reader";
 type Util = "electric" | "water" | "lpg";
+
 type UserRow = {
   user_id: string;
   user_fullname: string;
@@ -30,6 +32,7 @@ type UserRow = {
   last_updated?: string;
   updated_by?: string;
 };
+
 type User = {
   user_id: string;
   user_fullname: string;
@@ -39,10 +42,12 @@ type User = {
   last_updated?: string;
   updated_by?: string;
 };
+
 type Building = {
   building_id: string;
   building_name: string;
 };
+
 function notify(title: string, message?: string) {
   if (
     Platform.OS === "web" &&
@@ -54,6 +59,7 @@ function notify(title: string, message?: string) {
     Alert.alert(title, message);
   }
 }
+
 function errorText(err: any, fallback = "Server error.") {
   const d = err?.response?.data;
   if (typeof d === "string") return d;
@@ -66,12 +72,15 @@ function errorText(err: any, fallback = "Server error.") {
     return fallback;
   }
 }
+
 const cmp = (a: string | number, b: string | number) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, {
     numeric: true,
     sensitivity: "base",
   });
+
 const dateOf = (s?: string) => (s ? Date.parse(s) || 0 : 0);
+
 const Chip = ({
   label,
   active,
@@ -95,25 +104,36 @@ const Chip = ({
     </Text>
   </TouchableOpacity>
 );
+
 export default function AccountsPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
+
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
   const [users, setUsers] = useState<User[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
+
   const [query, setQuery] = useState("");
-  const [buildingFilter, setBuildingFilter] = useState<string>("");
+
+  // ✅ CHANGE: null means "not selected yet" => list hidden
+  const [buildingFilter, setBuildingFilter] = useState<string | null>(null);
+
   const [roleFilter, setRoleFilter] = useState<"" | Role>("");
+
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
+
   const [filtersVisible, setFiltersVisible] = useState(false);
+
   const [createVisible, setCreateVisible] = useState(false);
   const [c_fullname, setC_fullname] = useState("");
   const [c_password, setC_password] = useState("");
   const [c_role, setC_role] = useState<Role>("operator");
   const [c_buildingId, setC_buildingId] = useState("");
   const [c_utils, setC_utils] = useState<Util[]>([]);
+
   const [editVisible, setEditVisible] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [e_fullname, setE_fullname] = useState("");
@@ -121,39 +141,48 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   const [e_role, setE_role] = useState<Role>("operator");
   const [e_buildingId, setE_buildingId] = useState("");
   const [e_utils, setE_utils] = useState<Util[]>([]);
+
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
     [token],
   );
+
   const api = useMemo(
     () =>
       axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
     [authHeader],
   );
+
   const loadAll = async () => {
     if (!token) {
       setBusy(false);
       notify("Not logged in", "Please log in to manage accounts.");
       return;
     }
+
     try {
       setBusy(true);
+
       const [uRes, bRes] = await Promise.all([
         api.get<UserRow[]>("/users"),
         api.get<Building[]>("/buildings"),
       ]);
+
       const normalized: User[] = (uRes.data || []).map((u) => {
         const role = (
           Array.isArray(u.user_roles) && u.user_roles.length
             ? u.user_roles[0]
             : "operator"
         ) as Role;
+
         const buildings = Array.isArray(u.building_ids)
           ? u.building_ids.map(String)
           : [];
+
         const utils = Array.isArray(u.utility_role)
           ? (u.utility_role as Util[])
           : [];
+
         return {
           user_id: String(u.user_id),
           user_fullname: String(u.user_fullname ?? ""),
@@ -164,28 +193,44 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           updated_by: u.updated_by,
         };
       });
+
       setUsers(normalized);
       setBuildings(bRes.data || []);
-      if (!c_buildingId && (bRes.data?.length ?? 0) > 0)
+
+      // keep your create defaults
+      if (!c_buildingId && (bRes.data?.length ?? 0) > 0) {
         setC_buildingId(bRes.data[0].building_id);
+      }
+
+      // ✅ DO NOT auto-select buildingFilter — user must choose first
+      // If you want to auto-select first building, uncomment:
+      // if (buildingFilter === null && (bRes.data?.length ?? 0) > 0) setBuildingFilter(bRes.data[0].building_id);
     } catch (err: any) {
       notify("Load failed", errorText(err, "Connection error."));
     } finally {
       setBusy(false);
     }
   };
+
   useEffect(() => {
     loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
   const filtered = useMemo(() => {
+    // ✅ GATE: hide list until building is selected
+    if (buildingFilter === null) return [];
+
     const q = query.trim().toLowerCase();
     let list = users;
-    if (buildingFilter) {
-      list = list.filter((u) => u.buildings.includes(buildingFilter));
-    }
+
+    // now buildingFilter is always a real building_id here
+    list = list.filter((u) => u.buildings.includes(buildingFilter));
+
     if (roleFilter) {
       list = list.filter((u) => u.role === roleFilter);
     }
+
     if (q) {
       list = list.filter((u) =>
         [
@@ -199,8 +244,10 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           .some((v) => String(v).toLowerCase().includes(q)),
       );
     }
+
     return list;
   }, [users, query, buildingFilter, roleFilter]);
+
   const sorted = useMemo(() => {
     const arr = [...filtered];
     switch (sortMode) {
@@ -220,8 +267,10 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     }
     return arr;
   }, [filtered, sortMode]);
+
   const onCreate = async () => {
     const fullname = c_fullname.trim();
+
     if (!fullname || !c_password) {
       notify("Missing info", "Please enter Full name and Password.");
       return;
@@ -230,8 +279,10 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       notify("Missing building", "Select a Building for non-admin roles.");
       return;
     }
+
     try {
       setSubmitting(true);
+
       const body: any = {
         user_fullname: fullname,
         user_password: c_password,
@@ -239,12 +290,15 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         building_ids: c_role === "admin" ? [] : [c_buildingId],
         utility_role: c_role === "admin" ? [] : c_utils,
       };
+
       await api.post("/users", body);
+
       setCreateVisible(false);
       setC_fullname("");
       setC_password("");
       setC_role("operator");
       setC_utils([]);
+
       await loadAll();
       notify("Success", "Account created.");
     } catch (err: any) {
@@ -253,6 +307,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const openEdit = (u: User) => {
     setEditUser(u);
     setE_fullname(u.user_fullname);
@@ -262,22 +317,29 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     setE_utils(u.utilities || []);
     setEditVisible(true);
   };
+
   const onUpdate = async () => {
     if (!editUser) return;
+
     if (e_role !== "admin" && !e_buildingId) {
       notify("Missing building", "Select a Building for non-admin roles.");
       return;
     }
+
     try {
       setSubmitting(true);
+
       const body: any = {
         user_fullname: e_fullname,
         user_roles: [e_role],
         building_ids: e_role === "admin" ? [] : [e_buildingId],
         utility_role: e_role === "admin" ? [] : e_utils,
       };
+
       if (e_password.trim()) body.user_password = e_password.trim();
+
       await api.put(`/users/${encodeURIComponent(editUser.user_id)}`, body);
+
       setEditVisible(false);
       await loadAll();
       notify("Updated", "Account updated successfully.");
@@ -287,6 +349,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       setSubmitting(false);
     }
   };
+
   const onDelete = async (u: User) => {
     if (
       Platform.OS === "web" &&
@@ -314,7 +377,9 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         buttons,
       );
     }
+
     await doDelete();
+
     async function doDelete() {
       try {
         setSubmitting(true);
@@ -328,6 +393,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       }
     }
   };
+
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
@@ -341,6 +407,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               <Text style={styles.btnText}>+ Create Account</Text>
             </TouchableOpacity>
           </View>
+
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons
@@ -352,11 +419,13 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               <TextInput
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Search by ID, name, role, building…"
+                placeholder="Search by ID, name, role, utilities…"
                 placeholderTextColor="#9aa5b1"
                 style={styles.search}
+                editable={buildingFilter !== null} // optional: disable until building chosen
               />
             </View>
+
             <TouchableOpacity
               style={styles.btnGhost}
               onPress={() => setFiltersVisible(true)}
@@ -370,21 +439,19 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               <Text style={styles.btnGhostText}>Filters</Text>
             </TouchableOpacity>
           </View>
+
+          {/* ✅ Building chips first (no "All") */}
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
+
             {isMobile ? (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.chipsRowHorizontal}
               >
-                <Chip
-                  label="All"
-                  active={buildingFilter === ""}
-                  onPress={() => setBuildingFilter("")}
-                />
                 {buildings.map((b) => (
                   <Chip
                     key={b.building_id}
@@ -396,11 +463,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               </ScrollView>
             ) : (
               <View style={styles.chipsRow}>
-                <Chip
-                  label="All"
-                  active={buildingFilter === ""}
-                  onPress={() => setBuildingFilter("")}
-                />
                 {buildings.map((b) => (
                   <Chip
                     key={b.building_id}
@@ -412,9 +474,19 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               </View>
             )}
           </View>
+
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />
+            </View>
+          ) : buildingFilter === null ? (
+            // ✅ hide list until building is selected
+            <View style={styles.selectBuildingEmpty}>
+              <Ionicons name="business-outline" size={44} color="#cbd5e1" />
+              <Text style={styles.emptyTitle}>Select a building</Text>
+              <Text style={styles.emptyText}>
+                Choose a building above to show the account list.
+              </Text>
             </View>
           ) : (
             <FlatList
@@ -429,7 +501,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   <Ionicons name="person-outline" size={42} color="#cbd5e1" />
                   <Text style={styles.emptyTitle}>No accounts</Text>
                   <Text style={styles.emptyText}>
-                    Try adjusting your search or create a new one.
+                    No accounts found for this building.
                   </Text>
                 </View>
               }
@@ -440,6 +512,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       {item.user_fullname}{" "}
                       <Text style={styles.rowSub}>({item.user_id})</Text>
                     </Text>
+
                     <Text style={styles.rowMeta}>
                       Role: {item.role}
                       {item.buildings.length
@@ -449,6 +522,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         ? ` • Utilities: ${item.utilities.join(", ")}`
                         : ""}
                     </Text>
+
                     {item.last_updated ? (
                       <Text style={styles.rowMetaSmall}>
                         Updated {new Date(item.last_updated).toLocaleString()}{" "}
@@ -456,6 +530,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       </Text>
                     ) : null}
                   </View>
+
                   {isMobile ? (
                     <View style={styles.rowActionsMobile}>
                       <TouchableOpacity
@@ -467,12 +542,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                           size={16}
                           color="#1f2937"
                         />
-                        <Text
-                          style={[styles.actionText, styles.actionEditText]}
-                        >
+                        <Text style={[styles.actionText, styles.actionEditText]}>
                           Update
                         </Text>
                       </TouchableOpacity>
+
                       <TouchableOpacity
                         style={[styles.actionBtn, styles.actionDelete]}
                         onPress={() => onDelete(item)}
@@ -496,12 +570,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                           size={16}
                           color="#1f2937"
                         />
-                        <Text
-                          style={[styles.actionText, styles.actionEditText]}
-                        >
+                        <Text style={[styles.actionText, styles.actionEditText]}>
                           Update
                         </Text>
                       </TouchableOpacity>
+
                       <TouchableOpacity
                         style={[styles.actionBtn, styles.actionDelete]}
                         onPress={() => onDelete(item)}
@@ -520,6 +593,8 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             />
           )}
         </View>
+
+        {/* Filters modal */}
         <Modal
           visible={filtersVisible}
           transparent
@@ -530,6 +605,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             <View style={styles.promptCard}>
               <Text style={styles.modalTitle}>Filters & Sort</Text>
               <View style={styles.modalDivider} />
+
               <Text style={styles.dropdownLabel}>Role</Text>
               <View style={styles.chipsRow}>
                 {[
@@ -556,6 +632,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   ),
                 )}
               </View>
+
               <Text style={[styles.dropdownLabel, { marginTop: 10 }]}>
                 Sort by
               </Text>
@@ -581,6 +658,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   onPress={() => setSortMode("idDesc")}
                 />
               </View>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.btn]}
@@ -592,6 +670,8 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             </View>
           </View>
         </Modal>
+
+        {/* Create modal */}
         <Modal
           visible={createVisible}
           animationType="fade"
@@ -619,6 +699,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     style={styles.input}
                   />
                 </View>
+
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Password</Text>
                   <TextInput
@@ -630,6 +711,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     secureTextEntry
                   />
                 </View>
+
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Role</Text>
                   <View style={styles.pickerWrapper}>
@@ -645,6 +727,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                     </Picker>
                   </View>
                 </View>
+
                 {c_role !== "admin" && (
                   <>
                     <View style={styles.inputRow}>
@@ -665,6 +748,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
+
                     <Text style={styles.sectionTitle}>Utilities</Text>
                     <View style={styles.chipsRow}>
                       {(["electric", "water", "lpg"] as Util[]).map((u) => {
@@ -688,6 +772,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   </>
                 )}
               </ScrollView>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.btnGhostAlt]}
@@ -695,6 +780,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 >
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   style={[styles.btn, submitting && styles.btnDisabled]}
                   onPress={onCreate}
@@ -708,6 +794,8 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             </View>
           </KeyboardAvoidingView>
         </Modal>
+
+        {/* Edit modal */}
         <Modal
           visible={editVisible}
           animationType="fade"
@@ -737,6 +825,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         style={styles.input}
                       />
                     </View>
+
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>
                         New password (optional)
@@ -750,6 +839,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         secureTextEntry
                       />
                     </View>
+
                     <View style={styles.inputRow}>
                       <Text style={styles.inputLabel}>Role</Text>
                       <View style={styles.pickerWrapper}>
@@ -765,6 +855,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                         </Picker>
                       </View>
                     </View>
+
                     {e_role !== "admin" && (
                       <>
                         <View style={styles.inputRow}>
@@ -772,7 +863,9 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                           <View style={styles.pickerWrapper}>
                             <Picker
                               selectedValue={e_buildingId}
-                              onValueChange={(v) => setE_buildingId(String(v))}
+                              onValueChange={(v) =>
+                                setE_buildingId(String(v))
+                              }
                               style={styles.picker}
                             >
                               {buildings.map((b) => (
@@ -785,6 +878,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                             </Picker>
                           </View>
                         </View>
+
                         <Text style={styles.sectionTitle}>Utilities</Text>
                         <View style={styles.chipsRow}>
                           {(["electric", "water", "lpg"] as Util[]).map((u) => {
@@ -810,6 +904,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   </>
                 )}
               </ScrollView>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.btnGhostAlt]}
@@ -817,6 +912,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                 >
                   <Text style={styles.btnGhostTextAlt}>Cancel</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   style={[styles.btn, submitting && styles.btnDisabled]}
                   onPress={onUpdate}
@@ -834,10 +930,13 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     </View>
   );
 }
+
 const W = Dimensions.get("window").width;
+
 const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 0 },
   grid: { flex: 1, padding: 14, gap: 14, minHeight: 0 },
+
   card: {
     flex: 1,
     minHeight: 0,
@@ -849,6 +948,7 @@ const styles = StyleSheet.create({
       default: { elevation: 2 },
     }) as any),
   },
+
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -856,6 +956,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
+
   btn: {
     backgroundColor: "#2563eb",
     paddingVertical: 10,
@@ -864,6 +965,7 @@ const styles = StyleSheet.create({
   },
   btnText: { color: "#fff", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
+
   filtersBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -871,6 +973,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     flexWrap: "wrap",
   },
+
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -882,6 +985,7 @@ const styles = StyleSheet.create({
     borderColor: "#e2e8f0",
   },
   search: { flex: 1, height: 40, color: "#0f172a" },
+
   btnGhost: {
     flexDirection: "row",
     alignItems: "center",
@@ -893,11 +997,13 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
   },
   btnGhostText: { color: "#394e6a", fontWeight: "700" },
+
   loader: {
     paddingVertical: 24,
     alignItems: "center",
     justifyContent: "center",
   },
+
   row: {
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -909,11 +1015,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   rowMobile: { flexDirection: "column", alignItems: "stretch" },
+
   rowMain: { flex: 1, paddingRight: 10 },
   rowTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
   rowSub: { color: "#64748b", fontWeight: "600" },
   rowMeta: { color: "#334155", marginTop: 6 },
   rowMetaSmall: { color: "#94a3b8", marginTop: 2, fontSize: 12 },
+
   rowActions: {
     width: 200,
     flexDirection: "row",
@@ -928,6 +1036,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     alignItems: "center",
   },
+
   actionBtn: {
     height: 36,
     paddingHorizontal: 12,
@@ -941,18 +1050,31 @@ const styles = StyleSheet.create({
   actionText: { fontWeight: "700" },
   actionEditText: { color: "#1f2937" },
   actionDeleteText: { color: "#fff" },
+
   emptyPad: { paddingVertical: 30 },
   empty: { alignItems: "center", gap: 6 },
+
+  selectBuildingEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 30,
+  },
+
   emptyTitle: { fontWeight: "800", color: "#0f172a" },
-  emptyText: { color: "#94a3b8" },
+  emptyText: { color: "#94a3b8", textAlign: "center" },
+
   buildingHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 6,
   },
+
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chipsRowHorizontal: { paddingRight: 4, gap: 8 },
+
   chip: {
     borderWidth: 1,
     borderColor: "#cbd5e1",
@@ -966,6 +1088,7 @@ const styles = StyleSheet.create({
   chipText: { fontWeight: "700" },
   chipTextActive: { color: "#1d4ed8" },
   chipTextIdle: { color: "#334155" },
+
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
@@ -1001,6 +1124,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   btnGhostTextAlt: { color: "#334155", fontWeight: "700" },
+
   inputRow: { marginBottom: 10 },
   inputLabel: { color: "#334155", fontWeight: "700", marginBottom: 6 },
   input: {
@@ -1025,6 +1149,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   picker: { height: 40 },
+
   promptOverlay: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.36)",
