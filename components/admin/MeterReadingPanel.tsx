@@ -441,7 +441,7 @@ export default function MeterReadingPanel({
       await syncOfflineReadings(authToken, deviceToken);
       notify(
         "Synced",
-        `Offline readings sent successfully${deviceName ? ` (${deviceName})` : ""}.`,
+        ` sent successfullyOffline readings${deviceName ? ` (${deviceName})` : ""}.`,
       );
     } catch (e: any) {
       notify("Sync failed", e?.message || "Unable to sync offline readings.");
