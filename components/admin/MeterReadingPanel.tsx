@@ -1160,9 +1160,45 @@ export default function MeterReadingPanel({
           updated_by: "import",
         }));
 
+        const importedReadings: Reading[] = [];
+
+        for (const it of items) {
+          const meterId = String(it.meter_id || "").trim();
+          if (!meterId) continue;
+
+          // 1) latest previous reading
+          if (it.prev_date != null && it.prev_reading != null && it.prev_reading !== "") {
+            importedReadings.push({
+              reading_id: `IMPORT-${meterId}-${String(it.prev_date).slice(0, 10)}`,
+              meter_id: meterId,
+              reading_value: Number(it.prev_reading),
+              read_by: "import",
+              lastread_date: String(it.prev_date).slice(0, 10),
+              last_updated: new Date().toISOString(),
+              updated_by: "import",
+              remarks: null,
+            });
+          }
+
+          // 2) second latest previous reading (only if your backend sends prev2_*)
+          if (it.prev2_date != null && it.prev2_reading != null && it.prev2_reading !== "") {
+            importedReadings.push({
+              reading_id: `IMPORT2-${meterId}-${String(it.prev2_date).slice(0, 10)}`,
+              meter_id: meterId,
+              reading_value: Number(it.prev2_reading),
+              read_by: "import",
+              lastread_date: String(it.prev2_date).slice(0, 10),
+              last_updated: new Date().toISOString(),
+              updated_by: "import",
+              remarks: null,
+            });
+          }
+        }
+
         setMeters(importedMeters);
         setStalls([]);
-        setReadings([]);
+        setReadings(importedReadings);
+
 
         if (!formMeterId && importedMeters.length) {
           setFormMeterId(importedMeters[0].meter_id);
@@ -1366,6 +1402,10 @@ export default function MeterReadingPanel({
             }
             renderItem={({ item }) => {
               const { latest, previous } = getLastTwo(readings, item.meter_id);
+              const prevLine =
+              latest
+                ? `Prev: ${fmtValue(latest.reading_value)} (${String(latest.lastread_date).slice(0, 10)})`
+                : "Prev: —";
               const warn =
                 latest && previous
                   ? (pctUp(
@@ -1399,6 +1439,9 @@ export default function MeterReadingPanel({
                     <Text style={styles.rowMetaSmall}>
                       Status: {item.meter_status.toUpperCase()}
                     </Text>
+                    {latest ? (
+                      <Text style={styles.rowMetaSmall}>{prevLine}</Text>
+                    ) : null}
                   </View>
 
                   <View style={styles.rightIconWrap} pointerEvents="none">
