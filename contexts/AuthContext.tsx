@@ -16,6 +16,7 @@ export type AuthUser = {
   user_roles: string[];
   building_ids: string[];
   utility_role: string[];
+  access_modules: string[];
 };
 
 type AuthContextType = {
@@ -40,6 +41,9 @@ type AuthContextType = {
   hasRole: (...roles: string[]) => boolean;
   inBuilding: (...buildingIds: string[]) => boolean;
   hasUtility: (...utils: string[]) => boolean;
+
+  // access gate for UI/menu
+  hasAccess: (...modules: string[]) => boolean;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -68,7 +72,8 @@ const safeAtob = (b64: string): string | null => {
   try {
     // RN / Node fallback
     // @ts-ignore
-    if (typeof Buffer !== "undefined") return Buffer.from(b64, "base64").toString("utf8");
+    if (typeof Buffer !== "undefined")
+      return Buffer.from(b64, "base64").toString("utf8");
   } catch {}
   return null;
 };
@@ -93,33 +98,69 @@ const getExpMsFromJwt = (jwt: string): number => {
   return Date.now() + 60 * 60 * 1000;
 };
 
-const getUserFromJwt = (jwt: string): AuthUser | null => {
-  const p = decodeJwt(jwt);
-  if (!p) return null;
-  return {
-    user_id: String(p.user_id ?? ""),
-    user_fullname: String(p.user_fullname ?? ""),
-    user_roles: Array.isArray(p.user_roles) ? p.user_roles : [],
-    building_ids: Array.isArray(p.building_ids) ? p.building_ids : [],
-    utility_role: Array.isArray(p.utility_role) ? p.utility_role : [],
-  };
+const toArray = (v: any): string[] => {
+  if (Array.isArray(v)) return v.map((x) => String(x));
+  if (v == null) return [];
+
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return [];
+
+    // allow accidental JSON string or comma-separated
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed.map((x) => String(x));
+      if (parsed == null) return [];
+      return [String(parsed)];
+    } catch {
+      return s
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [String(v)];
 };
 
 const norm = (v: any) => String(v ?? "").trim().toLowerCase();
+const dedupe = (arr: string[]) => Array.from(new Set(arr.map(String)));
+
+const getUserFromJwt = (jwt: string): AuthUser | null => {
+  const p = decodeJwt(jwt);
+  if (!p) return null;
+
+  return {
+    user_id: String(p.user_id ?? ""),
+    user_fullname: String(p.user_fullname ?? ""),
+
+    // normalize to lowercase for guards
+    user_roles: dedupe(toArray(p.user_roles).map(norm)),
+    utility_role: dedupe(toArray(p.utility_role).map(norm)),
+    access_modules: dedupe(toArray(p.access_modules).map(norm)),
+
+    // building ids should remain case-preserving (usually numeric strings)
+    building_ids: dedupe(toArray(p.building_ids).map((x) => String(x))),
+  };
+};
+
 const userHasRole = (u: AuthUser | null, role: string) =>
   !!u && Array.isArray(u.user_roles) && u.user_roles.map(norm).includes(norm(role));
 
 /**
  * Reader requirement:
- * - When reader logs in, phone must have 0 meter/tenant data until Sync Import.
- * So clear offline package + offline scans on reader login.
+ * - Reader devices must not keep a previously imported “offline package” (meters/tenant snapshots)
+ *   between sessions unless they explicitly Import again.
+ * IMPORTANT: We DO NOT clear offline_scans here, because those are actual readings the reader queued.
  */
-const clearReaderSessionData = async () => {
-  await AsyncStorage.multiRemove([KEY_OFFLINE_SCANS, KEY_OFFLINE_PACKAGE]);
+const clearReaderImportedPackage = async () => {
+  await AsyncStorage.removeItem(KEY_OFFLINE_PACKAGE);
 };
 
 /* ---------------- provider ---------------- */
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [loading, setLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [token, setToken] = useState<string | null>(null);
@@ -135,10 +176,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
   };
+
   const scheduleAutoLogout = (expMs: number) => {
     clearTimer();
     const ms = Math.max(0, expMs - Date.now());
     timerRef.current = setTimeout(() => {
+      // fire and forget
       logout();
     }, ms);
   };
@@ -168,21 +211,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const init = async () => {
       try {
-        const [storedToken, storedExp, storedUser, storedDeviceToken, storedDeviceName] =
-          await Promise.all([
-            AsyncStorage.getItem(KEY_TOKEN),
-            AsyncStorage.getItem(KEY_EXPIRES_AT),
-            AsyncStorage.getItem(KEY_USER),
-            AsyncStorage.getItem(KEY_DEVICE_TOKEN),
-            AsyncStorage.getItem(KEY_DEVICE_NAME),
-          ]);
+        const [
+          storedToken,
+          storedExp,
+          storedUser,
+          storedDeviceToken,
+          storedDeviceName,
+        ] = await Promise.all([
+          AsyncStorage.getItem(KEY_TOKEN),
+          AsyncStorage.getItem(KEY_EXPIRES_AT),
+          AsyncStorage.getItem(KEY_USER),
+          AsyncStorage.getItem(KEY_DEVICE_TOKEN),
+          AsyncStorage.getItem(KEY_DEVICE_NAME),
+        ]);
 
         const expMs =
           storedExp != null
             ? parseInt(storedExp, 10)
             : storedToken
-            ? getExpMsFromJwt(storedToken)
-            : null;
+              ? getExpMsFromJwt(storedToken)
+              : null;
 
         if (!storedToken || !expMs || Date.now() >= expMs) {
           await AsyncStorage.multiRemove([KEY_TOKEN, KEY_EXPIRES_AT, KEY_USER]);
@@ -190,6 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setToken(null);
           setExpiresAt(null);
           setUser(null);
+
           // also clear reader device identity
           await AsyncStorage.multiRemove([KEY_DEVICE_TOKEN, KEY_DEVICE_NAME]);
           setDeviceToken(null);
@@ -212,14 +261,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(null);
         }
 
+        const effectiveUser =
+          decoded ?? (storedUser ? (JSON.parse(storedUser) as AuthUser) : null);
+
         // Only keep device token in memory if current user is a reader
-        const effectiveUser = decoded ?? (storedUser ? JSON.parse(storedUser) : null);
         if (userHasRole(effectiveUser, "reader")) {
           setDeviceToken(storedDeviceToken ? String(storedDeviceToken) : null);
           setDeviceName(storedDeviceName ? String(storedDeviceName) : null);
 
-          // Ensure reader starts with 0 data on app restore as well
-          await clearReaderSessionData();
+          // Reader should not keep old imported package on app restore
+          await clearReaderImportedPackage();
         } else {
           // non-reader logged in -> do not keep device token around
           await AsyncStorage.multiRemove([KEY_DEVICE_TOKEN, KEY_DEVICE_NAME]);
@@ -249,18 +300,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     scheduleAutoLogout(expMs);
 
+    // store even if decoded is null (store empty object so JSON.parse won't crash later)
     await AsyncStorage.multiSet([
       [KEY_TOKEN, newToken],
       [KEY_EXPIRES_AT, String(expMs)],
-      [KEY_USER, JSON.stringify(decoded)],
+      [KEY_USER, JSON.stringify(decoded ?? null)],
     ]);
 
     // IMPORTANT:
     // login.tsx will do /reader-devices/resolve for reader and store device_token_v1/device_name_v1.
     // Here we simply refresh from storage if reader; otherwise clear.
     if (userHasRole(decoded, "reader")) {
-      // reader must start with ZERO data until Sync Import
-      await clearReaderSessionData();
+      // reader must start with ZERO imported package until Sync Import
+      await clearReaderImportedPackage();
 
       const [dt, dn] = await Promise.all([
         AsyncStorage.getItem(KEY_DEVICE_TOKEN),
@@ -302,10 +354,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     !!user && roles.some((r) => user.user_roles.map(norm).includes(norm(r)));
 
   const inBuilding = (...buildingIds: string[]) =>
-    !!user && buildingIds.some((b) => user.building_ids.map(String).includes(String(b)));
+    !!user &&
+    buildingIds.some((b) =>
+      (user.building_ids || []).map(String).includes(String(b)),
+    );
 
   const hasUtility = (...utils: string[]) =>
     !!user && utils.some((u) => user.utility_role.map(norm).includes(norm(u)));
+
+  // module access (admin always true)
+  const hasAccess = (...modules: string[]) => {
+    if (!user) return false;
+    if (hasRole("admin")) return true;
+    const mine = (user.access_modules || []).map(norm);
+    return modules.some((m) => mine.includes(norm(m)));
+  };
 
   const value = useMemo<AuthContextType>(
     () => ({
@@ -327,8 +390,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       hasRole,
       inBuilding,
       hasUtility,
+      hasAccess,
     }),
-    [isLoggedIn, loading, token, expiresAt, user, deviceToken, deviceName]
+    [isLoggedIn, loading, token, expiresAt, user, deviceToken, deviceName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

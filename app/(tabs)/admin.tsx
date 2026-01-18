@@ -49,6 +49,88 @@ type Page = {
 
 const MOBILE_BREAKPOINT = 768;
 
+/**
+ * ✅ Normalize access keys so old camelCase values still work.
+ * Examples:
+ * - "readerDevices" -> "reader_devices"
+ * - "offlineSubmissions" -> "offline_submissions"
+ * - "assignTenants" -> "assign_tenants"
+ */
+function normalizeAccessKey(raw: any): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+
+  const lower = s.toLowerCase();
+
+  // explicit aliases for known modules
+  const alias: Record<string, string> = {
+    readerdevices: "reader_devices",
+    reader_device: "reader_devices",
+    readerdevicespanel: "reader_devices",
+
+    offlinesubmissions: "offline_submissions",
+    offline_submission: "offline_submissions",
+    offlinesubmission: "offline_submissions",
+
+    assigntenants: "assign_tenants",
+    assign_tenant: "assign_tenants",
+    assigntenant: "assign_tenants",
+
+    meterreadings: "meter_readings",
+    meter_reading: "meter_readings",
+
+    rateofchange: "rate_of_change",
+    rate_of_change: "rate_of_change",
+
+    // keep common ones as-is (but normalized)
+    buildings: "buildings",
+    stalls: "stalls",
+    tenants: "tenants",
+    meters: "meters",
+    billing: "billing",
+    vat: "vat",
+    withholding: "withholding",
+    scanner: "scanner",
+  };
+
+  if (alias[lower]) return alias[lower];
+
+  // generic camelCase -> snake_case fallback (and lowercase)
+  const snake = s
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
+
+  return snake;
+}
+
+function normalizeList(v: any): string[] {
+  if (Array.isArray(v))
+    return v.map((x) => normalizeAccessKey(x)).filter(Boolean);
+
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return [];
+
+    // try JSON
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) {
+        return parsed.map((x) => normalizeAccessKey(x)).filter(Boolean);
+      }
+    } catch {}
+
+    // csv
+    return s
+      .split(",")
+      .map((x) => normalizeAccessKey(x))
+      .filter(Boolean);
+  }
+
+  if (v == null) return [];
+  return [normalizeAccessKey(v)].filter(Boolean);
+}
+
 export default function AdminScreen() {
   const router = useRouter();
   const { token, user, logout } = useAuth();
@@ -60,7 +142,10 @@ export default function AdminScreen() {
 
   const { width } = useWindowDimensions();
   const isMobile = width < MOBILE_BREAKPOINT;
+
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // TAX dropdown (desktop)
   const [taxOpen, setTaxOpen] = useState(false);
   const [taxMobileOpen, setTaxMobileOpen] = useState(false);
   const taxBtnRef = useRef<any>(null);
@@ -82,14 +167,11 @@ export default function AdminScreen() {
     else openTaxMenu();
   };
 
+  // ---- role (from JWT user object) ----
   const role: string = useMemo(() => {
-    const rawRoles: any = user?.user_roles;
-    const roles: string[] = Array.isArray(rawRoles)
-      ? rawRoles.map((r: any) => String(r).trim().toLowerCase())
-      : typeof rawRoles === "string"
-      ? rawRoles.split(",").map((r) => r.trim().toLowerCase())
-      : [];
-
+    const roles = normalizeList(
+      (user as any)?.user_roles ?? (user as any)?.user_level
+    );
     if (roles.includes("admin")) return "admin";
     if (roles.includes("operator")) return "operator";
     if (roles.includes("biller")) return "biller";
@@ -97,6 +179,26 @@ export default function AdminScreen() {
     return "admin";
   }, [user]);
 
+  // ---- access modules (from JWT user object) ----
+  const accessModules = useMemo(() => {
+    const u: any = user || {};
+    const raw =
+      u.access_modules ?? u.access ?? u.accesses ?? u.user_access ?? [];
+    // ✅ normalize to snake_case and handle old camelCase
+    return new Set(normalizeList(raw));
+  }, [user]);
+
+  const hasAccess = (key: string) => {
+    if (role === "admin") return true; // admins see everything
+    if (!key) return true;
+    const k = normalizeAccessKey(key);
+    return accessModules.has(k);
+  };
+
+  /**
+   * Role-based allowed pages (base gate)
+   * Then we further restrict using access modules (checkbox gate)
+   */
   const roleAllowed: Record<string, Set<PageKey>> = useMemo(
     () => ({
       admin: new Set<PageKey>([
@@ -112,14 +214,78 @@ export default function AdminScreen() {
         "readerDevices",
         "offlineSubmissions",
       ]),
-      operator: new Set<PageKey>(["stalls", "tenants", "meters", "readings"]),
-      biller: new Set<PageKey>(["buildings", "wt", "vat", "tenants", "readings"]),
-      reader: new Set<PageKey>(["readings"]),
+      operator: new Set<PageKey>([
+        "buildings",
+        "stalls",
+        "wt",
+        "vat",
+        "tenants",
+        "assign",
+        "meters",
+        "readings",
+        "readerDevices",
+        "offlineSubmissions",
+      ]),
+      biller: new Set<PageKey>([
+        "buildings",
+        "stalls",
+        "wt",
+        "vat",
+        "tenants",
+        "assign",
+        "meters",
+        "readings",
+        "readerDevices",
+        "offlineSubmissions",
+      ]),
+      reader: new Set<PageKey>([
+        "buildings",
+        "stalls",
+        "wt",
+        "vat",
+        "tenants",
+        "assign",
+        "meters",
+        "readings",
+        "readerDevices",
+        "offlineSubmissions",
+      ]),
     }),
     []
   );
 
-  const allowed = roleAllowed[role] ?? roleAllowed.admin;
+  const allowedByRole = roleAllowed[role] ?? roleAllowed.admin;
+
+  /**
+   * Map each PageKey to backend access key (checkbox keys)
+   */
+  const accessKeyForPage: Partial<Record<PageKey, string>> = useMemo(
+    () => ({
+      buildings: "buildings",
+      stalls: "stalls",
+      tenants: "tenants",
+      assign: "assign_tenants",
+      meters: "meters",
+      readings: "meter_readings",
+      vat: "vat",
+      wt: "withholding",
+      readerDevices: "reader_devices",
+      offlineSubmissions: "offline_submissions",
+    }),
+    []
+  );
+
+  const canSee = (key: PageKey) => {
+    if (!allowedByRole.has(key)) return false;
+
+    // accounts is admin-only
+    if (key === "accounts") return role === "admin";
+
+    const accessKey = accessKeyForPage[key];
+    if (!accessKey) return true;
+
+    return hasAccess(accessKey);
+  };
 
   const pages: Page[] = useMemo(
     () => [
@@ -131,22 +297,28 @@ export default function AdminScreen() {
       { label: "Meters", key: "meters", icon: "speedometer" },
       { label: "Readings", key: "readings", icon: "analytics" },
       { label: "Reader Devices", key: "readerDevices", icon: "phone-portrait" },
-      { label: "Offline Submissions", key: "offlineSubmissions", icon: "cloud-upload" },
+      {
+        label: "Offline Submissions",
+        key: "offlineSubmissions",
+        icon: "cloud-upload",
+      },
     ],
     []
   );
 
   const visiblePages = useMemo(
-    () => pages.filter((p) => allowed.has(p.key)),
-    [pages, allowed]
+    () => pages.filter((p) => canSee(p.key)),
+    [pages, role, accessModules]
   );
 
   const taxChildren = useMemo(() => {
     const children: Page[] = [];
-    if (allowed.has("vat")) children.push({ label: "VAT", key: "vat", icon: "calculator" });
-    if (allowed.has("wt")) children.push({ label: "Withholding", key: "wt", icon: "receipt" });
+    if (canSee("vat"))
+      children.push({ label: "VAT", key: "vat", icon: "calculator" });
+    if (canSee("wt"))
+      children.push({ label: "Withholding", key: "wt", icon: "receipt" });
     return children;
-  }, [allowed]);
+  }, [role, accessModules]);
 
   const hasTax = taxChildren.length > 0;
 
@@ -158,33 +330,42 @@ export default function AdminScreen() {
   };
 
   const resolveInitial = (): PageKey => {
-    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
-    if (wanted && allowed.has(wanted)) return wanted;
-    return roleInitial[role] ?? "buildings";
+    const wanted = String(params?.panel || params?.tab || "")
+      .toLowerCase() as PageKey;
+    if (wanted && canSee(wanted)) return wanted;
+
+    const fallback = roleInitial[role] ?? "buildings";
+    if (canSee(fallback)) return fallback;
+
+    return (visiblePages[0]?.key ?? "buildings") as PageKey;
   };
 
   const [active, setActive] = useState<PageKey>(resolveInitial());
   const isTaxActive = active === "vat" || active === "wt";
 
   useEffect(() => {
-    const wanted = String(params?.panel || params?.tab || "").toLowerCase() as PageKey;
-    const allowedSet = roleAllowed[role] ?? roleAllowed.admin;
+    const wanted = String(params?.panel || params?.tab || "")
+      .toLowerCase() as PageKey;
 
-    if (wanted && allowedSet.has(wanted)) {
+    if (wanted && canSee(wanted)) {
       setActive(wanted);
-    } else if (!allowedSet.has(active)) {
-      setActive(roleInitial[role] ?? "buildings");
+      return;
     }
-  }, [role, params?.panel, params?.tab]);
+
+    if (!canSee(active)) {
+      setActive(resolveInitial());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, params?.panel, params?.tab, accessModules]);
 
   const applyRouteParam = (key: PageKey) => {
     try {
       router.setParams?.({ panel: key });
-    } catch {
-    }
+    } catch {}
   };
 
   const handleSelect = (key: PageKey) => {
+    if (!canSee(key)) return;
     setActive(key);
     applyRouteParam(key);
     setMenuOpen(false);
@@ -201,40 +382,53 @@ export default function AdminScreen() {
     switch (active) {
       case "accounts":
         return <AccountsPanel token={token} />;
+
       case "buildings":
         return <BuildingPanel token={token} />;
+
       case "stalls":
         return <StallsPanel token={token} />;
+
       case "wt":
         return <WithholdingPanel token={token} />;
+
       case "vat":
         return <VATPanel token={token} />;
+
       case "tenants":
         return <TenantsPanel token={token} />;
+
       case "assign":
         return <AssignTenantPanel token={token} />;
+
       case "meters":
         return <MeterPanel token={token} />;
+
       case "readings":
         return (
           <MeterReadingPanel
             token={token}
-            initialMeterId={params?.meterId ? String(params.meterId) : undefined}
+            initialMeterId={
+              params?.meterId ? String(params.meterId) : undefined
+            }
           />
         );
+
       case "readerDevices":
         return <ReaderDevicesPanel />;
+
       case "offlineSubmissions":
         return <OfflineSubmissionsPanel />;
+
       default:
         return null;
     }
   };
 
-  const displayName = user?.user_fullname ?? "";
+  const displayName = (user as any)?.user_fullname ?? "";
   const initials = displayName
     .split(" ")
-    .map((n) => n[0])
+    .map((n: string) => n[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
@@ -254,7 +448,12 @@ export default function AdminScreen() {
       : active === "wt"
       ? "Withholding"
       : visiblePages.find((p) => p.key === active)?.label || "Admin";
-  const RIGHT_KEYS = useMemo(() => new Set<PageKey>(["accounts", "readerDevices"]), []);
+
+  // Desktop: move Accounts + Reader Devices to far right
+  const RIGHT_KEYS = useMemo(
+    () => new Set<PageKey>(["accounts", "readerDevices"]),
+    []
+  );
   const rightTabs = useMemo(
     () => visiblePages.filter((p) => RIGHT_KEYS.has(p.key)),
     [visiblePages, RIGHT_KEYS]
@@ -263,6 +462,7 @@ export default function AdminScreen() {
     () => visiblePages.filter((p) => !RIGHT_KEYS.has(p.key)),
     [visiblePages, RIGHT_KEYS]
   );
+
   const buildingsIndex = useMemo(
     () => leftTabs.findIndex((p) => p.key === "buildings"),
     [leftTabs]
@@ -278,6 +478,27 @@ export default function AdminScreen() {
     return leftTabs.slice(buildingsIndex + 1);
   }, [leftTabs, buildingsIndex]);
 
+  const mobileNavPages = useMemo<Page[]>(() => {
+    const all: Page[] = [...beforeBuildings, ...afterBuildings, ...rightTabs];
+    const seen = new Set<PageKey>();
+    return all.filter((p) => {
+      if (seen.has(p.key)) return false;
+      seen.add(p.key);
+      return true;
+    });
+  }, [beforeBuildings, afterBuildings, rightTabs]);
+
+  const mobileNavWithTax = useMemo<{ before: Page[]; after: Page[] }>(() => {
+    if (!hasTax) return { before: mobileNavPages, after: [] };
+    const idxBuildings = mobileNavPages.findIndex((p) => p.key === "buildings");
+    const insertAt = idxBuildings >= 0 ? idxBuildings + 1 : 0;
+    return {
+      before: mobileNavPages.slice(0, insertAt),
+      after: mobileNavPages.slice(insertAt),
+    };
+  }, [mobileNavPages, hasTax]);
+
+
   const MobileMenu = () => (
     <Modal
       visible={menuOpen}
@@ -286,19 +507,28 @@ export default function AdminScreen() {
       onRequestClose={() => setMenuOpen(false)}
     >
       <View style={styles.modalOverlay}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)} />
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setMenuOpen(false)}
+        />
         <View style={styles.drawer}>
           <View style={styles.drawerHeader}>
             <View style={styles.drawerLogoRow}>
               <View style={styles.logoWrap}>
-                <Image source={require("../../assets/images/jdn.jpg")} style={styles.logo} />
+                <Image
+                  source={require("../../assets/images/jdn.jpg")}
+                  style={styles.logo}
+                />
               </View>
               <View>
                 <Text style={styles.drawerTitle}>Admin Portal</Text>
                 <Text style={styles.drawerSub}>Management Console</Text>
               </View>
             </View>
-            <TouchableOpacity onPress={() => setMenuOpen(false)} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={() => setMenuOpen(false)}
+              style={styles.closeBtn}
+            >
               <Ionicons name="close" size={22} color="#64748b" />
             </TouchableOpacity>
           </View>
@@ -308,8 +538,15 @@ export default function AdminScreen() {
               <Text style={styles.avatarText}>{initials || "U"}</Text>
             </View>
             <View style={styles.drawerUserInfo}>
-              <Text style={styles.drawerUserName}>{displayName || "User"}</Text>
-              <View style={[styles.roleBadge, { backgroundColor: currentRoleStyle.bg }]}>
+              <Text style={styles.drawerUserName}>
+                {displayName || "User"}
+              </Text>
+              <View
+                style={[
+                  styles.roleBadge,
+                  { backgroundColor: currentRoleStyle.bg },
+                ]}
+              >
                 <Text style={[styles.roleText, { color: currentRoleStyle.text }]}>
                   {role.charAt(0).toUpperCase() + role.slice(1)}
                 </Text>
@@ -320,7 +557,8 @@ export default function AdminScreen() {
           <ScrollView style={styles.drawerNav} showsVerticalScrollIndicator={false}>
             <Text style={styles.drawerLabel}>NAVIGATION</Text>
 
-            {beforeBuildings.map((page) => {
+            {/* ✅ Pages BEFORE TAX (includes Buildings) */}
+            {(hasTax ? mobileNavWithTax.before : mobileNavPages).map((page) => {
               const isActive2 = active === page.key;
               return (
                 <TouchableOpacity
@@ -329,36 +567,61 @@ export default function AdminScreen() {
                   style={[styles.drawerItem, isActive2 && styles.drawerItemActive]}
                   activeOpacity={0.7}
                 >
-                  <View style={[styles.drawerIconWrap, isActive2 && styles.drawerIconWrapActive]}>
+                  <View
+                    style={[
+                      styles.drawerIconWrap,
+                      isActive2 && styles.drawerIconWrapActive,
+                    ]}
+                  >
                     <Ionicons
-                      name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                      name={
+                        (isActive2 ? page.icon : `${page.icon}-outline`) as any
+                      }
                       size={18}
                       color={isActive2 ? "#fff" : "#64748b"}
                     />
                   </View>
-                  <Text style={[styles.drawerItemText, isActive2 && styles.drawerItemTextActive]}>
+                  <Text
+                    style={[
+                      styles.drawerItemText,
+                      isActive2 && styles.drawerItemTextActive,
+                    ]}
+                  >
                     {page.label}
                   </Text>
-                  {isActive2 && <Ionicons name="checkmark-circle" size={18} color="#6366f1" />}
+                  {isActive2 && (
+                    <Ionicons name="checkmark-circle" size={18} color="#6366f1" />
+                  )}
                 </TouchableOpacity>
               );
             })}
 
+            {/* ✅ TAX inserted here (middle: between Buildings and Stalls) */}
             {hasTax && (
-              <View style={{ marginTop: 8 }}>
+              <View style={{ marginTop: 2 }}>
                 <TouchableOpacity
                   onPress={() => setTaxMobileOpen((v) => !v)}
                   style={[styles.drawerItem, isTaxActive && styles.drawerItemActive]}
                   activeOpacity={0.7}
                 >
-                  <View style={[styles.drawerIconWrap, isTaxActive && styles.drawerIconWrapActive]}>
+                  <View
+                    style={[
+                      styles.drawerIconWrap,
+                      isTaxActive && styles.drawerIconWrapActive,
+                    ]}
+                  >
                     <Ionicons
                       name={(isTaxActive ? "cash" : "cash-outline") as any}
                       size={18}
                       color={isTaxActive ? "#fff" : "#64748b"}
                     />
                   </View>
-                  <Text style={[styles.drawerItemText, isTaxActive && styles.drawerItemTextActive]}>
+                  <Text
+                    style={[
+                      styles.drawerItemText,
+                      isTaxActive && styles.drawerItemTextActive,
+                    ]}
+                  >
                     TAX
                   </Text>
                   <Ionicons
@@ -379,7 +642,10 @@ export default function AdminScreen() {
                             handleSelect(child.key);
                             setMenuOpen(false);
                           }}
-                          style={[styles.drawerSubItem, childActive2 && styles.drawerSubItemActive]}
+                          style={[
+                            styles.drawerSubItem,
+                            childActive2 && styles.drawerSubItemActive,
+                          ]}
                           activeOpacity={0.7}
                         >
                           <Text
@@ -390,7 +656,9 @@ export default function AdminScreen() {
                           >
                             {child.label}
                           </Text>
-                          {childActive2 && <Ionicons name="checkmark" size={16} color="#6366f1" />}
+                          {childActive2 && (
+                            <Ionicons name="checkmark" size={16} color="#6366f1" />
+                          )}
                         </TouchableOpacity>
                       );
                     })}
@@ -399,33 +667,60 @@ export default function AdminScreen() {
               </View>
             )}
 
-            {afterBuildings.map((page) => {
-              const isActive2 = active === page.key;
-              return (
-                <TouchableOpacity
-                  key={page.key}
-                  onPress={() => handleSelect(page.key)}
-                  style={[styles.drawerItem, isActive2 && styles.drawerItemActive]}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.drawerIconWrap, isActive2 && styles.drawerIconWrapActive]}>
-                    <Ionicons
-                      name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
-                      size={18}
-                      color={isActive2 ? "#fff" : "#64748b"}
-                    />
-                  </View>
-                  <Text style={[styles.drawerItemText, isActive2 && styles.drawerItemTextActive]}>
-                    {page.label}
-                  </Text>
-                  {isActive2 && <Ionicons name="checkmark-circle" size={18} color="#6366f1" />}
-                </TouchableOpacity>
-              );
-            })}
+            {/* ✅ Pages AFTER TAX (starts with Stalls if present) */}
+            {hasTax &&
+              mobileNavWithTax.after.map((page) => {
+                const isActive2 = active === page.key;
+                return (
+                  <TouchableOpacity
+                    key={page.key}
+                    onPress={() => handleSelect(page.key)}
+                    style={[
+                      styles.drawerItem,
+                      isActive2 && styles.drawerItemActive,
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.drawerIconWrap,
+                        isActive2 && styles.drawerIconWrapActive,
+                      ]}
+                    >
+                      <Ionicons
+                        name={
+                          (isActive2 ? page.icon : `${page.icon}-outline`) as any
+                        }
+                        size={18}
+                        color={isActive2 ? "#fff" : "#64748b"}
+                      />
+                    </View>
+                    <Text
+                      style={[
+                        styles.drawerItemText,
+                        isActive2 && styles.drawerItemTextActive,
+                      ]}
+                    >
+                      {page.label}
+                    </Text>
+                    {isActive2 && (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={18}
+                        color="#6366f1"
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
           </ScrollView>
 
           <View style={styles.drawerFooter}>
-            <TouchableOpacity onPress={handleLogout} style={styles.drawerLogout} activeOpacity={0.7}>
+            <TouchableOpacity
+              onPress={handleLogout}
+              style={styles.drawerLogout}
+              activeOpacity={0.7}
+            >
               <Ionicons name="log-out-outline" size={20} color="#ef4444" />
               <Text style={styles.drawerLogoutText}>Logout</Text>
             </TouchableOpacity>
@@ -443,7 +738,10 @@ export default function AdminScreen() {
         <View style={styles.headerLeft}>
           {isMobile ? (
             <>
-              <TouchableOpacity onPress={() => setMenuOpen(true)} style={styles.hamburger}>
+              <TouchableOpacity
+                onPress={() => setMenuOpen(true)}
+                style={styles.hamburger}
+              >
                 <Ionicons name="menu" size={24} color="#0f172a" />
               </TouchableOpacity>
               <Text style={styles.mobileTitle}>{activePageLabel}</Text>
@@ -451,7 +749,10 @@ export default function AdminScreen() {
           ) : (
             <>
               <View style={styles.logoWrap}>
-                <Image source={require("../../assets/images/jdn.jpg")} style={styles.logo} />
+                <Image
+                  source={require("../../assets/images/jdn.jpg")}
+                  style={styles.logo}
+                />
               </View>
               <View style={styles.titleWrap}>
                 <Text style={styles.brandTitle}>Admin Portal</Text>
@@ -471,7 +772,12 @@ export default function AdminScreen() {
                 <Text style={styles.userName} numberOfLines={1}>
                   {displayName || "User"}
                 </Text>
-                <View style={[styles.roleBadge, { backgroundColor: currentRoleStyle.bg }]}>
+                <View
+                  style={[
+                    styles.roleBadge,
+                    { backgroundColor: currentRoleStyle.bg },
+                  ]}
+                >
                   <Text style={[styles.roleText, { color: currentRoleStyle.text }]}>
                     {role.charAt(0).toUpperCase() + role.slice(1)}
                   </Text>
@@ -479,7 +785,11 @@ export default function AdminScreen() {
               </View>
             </View>
             <View style={styles.headerDivider} />
-            <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn} activeOpacity={0.7}>
+            <TouchableOpacity
+              onPress={handleLogout}
+              style={styles.logoutBtn}
+              activeOpacity={0.7}
+            >
               <Ionicons name="log-out-outline" size={18} color="#64748b" />
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
@@ -495,19 +805,17 @@ export default function AdminScreen() {
         )}
       </View>
 
-      {/* ✅ Desktop tabs: LEFT scrollable + RIGHT pinned */}
+      {/* Desktop tabs */}
       {!isMobile && (
         <>
           <View style={styles.tabBar}>
             <View style={styles.tabBarRow}>
-              {/* LEFT (scrollable) */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.tabScroll}
                 style={styles.leftTabScroll}
               >
-                {/* BEFORE + Buildings */}
                 {beforeBuildings.map((page) => {
                   const isActive2 = active === page.key;
                   return (
@@ -518,7 +826,9 @@ export default function AdminScreen() {
                       activeOpacity={0.7}
                     >
                       <Ionicons
-                        name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                        name={
+                          (isActive2 ? page.icon : `${page.icon}-outline`) as any
+                        }
                         size={16}
                         color={isActive2 ? "#6366f1" : "#64748b"}
                       />
@@ -530,7 +840,7 @@ export default function AdminScreen() {
                   );
                 })}
 
-                {/* TAX button (dropdown is in a Modal, not inline) */}
+                {/* Desktop: TAX already between Buildings and Stalls */}
                 {hasTax && (
                   <View style={styles.taxWrap}>
                     <TouchableOpacity
@@ -544,7 +854,9 @@ export default function AdminScreen() {
                         size={16}
                         color={isTaxActive ? "#6366f1" : "#64748b"}
                       />
-                      <Text style={[styles.tabText, isTaxActive && styles.tabTextActive]}>TAX</Text>
+                      <Text style={[styles.tabText, isTaxActive && styles.tabTextActive]}>
+                        TAX
+                      </Text>
                       <Ionicons
                         name={taxOpen ? "chevron-up" : "chevron-down"}
                         size={14}
@@ -555,7 +867,6 @@ export default function AdminScreen() {
                   </View>
                 )}
 
-                {/* AFTER Buildings (Stalls and below) */}
                 {afterBuildings.map((page) => {
                   const isActive2 = active === page.key;
                   return (
@@ -566,7 +877,9 @@ export default function AdminScreen() {
                       activeOpacity={0.7}
                     >
                       <Ionicons
-                        name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                        name={
+                          (isActive2 ? page.icon : `${page.icon}-outline`) as any
+                        }
                         size={16}
                         color={isActive2 ? "#6366f1" : "#64748b"}
                       />
@@ -579,7 +892,6 @@ export default function AdminScreen() {
                 })}
               </ScrollView>
 
-              {/* RIGHT (pinned) */}
               <View style={styles.rightTabs}>
                 {rightTabs.map((page) => {
                   const isActive2 = active === page.key;
@@ -591,7 +903,9 @@ export default function AdminScreen() {
                       activeOpacity={0.7}
                     >
                       <Ionicons
-                        name={(isActive2 ? page.icon : `${page.icon}-outline`) as any}
+                        name={
+                          (isActive2 ? page.icon : `${page.icon}-outline`) as any
+                        }
                         size={16}
                         color={isActive2 ? "#6366f1" : "#64748b"}
                       />
@@ -606,10 +920,17 @@ export default function AdminScreen() {
             </View>
           </View>
 
-          {/* ✅ TAX dropdown as a Modal (fixes ScrollView clipping on web) */}
           {taxOpen && hasTax && (
-            <Modal transparent animationType="fade" visible onRequestClose={() => setTaxOpen(false)}>
-              <Pressable style={styles.taxModalBackdrop} onPress={() => setTaxOpen(false)} />
+            <Modal
+              transparent
+              animationType="fade"
+              visible
+              onRequestClose={() => setTaxOpen(false)}
+            >
+              <Pressable
+                style={styles.taxModalBackdrop}
+                onPress={() => setTaxOpen(false)}
+              />
               <View
                 style={[
                   styles.taxModalMenu,
@@ -630,11 +951,18 @@ export default function AdminScreen() {
                       activeOpacity={0.8}
                     >
                       <Ionicons
-                        name={(childActive2 ? child.icon : `${child.icon}-outline`) as any}
+                        name={
+                          (childActive2 ? child.icon : `${child.icon}-outline`) as any
+                        }
                         size={16}
                         color={childActive2 ? "#6366f1" : "#64748b"}
                       />
-                      <Text style={[styles.taxItemText, childActive2 && styles.taxItemTextActive]}>
+                      <Text
+                        style={[
+                          styles.taxItemText,
+                          childActive2 && styles.taxItemTextActive,
+                        ]}
+                      >
                         {child.label}
                       </Text>
                     </TouchableOpacity>
@@ -646,7 +974,9 @@ export default function AdminScreen() {
         </>
       )}
 
-      <View style={[styles.content, isMobile && styles.contentMobile]}>{renderContent()}</View>
+      <View style={[styles.content, isMobile && styles.contentMobile]}>
+        {renderContent()}
+      </View>
     </SafeAreaView>
   );
 }
@@ -699,7 +1029,12 @@ const styles = StyleSheet.create({
   },
   logo: { width: 42, height: 42 },
   titleWrap: { gap: 1 },
-  brandTitle: { fontSize: 17, fontWeight: "700", color: "#0f172a", letterSpacing: -0.3 },
+  brandTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+    letterSpacing: -0.3,
+  },
   brandSub: { fontSize: 12, color: "#94a3b8", fontWeight: "500" },
 
   headerRight: { flexDirection: "row", alignItems: "center", gap: 16 },
@@ -728,8 +1063,18 @@ const styles = StyleSheet.create({
   userInfo: { gap: 2 },
   userName: { fontSize: 13, fontWeight: "600", color: "#0f172a", maxWidth: 120 },
 
-  roleBadge: { alignSelf: "flex-start", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  roleText: { fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.3 },
+  roleBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  roleText: {
+    fontSize: 10,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
 
   headerDivider: { width: 1, height: 28, backgroundColor: "#e2e8f0" },
   logoutBtn: {
@@ -752,16 +1097,12 @@ const styles = StyleSheet.create({
     zIndex: 2000,
     overflow: "visible",
   },
-
   tabBarRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  leftTabScroll: {
-    flex: 1,
-    overflow: "visible",
-  },
+  leftTabScroll: { flex: 1, overflow: "visible" },
   rightTabs: {
     flexDirection: "row",
     alignItems: "center",
@@ -769,7 +1110,6 @@ const styles = StyleSheet.create({
     paddingRight: 16,
     paddingLeft: 8,
   },
-
   tabScroll: {
     paddingHorizontal: 16,
     gap: 4,
@@ -799,16 +1139,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 2,
   },
 
-  taxWrap: {
-    position: "relative",
-    zIndex: 3000,
-    overflow: "visible",
-  },
-
-  taxModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "transparent",
-  },
+  taxWrap: { position: "relative", zIndex: 3000, overflow: "visible" },
+  taxModalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "transparent" },
   taxModalMenu: {
     position: "absolute",
     backgroundColor: "#ffffff",
@@ -827,7 +1159,6 @@ const styles = StyleSheet.create({
           shadowOffset: { width: 0, height: 10 },
         }),
   },
-
   taxItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -843,7 +1174,10 @@ const styles = StyleSheet.create({
   contentMobile: { padding: 12 },
 
   modalOverlay: { flex: 1, flexDirection: "row" },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(15, 23, 42, 0.4)" },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.4)",
+  },
 
   drawer: {
     width: 300,
@@ -925,7 +1259,12 @@ const styles = StyleSheet.create({
   },
   drawerIconWrapActive: { backgroundColor: "#6366f1" },
 
-  drawerItemText: { flex: 1, fontSize: 14, fontWeight: "500", color: "#64748b" },
+  drawerItemText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#64748b",
+  },
   drawerItemTextActive: { color: "#0f172a", fontWeight: "600" },
 
   drawerSubList: {

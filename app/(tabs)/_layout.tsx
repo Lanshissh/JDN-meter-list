@@ -11,8 +11,10 @@ import { Slot, useRouter, Tabs } from "expo-router";
 import SideNav, { TabKey } from "../../components/SideNav";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../contexts/AuthContext";
+
 const IDLE_LIMIT_MS = 60 * 60 * 1000;
 const WARN_BEFORE_MS = 2 * 60 * 1000;
+
 function IdleSessionGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { logout } = useAuth();
@@ -23,6 +25,7 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
   const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const clearAll = () => {
     if (warnTimerRef.current) clearTimeout(warnTimerRef.current);
     if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
@@ -31,9 +34,11 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
     logoutTimerRef.current = null;
     tickerRef.current = null;
   };
+
   const scheduleAll = () => {
     clearAll();
     const msToWarn = Math.max(0, IDLE_LIMIT_MS - WARN_BEFORE_MS);
+
     warnTimerRef.current = setTimeout(() => {
       setSecondsLeft(Math.round(WARN_BEFORE_MS / 1000));
       setWarnVisible(true);
@@ -41,6 +46,7 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
         setSecondsLeft((s) => (s > 0 ? s - 1 : 0));
       }, 1000);
     }, msToWarn);
+
     logoutTimerRef.current = setTimeout(async () => {
       clearAll();
       setWarnVisible(false);
@@ -51,10 +57,12 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
       }
     }, IDLE_LIMIT_MS);
   };
+
   const onActivity = () => {
     setWarnVisible(false);
     scheduleAll();
   };
+
   useEffect(() => {
     scheduleAll();
     if (Platform.OS === "web" && typeof window !== "undefined") {
@@ -67,6 +75,7 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
           onActivity();
         }
       };
+
       const winEvents: (keyof WindowEventMap)[] = [
         "mousemove",
         "mousedown",
@@ -75,6 +84,7 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
         "touchstart",
         "focus",
       ];
+
       winEvents.forEach((ev) =>
         window.addEventListener(
           ev,
@@ -82,7 +92,9 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
           { passive: true } as any,
         ),
       );
+
       document.addEventListener("visibilitychange", onVisible);
+
       return () => {
         clearAll();
         winEvents.forEach((ev) =>
@@ -91,14 +103,17 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
         document.removeEventListener("visibilitychange", onVisible);
       };
     }
+
     return () => clearAll();
   }, []);
+
   useEffect(() => {
     if (!warnVisible && tickerRef.current) {
       clearInterval(tickerRef.current);
       tickerRef.current = null;
     }
   }, [warnVisible]);
+
   return (
     <View style={{ flex: 1 }} onTouchStart={onActivity}>
       {children}
@@ -128,11 +143,34 @@ function IdleSessionGuard({ children }: { children: React.ReactNode }) {
     </View>
   );
 }
+
 export default function TabLayout() {
   const [activeTab, setActiveTab] = useState<TabKey>("admin");
   const router = useRouter();
-  const { logout } = useAuth();
+  const { logout, hasAccess, hasRole } = useAuth();
+
+  // Keep this consistent with SideNav.tsx
+  const canSeeScanner =
+    hasRole("admin") || hasRole("reader") || hasAccess("scanner");
+
+  // If user loses scanner access while currently on scanner, force back to admin.
+  useEffect(() => {
+    if (activeTab === "scanner" && !canSeeScanner) {
+      setActiveTab("admin");
+      try {
+        router.replace("/(tabs)/admin" as any);
+      } catch {}
+    }
+  }, [activeTab, canSeeScanner, router]);
+
   const handleSelectTab = async (tab: TabKey) => {
+    // Guard: if user lost access, prevent navigating to scanner
+    if (tab === "scanner" && !canSeeScanner) {
+      setActiveTab("admin");
+      router.replace("/(tabs)/admin" as any);
+      return;
+    }
+
     setActiveTab(tab);
     if (tab === "logout") {
       await logout();
@@ -141,6 +179,7 @@ export default function TabLayout() {
       router.replace(`/(tabs)/${tab}` as any);
     }
   };
+
   if (Platform.OS === "web") {
     return (
       <IdleSessionGuard>
@@ -153,6 +192,7 @@ export default function TabLayout() {
       </IdleSessionGuard>
     );
   }
+
   return (
     <IdleSessionGuard>
       <Tabs
@@ -179,18 +219,22 @@ export default function TabLayout() {
             ),
           }}
         />
-        <Tabs.Screen
-          name="scanner"
-          options={{
-            title: "Scanner",
-            tabBarIcon: ({ color, focused }) => (
-              <TabBarIcon
-                name={focused ? "scan" : "scan-outline"}
-                color={color}
-              />
-            ),
-          }}
-        />
+
+        {canSeeScanner ? (
+          <Tabs.Screen
+            name="scanner"
+            options={{
+              title: "Scanner",
+              tabBarIcon: ({ color, focused }) => (
+                <TabBarIcon
+                  name={focused ? "scan" : "scan-outline"}
+                  color={color}
+                />
+              ),
+            }}
+          />
+        ) : null}
+
         <Tabs.Screen
           name="billing"
           options={{
@@ -219,9 +263,11 @@ export default function TabLayout() {
     </IdleSessionGuard>
   );
 }
+
 function TabBarIcon({ name, color }: { name: string; color: string }) {
   return <Ionicons name={name as any} size={24} color={color} />;
 }
+
 const styles = StyleSheet.create({
   container: { flex: 1, flexDirection: "row", backgroundColor: "#f9f9f9" },
   content: { flex: 1 },

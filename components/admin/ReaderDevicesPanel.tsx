@@ -60,6 +60,20 @@ function notify(title: string, message?: string) {
   }
 }
 
+function explainAxiosError(e: any, fallback: string) {
+  const status = e?.response?.status;
+  const serverMsg = pickMessage(e?.response?.data);
+  const msg = serverMsg || e?.message || fallback;
+
+  if (status === 401) {
+    return `${toText(msg)}\n\nHint: Your session may be expired. Try logging in again.`;
+  }
+  if (status === 403) {
+    return `${toText(msg)}\n\nHint: Reader Devices management requires role: admin/operator/biller AND access module: reader_devices.`;
+  }
+  return toText(msg);
+}
+
 const Chip = ({
   label,
   active,
@@ -85,17 +99,29 @@ const Chip = ({
 );
 
 export default function ReaderDevicesPanel() {
-  const { token, hasRole } = useAuth();
+  const { token, hasRole, hasAccess } = useAuth();
+
   const isAdmin = hasRole("admin");
+  const isOperator = hasRole("operator");
+  const isBiller = hasRole("biller");
+
+  // ✅ Option B:
+  // Allow admin/operator/biller as long as they have reader_devices access (admin bypass)
+  const roleOk = isAdmin || isOperator || isBiller;
+  const accessOk = isAdmin || hasAccess("reader_devices");
+  const canUse = roleOk && accessOk;
 
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
 
   const api = useMemo(() => {
+    const t = token ? String(token).trim() : "";
+    const authHeader = t ? (/^Bearer\s/i.test(t) ? t : `Bearer ${t}`) : "";
+
     return axios.create({
       baseURL: BASE_API,
       timeout: 20000,
-      headers: { Authorization: `Bearer ${token ?? ""}` },
+      headers: { Authorization: authHeader },
     });
   }, [token]);
 
@@ -132,19 +158,42 @@ export default function ReaderDevicesPanel() {
         setError(toText(msg));
       }
     } catch (e: any) {
-      const msg =
-        pickMessage(e?.response?.data) || e?.message || "Failed to load devices.";
-      setError(toText(msg));
       setDevices([]);
+      setError(explainAxiosError(e, "Failed to load devices."));
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (token && isAdmin) fetchDevices();
+    if (token && canUse) fetchDevices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, isAdmin]);
+  }, [token, canUse]);
+
+  if (!roleOk || !accessOk) {
+    return (
+      <View style={styles.selectEmpty}>
+        <Ionicons name="lock-closed-outline" size={44} color="#cbd5e1" />
+        <Text style={styles.emptyTitle}>Forbidden: Insufficient permissions</Text>
+
+        {!roleOk && (
+          <Text style={styles.emptyText}>
+            Your role is not allowed here. Required role: admin / operator / biller.
+          </Text>
+        )}
+
+        {!accessOk && (
+          <Text style={styles.emptyText}>
+            Your account is missing access. Required access: reader_devices.
+          </Text>
+        )}
+
+        <Text style={[styles.emptyText, { marginTop: 6 }]}>
+          Try logging out and logging in again after the admin updates your access.
+        </Text>
+      </View>
+    );
+  }
 
   const onRegister = async () => {
     const device_serial = serial.trim().toUpperCase();
@@ -167,9 +216,7 @@ export default function ReaderDevicesPanel() {
       setName("");
       await fetchDevices();
     } catch (e: any) {
-      const msg =
-        pickMessage(e?.response?.data) || e?.message || "Register failed.";
-      notify("Register failed", toText(msg));
+      notify("Register failed", explainAxiosError(e, "Register failed."));
     } finally {
       setLoading(false);
     }
@@ -183,9 +230,7 @@ export default function ReaderDevicesPanel() {
       await api.patch(`/reader-devices/${d.id}`, { status: next });
       await fetchDevices();
     } catch (e: any) {
-      const msg =
-        pickMessage(e?.response?.data) || e?.message || "Update failed.";
-      notify("Update failed", toText(msg));
+      notify("Update failed", explainAxiosError(e, "Update failed."));
     } finally {
       setLoading(false);
     }
@@ -206,11 +251,7 @@ export default function ReaderDevicesPanel() {
               await api.delete(`/reader-devices/${d.id}`);
               await fetchDevices();
             } catch (e: any) {
-              const msg =
-                pickMessage(e?.response?.data) ||
-                e?.message ||
-                "Delete failed.";
-              notify("Delete failed", toText(msg));
+              notify("Delete failed", explainAxiosError(e, "Delete failed."));
             } finally {
               setLoading(false);
             }
@@ -240,21 +281,10 @@ export default function ReaderDevicesPanel() {
       });
     }
 
-    // nice stable ordering
     return [...arr].sort((a, b) =>
       String(a.device_serial || "").localeCompare(String(b.device_serial || "")),
     );
   }, [devices, query, statusFilter]);
-
-  if (!isAdmin) {
-    return (
-      <View style={styles.selectEmpty}>
-        <Ionicons name="lock-closed-outline" size={44} color="#cbd5e1" />
-        <Text style={styles.emptyTitle}>Admin only</Text>
-        <Text style={styles.emptyText}>You don’t have access to this panel.</Text>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.page}>
@@ -275,7 +305,6 @@ export default function ReaderDevicesPanel() {
             </View>
           ) : null}
 
-          {/* Search + Filters row (same vibe as StallsPanel) */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons
@@ -292,10 +321,7 @@ export default function ReaderDevicesPanel() {
                 onChangeText={setQuery}
               />
               {!!query && (
-                <TouchableOpacity
-                  onPress={() => setQuery("")}
-                  style={styles.clearBtn}
-                >
+                <TouchableOpacity onPress={() => setQuery("")} style={styles.clearBtn}>
                   <Ionicons name="close" size={14} color="#64748b" />
                 </TouchableOpacity>
               )}
@@ -325,45 +351,12 @@ export default function ReaderDevicesPanel() {
             </TouchableOpacity>
           </View>
 
-          {/* Status chips (inline, consistent) */}
           <View style={{ marginTop: 6, marginBottom: 12 }}>
-            {isMobile ? (
-              <ScrollViewRow>
-                <Chip
-                  label="All"
-                  active={statusFilter === "all"}
-                  onPress={() => setStatusFilter("all")}
-                />
-                <Chip
-                  label="Active"
-                  active={statusFilter === "active"}
-                  onPress={() => setStatusFilter("active")}
-                />
-                <Chip
-                  label="Blocked"
-                  active={statusFilter === "blocked"}
-                  onPress={() => setStatusFilter("blocked")}
-                />
-              </ScrollViewRow>
-            ) : (
-              <View style={styles.chipsRow}>
-                <Chip
-                  label="All"
-                  active={statusFilter === "all"}
-                  onPress={() => setStatusFilter("all")}
-                />
-                <Chip
-                  label="Active"
-                  active={statusFilter === "active"}
-                  onPress={() => setStatusFilter("active")}
-                />
-                <Chip
-                  label="Blocked"
-                  active={statusFilter === "blocked"}
-                  onPress={() => setStatusFilter("blocked")}
-                />
-              </View>
-            )}
+            <View style={styles.chipsRow}>
+              <Chip label="All" active={statusFilter === "all"} onPress={() => setStatusFilter("all")} />
+              <Chip label="Active" active={statusFilter === "active"} onPress={() => setStatusFilter("active")} />
+              <Chip label="Blocked" active={statusFilter === "blocked"} onPress={() => setStatusFilter("blocked")} />
+            </View>
           </View>
 
           <FlatList
@@ -393,12 +386,9 @@ export default function ReaderDevicesPanel() {
                       <Text style={styles.rowSub}>(#{item.id})</Text>
                     </Text>
                     <Text style={styles.rowMeta}>
-                      Name: {toText(item.device_name || "—")} • Status:{" "}
-                      {toText(item.status)}
+                      Name: {toText(item.device_name || "—")} • Status: {toText(item.status)}
                     </Text>
-                    <Text style={styles.rowMetaSmall}>
-                      Token: {toText(item.device_token)}
-                    </Text>
+                    <Text style={styles.rowMetaSmall}>Token: {toText(item.device_token)}</Text>
                   </View>
 
                   <View style={isMobile ? styles.rowActionsMobile : styles.rowActions}>
@@ -433,7 +423,6 @@ export default function ReaderDevicesPanel() {
             }}
           />
 
-          {/* Filters Modal (design consistent) */}
           <Modal
             visible={filtersVisible}
             transparent
@@ -447,28 +436,13 @@ export default function ReaderDevicesPanel() {
 
                 <Text style={styles.dropdownLabel}>Status</Text>
                 <View style={styles.chipsRow}>
-                  <Chip
-                    label="All"
-                    active={statusFilter === "all"}
-                    onPress={() => setStatusFilter("all")}
-                  />
-                  <Chip
-                    label="Active"
-                    active={statusFilter === "active"}
-                    onPress={() => setStatusFilter("active")}
-                  />
-                  <Chip
-                    label="Blocked"
-                    active={statusFilter === "blocked"}
-                    onPress={() => setStatusFilter("blocked")}
-                  />
+                  <Chip label="All" active={statusFilter === "all"} onPress={() => setStatusFilter("all")} />
+                  <Chip label="Active" active={statusFilter === "active"} onPress={() => setStatusFilter("active")} />
+                  <Chip label="Blocked" active={statusFilter === "blocked"} onPress={() => setStatusFilter("blocked")} />
                 </View>
 
                 <View style={styles.modalActions}>
-                  <TouchableOpacity
-                    style={styles.btn}
-                    onPress={() => setFiltersVisible(false)}
-                  >
+                  <TouchableOpacity style={styles.btn} onPress={() => setFiltersVisible(false)}>
                     <Text style={styles.btnText}>Done</Text>
                   </TouchableOpacity>
                 </View>
@@ -476,7 +450,6 @@ export default function ReaderDevicesPanel() {
             </View>
           </Modal>
 
-          {/* Register Modal (kept logic, improved design) */}
           <Modal
             visible={addOpen}
             transparent
@@ -521,30 +494,13 @@ export default function ReaderDevicesPanel() {
                 </View>
 
                 <Text style={styles.hint}>
-                  Token is generated by server. Reader resolves it on login using the
-                  serial.
+                  Token is generated by server. Reader resolves it on login using the serial.
                 </Text>
               </View>
             </View>
           </Modal>
         </View>
       </View>
-    </View>
-  );
-}
-
-/** small helper to mimic StallsPanel horizontal chips spacing */
-function ScrollViewRow({ children }: { children: React.ReactNode }) {
-  return (
-    <View style={{ flexDirection: "row" }}>
-      <FlatList
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        data={React.Children.toArray(children)}
-        keyExtractor={(_, i) => String(i)}
-        contentContainerStyle={styles.chipsRowHorizontal}
-        renderItem={({ item }) => item as any}
-      />
     </View>
   );
 }
@@ -641,7 +597,6 @@ const styles = StyleSheet.create({
   },
 
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chipsRowHorizontal: { paddingRight: 4, gap: 8 },
 
   chip: {
     borderWidth: 1,
@@ -712,8 +667,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     paddingVertical: 30,
+    paddingHorizontal: 18,
   },
-  emptyTitle: { fontWeight: "800", color: "#0f172a" },
+  emptyTitle: { fontWeight: "800", color: "#0f172a", textAlign: "center" },
   emptyText: { color: "#94a3b8", textAlign: "center" },
 
   promptOverlay: {

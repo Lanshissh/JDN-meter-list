@@ -69,7 +69,7 @@ function toText(v: any) {
   if (typeof v === "number") return String(v);
   if (typeof v === "boolean") return v ? "true" : "false";
   try {
-    return JSON.stringify(v);
+    return JSON.stringify(v, null, 2);
   } catch {
     return String(v);
   }
@@ -82,6 +82,21 @@ function pickMessage(data: any) {
     data?.hint ||
     (typeof data === "string" ? data : null)
   );
+}
+
+function explainAxiosError(e: any, fallback: string) {
+  const status = e?.response?.status;
+  const serverMsg = pickMessage(e?.response?.data);
+  const msg = serverMsg || e?.message || fallback;
+
+  // Add helpful hint for common auth failures
+  if (status === 401) {
+    return `${toText(msg)}\n\nHint: Your session may be expired. Try logging in again.`;
+  }
+  if (status === 403) {
+    return `${toText(msg)}\n\nHint: You need (role: admin/operator/biller) AND access module: offline_submissions OR meter_readings.`;
+  }
+  return toText(msg);
 }
 
 const dateOf = (s?: string) => (s ? Date.parse(s) || 0 : 0);
@@ -111,17 +126,32 @@ const Chip = ({
 );
 
 export default function OfflineSubmissionsPanel() {
-  const { token, hasRole } = useAuth();
+  const { token, hasRole, hasAccess } = useAuth();
+
+  // ✅ Match backend:
+  // - Role must be admin/operator/biller
+  // - Access must include offline_submissions OR meter_readings (admin always allowed)
   const isAdmin = hasRole("admin");
+  const isOperator = hasRole("operator");
+  const isBiller = hasRole("biller");
+
+  const roleOk = isAdmin || isOperator || isBiller;
+  const accessOk = isAdmin || hasAccess("offline_submissions", "meter_readings");
+
+  const canUse = roleOk && accessOk;
 
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
 
   const api = useMemo(() => {
+    const auth =
+      token && String(token).trim()
+        ? { Authorization: /^Bearer\s/i.test(String(token).trim()) ? String(token).trim() : `Bearer ${String(token).trim()}` }
+        : {};
     return axios.create({
       baseURL: BASE_API,
       timeout: 25000,
-      headers: { Authorization: `Bearer ${token ?? ""}` },
+      headers: auth,
     });
   }, [token]);
 
@@ -160,12 +190,8 @@ export default function OfflineSubmissionsPanel() {
         setError(toText(pickMessage(res.data) || "Unexpected server response."));
       }
     } catch (e: any) {
-      const msg =
-        pickMessage(e?.response?.data) ||
-        e?.message ||
-        "Failed to load pending submissions.";
-      setError(toText(msg));
       setItems([]);
+      setError(explainAxiosError(e, "Failed to load pending submissions."));
     } finally {
       setBusy(false);
     }
@@ -210,25 +236,23 @@ export default function OfflineSubmissionsPanel() {
       }
 
       setMeterToBuilding(mtb);
-
-      // Optional: auto-pick first building if none selected (same vibe as "forces selection")
-      // Comment this out if you want the user to manually choose every time.
-      // if (!buildingFilter && bList.length > 0) setBuildingFilter(bList[0].building_id);
     } catch {
       // ignore lookup errors; UI still works but building mapping might be incomplete
     }
   };
 
   useEffect(() => {
-    if (token && isAdmin) {
+    if (token && canUse) {
       (async () => {
         await Promise.all([fetchPending(), fetchLookups()]);
       })();
     } else {
       setBusy(false);
+      setItems([]);
+      setError("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, isAdmin]);
+  }, [token, canUse]);
 
   const buildingLabel = useMemo(() => {
     const map = new Map<string, string>();
@@ -267,9 +291,8 @@ export default function OfflineSubmissionsPanel() {
       await api.post(`/offlineExport/approve/${id}`);
       await fetchPending();
     } catch (e: any) {
-      const msg =
-        pickMessage(e?.response?.data) || e?.message || "Approve failed.";
-      notify("Approve failed", toText(msg));
+      const msg = explainAxiosError(e, "Approve failed.");
+      notify("Approve failed", msg);
     } finally {
       setSubmitting(false);
     }
@@ -281,20 +304,38 @@ export default function OfflineSubmissionsPanel() {
       await api.post(`/offlineExport/reject/${id}`);
       await fetchPending();
     } catch (e: any) {
-      const msg =
-        pickMessage(e?.response?.data) || e?.message || "Reject failed.";
-      notify("Reject failed", toText(msg));
+      const msg = explainAxiosError(e, "Reject failed.");
+      notify("Reject failed", msg);
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (!isAdmin) {
+  // Better “no access” messaging: tell user if it's role or access that failed
+  if (!roleOk || !accessOk) {
+    const missingRole = !roleOk;
+    const missingAccess = !accessOk;
+
     return (
       <View style={styles.selectBuildingEmpty}>
         <Ionicons name="lock-closed-outline" size={44} color="#cbd5e1" />
-        <Text style={styles.emptyTitle}>Admin only</Text>
-        <Text style={styles.emptyText}>You don’t have access to this panel.</Text>
+        <Text style={styles.emptyTitle}>Forbidden: Insufficient permissions</Text>
+
+        {missingRole && (
+          <Text style={styles.emptyText}>
+            Your role is not allowed here. Required role: admin / operator / biller.
+          </Text>
+        )}
+
+        {missingAccess && (
+          <Text style={styles.emptyText}>
+            Your account is missing access. Required access: offline_submissions OR meter_readings.
+          </Text>
+        )}
+
+        <Text style={[styles.emptyText, { marginTop: 6 }]}>
+          Try logging out and logging in again after the admin updates your access.
+        </Text>
       </View>
     );
   }
@@ -442,7 +483,9 @@ export default function OfflineSubmissionsPanel() {
                         Reader: {toText(item.reader_user_id)}
                         {item.device_serial
                           ? ` • Device: ${toText(item.device_serial)}${
-                              item.device_name ? ` (${toText(item.device_name)})` : ""
+                              item.device_name
+                                ? ` (${toText(item.device_name)})`
+                                : ""
                             }`
                           : ""}
                       </Text>
@@ -452,7 +495,9 @@ export default function OfflineSubmissionsPanel() {
                         {item.submitted_at
                           ? new Date(item.submitted_at).toLocaleString()
                           : "—"}
-                        {item.remarks ? ` • Remarks: ${toText(item.remarks)}` : ""}
+                        {item.remarks
+                          ? ` • Remarks: ${toText(item.remarks)}`
+                          : ""}
                       </Text>
 
                       <Text style={styles.rowMetaSmall}>
@@ -472,7 +517,9 @@ export default function OfflineSubmissionsPanel() {
                             size={16}
                             color="#1f2937"
                           />
-                          <Text style={[styles.actionText, styles.actionEditText]}>
+                          <Text
+                            style={[styles.actionText, styles.actionEditText]}
+                          >
                             Approve
                           </Text>
                         </TouchableOpacity>
@@ -482,8 +529,17 @@ export default function OfflineSubmissionsPanel() {
                           onPress={() => reject(item.id)}
                           disabled={submitting}
                         >
-                          <Ionicons name="close-circle-outline" size={16} color="#fff" />
-                          <Text style={[styles.actionText, styles.actionDeleteText]}>
+                          <Ionicons
+                            name="close-circle-outline"
+                            size={16}
+                            color="#fff"
+                          />
+                          <Text
+                            style={[
+                              styles.actionText,
+                              styles.actionDeleteText,
+                            ]}
+                          >
                             Reject
                           </Text>
                         </TouchableOpacity>
@@ -500,7 +556,9 @@ export default function OfflineSubmissionsPanel() {
                             size={16}
                             color="#1f2937"
                           />
-                          <Text style={[styles.actionText, styles.actionEditText]}>
+                          <Text
+                            style={[styles.actionText, styles.actionEditText]}
+                          >
                             Approve
                           </Text>
                         </TouchableOpacity>
@@ -510,8 +568,17 @@ export default function OfflineSubmissionsPanel() {
                           onPress={() => reject(item.id)}
                           disabled={submitting}
                         >
-                          <Ionicons name="close-circle-outline" size={16} color="#fff" />
-                          <Text style={[styles.actionText, styles.actionDeleteText]}>
+                          <Ionicons
+                            name="close-circle-outline"
+                            size={16}
+                            color="#fff"
+                          />
+                          <Text
+                            style={[
+                              styles.actionText,
+                              styles.actionDeleteText,
+                            ]}
+                          >
                             Reject
                           </Text>
                         </TouchableOpacity>
@@ -524,7 +591,7 @@ export default function OfflineSubmissionsPanel() {
           )}
         </View>
 
-        {/* Filters modal (copied pattern from StallsPanel) */}
+        {/* Filters modal */}
         <Modal
           visible={filtersVisible}
           transparent
@@ -747,8 +814,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     paddingVertical: 30,
+    paddingHorizontal: 18,
   },
-  emptyTitle: { fontWeight: "800", color: "#0f172a" },
+  emptyTitle: { fontWeight: "800", color: "#0f172a", textAlign: "center" },
   emptyText: { color: "#94a3b8", textAlign: "center" },
 
   promptOverlay: {

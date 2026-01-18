@@ -23,12 +23,72 @@ import { BASE_API } from "../../constants/api";
 type Role = "admin" | "operator" | "biller" | "reader";
 type Util = "electric" | "water" | "lpg";
 
+/** These must match the backend authorizeAccess("<key>") usage */
+type AccessKey =
+  | "meters"
+  | "buildings"
+  | "stalls"
+  | "tenants"
+  | "assign_tenants"
+  | "meter_readings"
+  | "offline_submissions"
+  | "billing"
+  | "vat"
+  | "withholding"
+  | "reader_devices"
+  | "rate_of_change"
+  | "scanner";
+
+const ACCESS_OPTIONS: { key: AccessKey; label: string; icon: any }[] = [
+  { key: "meters", label: "Meters", icon: "speedometer-outline" },
+  { key: "buildings", label: "Buildings", icon: "business-outline" },
+  { key: "stalls", label: "Stalls", icon: "grid-outline" },
+  { key: "tenants", label: "Tenants", icon: "people-outline" },
+  { key: "assign_tenants", label: "Assign Tenants", icon: "person-add-outline" },
+  { key: "meter_readings", label: "Meter Readings", icon: "clipboard-outline" },
+  {
+    key: "offline_submissions",
+    label: "Offline Submissions",
+    icon: "cloud-upload-outline",
+  },
+  { key: "billing", label: "Billing", icon: "receipt-outline" },
+  { key: "vat", label: "VAT", icon: "pricetag-outline" },
+  { key: "withholding", label: "Withholding", icon: "remove-circle-outline" },
+  {
+    key: "reader_devices",
+    label: "Reader Devices",
+    icon: "phone-portrait-outline",
+  },
+  { key: "rate_of_change", label: "Rate of Change", icon: "trending-up-outline" },
+  { key: "scanner", label: "Scanner", icon: "scan-outline" },
+];
+
+function defaultAccessForRole(role: Role): AccessKey[] {
+  if (role === "admin") return [];
+  if (role === "reader") return ["meter_readings"];
+
+  if (role === "biller")
+    return ["billing", "vat", "withholding", "meter_readings"];
+
+  // operator
+  return [
+    "meters",
+    "buildings",
+    "stalls",
+    "tenants",
+    "assign_tenants",
+    "meter_readings",
+    "rate_of_change",
+  ];
+}
+
 type UserRow = {
   user_id: string;
   user_fullname: string;
   user_roles: Role[];
   building_ids: string[];
   utility_role: Util[];
+  access_modules?: string[];
   last_updated?: string;
   updated_by?: string;
 };
@@ -39,6 +99,7 @@ type User = {
   role: Role;
   buildings: string[];
   utilities: Util[];
+  access_modules: AccessKey[];
   last_updated?: string;
   updated_by?: string;
 };
@@ -85,15 +146,25 @@ const Chip = ({
   label,
   active,
   onPress,
+  leftIcon,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
+  leftIcon?: any;
 }) => (
   <TouchableOpacity
     onPress={onPress}
     style={[styles.chip, active ? styles.chipActive : styles.chipIdle]}
   >
+    {leftIcon ? (
+      <Ionicons
+        name={leftIcon}
+        size={14}
+        color={active ? "#1d4ed8" : "#334155"}
+        style={{ marginRight: 6 }}
+      />
+    ) : null}
     <Text
       style={[
         styles.chipText,
@@ -104,6 +175,56 @@ const Chip = ({
     </Text>
   </TouchableOpacity>
 );
+
+function normalizeAccessList(v: any): AccessKey[] {
+  const allowed = new Set(ACCESS_OPTIONS.map((x) => x.key));
+
+  let arr: any[] = [];
+  if (Array.isArray(v)) {
+    arr = v;
+  } else if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) arr = [];
+    else {
+      try {
+        const parsed = JSON.parse(s);
+        arr = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        arr = s.split(",").map((x) => x.trim());
+      }
+    }
+  } else if (v != null) {
+    arr = [v];
+  }
+
+  return arr
+    .map((x) => String(x).trim().toLowerCase())
+    .filter((x) => allowed.has(x as AccessKey)) as AccessKey[];
+}
+
+/**
+ * ✅ Central rule enforcement so UI + backend stay consistent.
+ * - offline_submissions requires meter_readings
+ * - reader role cannot have management modules (like reader_devices)
+ */
+function normalizeAccessForRole(role: Role, list: AccessKey[]): AccessKey[] {
+  const uniq = Array.from(new Set(list));
+
+  // Admin: always empty (admin has implicit all)
+  if (role === "admin") return [];
+
+  // Reader: keep ONLY meter_readings (prevents reader_devices/others)
+  if (role === "reader") return ["meter_readings"];
+
+  // For operator/biller:
+  // Dependency: offline_submissions => meter_readings
+  if (uniq.includes("offline_submissions") && !uniq.includes("meter_readings")) {
+    uniq.push("meter_readings");
+  }
+
+  // Prevent reader_devices on reader already handled above.
+  return uniq;
+}
 
 export default function AccountsPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
@@ -117,7 +238,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
 
   const [query, setQuery] = useState("");
 
-  // ✅ CHANGE: null means "not selected yet" => list hidden
+  // null means "not selected yet" => list hidden
   const [buildingFilter, setBuildingFilter] = useState<string | null>(null);
 
   const [roleFilter, setRoleFilter] = useState<"" | Role>("");
@@ -133,6 +254,9 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   const [c_role, setC_role] = useState<Role>("operator");
   const [c_buildingId, setC_buildingId] = useState("");
   const [c_utils, setC_utils] = useState<Util[]>([]);
+  const [c_access, setC_access] = useState<AccessKey[]>(
+    defaultAccessForRole("operator")
+  );
 
   const [editVisible, setEditVisible] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
@@ -141,16 +265,19 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   const [e_role, setE_role] = useState<Role>("operator");
   const [e_buildingId, setE_buildingId] = useState("");
   const [e_utils, setE_utils] = useState<Util[]>([]);
+  const [e_access, setE_access] = useState<AccessKey[]>(
+    defaultAccessForRole("operator")
+  );
 
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
-    [token],
+    [token]
   );
 
   const api = useMemo(
     () =>
       axios.create({ baseURL: BASE_API, headers: authHeader, timeout: 15000 }),
-    [authHeader],
+    [authHeader]
   );
 
   const loadAll = async () => {
@@ -183,12 +310,18 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           ? (u.utility_role as Util[])
           : [];
 
+        const access_modules = normalizeAccessForRole(
+          role,
+          normalizeAccessList(u.access_modules)
+        );
+
         return {
           user_id: String(u.user_id),
           user_fullname: String(u.user_fullname ?? ""),
           role,
           buildings,
           utilities: utils,
+          access_modules,
           last_updated: u.last_updated,
           updated_by: u.updated_by,
         };
@@ -197,14 +330,16 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       setUsers(normalized);
       setBuildings(bRes.data || []);
 
-      // keep your create defaults
       if (!c_buildingId && (bRes.data?.length ?? 0) > 0) {
         setC_buildingId(bRes.data[0].building_id);
       }
 
-      // ✅ DO NOT auto-select buildingFilter — user must choose first
-      // If you want to auto-select first building, uncomment:
-      // if (buildingFilter === null && (bRes.data?.length ?? 0) > 0) setBuildingFilter(bRes.data[0].building_id);
+      // Ensure create form access is normalized
+      if (c_role !== "admin") {
+        setC_access((prev) =>
+          normalizeAccessForRole(c_role, prev.length ? prev : defaultAccessForRole(c_role))
+        );
+      }
     } catch (err: any) {
       notify("Load failed", errorText(err, "Connection error."));
     } finally {
@@ -218,13 +353,11 @@ export default function AccountsPanel({ token }: { token: string | null }) {
   }, [token]);
 
   const filtered = useMemo(() => {
-    // ✅ GATE: hide list until building is selected
     if (buildingFilter === null) return [];
 
     const q = query.trim().toLowerCase();
     let list = users;
 
-    // now buildingFilter is always a real building_id here
     list = list.filter((u) => u.buildings.includes(buildingFilter));
 
     if (roleFilter) {
@@ -239,9 +372,10 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           u.role,
           ...u.buildings,
           ...(u.utilities || []),
+          ...(u.access_modules || []),
         ]
           .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q)),
+          .some((v) => String(v).toLowerCase().includes(q))
       );
     }
 
@@ -268,6 +402,38 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     return arr;
   }, [filtered, sortMode]);
 
+  const toggleAccess = (
+    role: Role,
+    key: AccessKey,
+    list: AccessKey[],
+    setList: (v: AccessKey[]) => void
+  ) => {
+    // Prevent invalid combos in UI (we still sanitize on save too)
+    if (role === "reader" && key === "reader_devices") {
+      notify("Not allowed", "Reader role cannot be granted Reader Devices access.");
+      return;
+    }
+
+    const active = list.includes(key);
+    const next = active ? list.filter((x) => x !== key) : [...list, key];
+
+    const normalized = normalizeAccessForRole(role, next);
+
+    // If user turned on offline_submissions, we auto-add meter_readings.
+    if (
+      !active &&
+      key === "offline_submissions" &&
+      !next.includes("meter_readings")
+    ) {
+      notify(
+        "Auto-added",
+        "Offline Submissions requires Meter Readings. Meter Readings was added automatically."
+      );
+    }
+
+    setList(normalized);
+  };
+
   const onCreate = async () => {
     const fullname = c_fullname.trim();
 
@@ -280,6 +446,14 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       return;
     }
 
+    const accessFinal =
+      c_role === "admin" ? [] : normalizeAccessForRole(c_role, c_access);
+
+    if (c_role !== "admin" && accessFinal.length === 0) {
+      notify("Missing access", "Select at least 1 Access module.");
+      return;
+    }
+
     try {
       setSubmitting(true);
 
@@ -289,6 +463,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         user_roles: [c_role],
         building_ids: c_role === "admin" ? [] : [c_buildingId],
         utility_role: c_role === "admin" ? [] : c_utils,
+        access_modules: c_role === "admin" ? [] : accessFinal,
       };
 
       await api.post("/users", body);
@@ -298,6 +473,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       setC_password("");
       setC_role("operator");
       setC_utils([]);
+      setC_access(defaultAccessForRole("operator"));
 
       await loadAll();
       notify("Success", "Account created.");
@@ -315,6 +491,14 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     setE_role(u.role);
     setE_buildingId(u.buildings[0] || "");
     setE_utils(u.utilities || []);
+    setE_access(
+      u.role === "admin"
+        ? []
+        : normalizeAccessForRole(
+            u.role,
+            u.access_modules?.length ? u.access_modules : defaultAccessForRole(u.role)
+          )
+    );
     setEditVisible(true);
   };
 
@@ -326,6 +510,14 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       return;
     }
 
+    const accessFinal =
+      e_role === "admin" ? [] : normalizeAccessForRole(e_role, e_access);
+
+    if (e_role !== "admin" && accessFinal.length === 0) {
+      notify("Missing access", "Select at least 1 Access module.");
+      return;
+    }
+
     try {
       setSubmitting(true);
 
@@ -334,6 +526,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         user_roles: [e_role],
         building_ids: e_role === "admin" ? [] : [e_buildingId],
         utility_role: e_role === "admin" ? [] : e_utils,
+        access_modules: e_role === "admin" ? [] : accessFinal,
       };
 
       if (e_password.trim()) body.user_password = e_password.trim();
@@ -357,7 +550,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       (window as any).confirm
     ) {
       const ok = (window as any).confirm(
-        `Delete ${u.user_fullname} (${u.user_id})?`,
+        `Delete ${u.user_fullname} (${u.user_id})?`
       );
       if (!ok) return;
     } else {
@@ -374,7 +567,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
       return Alert.alert(
         "Delete account?",
         `${u.user_fullname} (${u.user_id})`,
-        buttons,
+        buttons
       );
     }
 
@@ -402,7 +595,12 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             <Text style={styles.cardTitle}>Manage Accounts</Text>
             <TouchableOpacity
               style={styles.btn}
-              onPress={() => setCreateVisible(true)}
+              onPress={() => {
+                setC_role("operator");
+                setC_utils([]);
+                setC_access(defaultAccessForRole("operator"));
+                setCreateVisible(true);
+              }}
             >
               <Text style={styles.btnText}>+ Create Account</Text>
             </TouchableOpacity>
@@ -419,10 +617,10 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               <TextInput
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Search by ID, name, role, utilities…"
+                placeholder="Search by ID, name, role, utilities, access…"
                 placeholderTextColor="#9aa5b1"
                 style={styles.search}
-                editable={buildingFilter !== null} // optional: disable until building chosen
+                editable={buildingFilter !== null}
               />
             </View>
 
@@ -440,7 +638,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             </TouchableOpacity>
           </View>
 
-          {/* ✅ Building chips first (no "All") */}
+          {/* Building chips first (no "All") */}
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
@@ -480,7 +678,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
               <ActivityIndicator />
             </View>
           ) : buildingFilter === null ? (
-            // ✅ hide list until building is selected
             <View style={styles.selectBuildingEmpty}>
               <Ionicons name="business-outline" size={44} color="#cbd5e1" />
               <Text style={styles.emptyTitle}>Select a building</Text>
@@ -521,6 +718,15 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       {item.utilities.length
                         ? ` • Utilities: ${item.utilities.join(", ")}`
                         : ""}
+                    </Text>
+
+                    <Text style={styles.rowMetaSmall}>
+                      Access:{" "}
+                      {item.role === "admin"
+                        ? "all"
+                        : item.access_modules.length
+                        ? item.access_modules.join(", ")
+                        : "—"}
                     </Text>
 
                     {item.last_updated ? (
@@ -629,7 +835,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       active={roleFilter === (opt.value as any)}
                       onPress={() => setRoleFilter(opt.value as any)}
                     />
-                  ),
+                  )
                 )}
               </View>
 
@@ -717,7 +923,17 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                   <View style={styles.pickerWrapper}>
                     <Picker
                       selectedValue={c_role}
-                      onValueChange={(v) => setC_role(v as Role)}
+                      onValueChange={(v) => {
+                        const next = v as Role;
+                        setC_role(next);
+                        setC_access(
+                          normalizeAccessForRole(
+                            next,
+                            next === "admin" ? [] : defaultAccessForRole(next)
+                          )
+                        );
+                        if (next === "admin") setC_utils([]);
+                      }}
                       style={styles.picker}
                     >
                       <Picker.Item label="Admin" value="admin" />
@@ -762,14 +978,45 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                               setC_utils(
                                 active
                                   ? c_utils.filter((x) => x !== u)
-                                  : [...c_utils, u],
+                                  : [...c_utils, u]
                               );
                             }}
                           />
                         );
                       })}
                     </View>
+
+                    <Text style={styles.sectionTitle}>Access</Text>
+                    <Text style={styles.helperText}>
+                      Select what this account can open in the system.
+                    </Text>
+                    <View style={styles.chipsRow}>
+                      {ACCESS_OPTIONS.map((m) => (
+                        <Chip
+                          key={m.key}
+                          label={m.label}
+                          leftIcon={m.icon}
+                          active={c_access.includes(m.key)}
+                          onPress={() =>
+                            toggleAccess(c_role, m.key, c_access, setC_access)
+                          }
+                        />
+                      ))}
+                    </View>
                   </>
+                )}
+
+                {c_role === "admin" && (
+                  <View style={styles.infoBox}>
+                    <Ionicons
+                      name="shield-checkmark-outline"
+                      size={16}
+                      color="#1d4ed8"
+                    />
+                    <Text style={styles.infoBoxText}>
+                      Admin has full access automatically.
+                    </Text>
+                  </View>
                 )}
               </ScrollView>
 
@@ -845,7 +1092,17 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                       <View style={styles.pickerWrapper}>
                         <Picker
                           selectedValue={e_role}
-                          onValueChange={(v) => setE_role(v as Role)}
+                          onValueChange={(v) => {
+                            const next = v as Role;
+                            setE_role(next);
+                            setE_access(
+                              normalizeAccessForRole(
+                                next,
+                                next === "admin" ? [] : defaultAccessForRole(next)
+                              )
+                            );
+                            if (next === "admin") setE_utils([]);
+                          }}
                           style={styles.picker}
                         >
                           <Picker.Item label="Admin" value="admin" />
@@ -863,9 +1120,7 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                           <View style={styles.pickerWrapper}>
                             <Picker
                               selectedValue={e_buildingId}
-                              onValueChange={(v) =>
-                                setE_buildingId(String(v))
-                              }
+                              onValueChange={(v) => setE_buildingId(String(v))}
                               style={styles.picker}
                             >
                               {buildings.map((b) => (
@@ -888,18 +1143,49 @@ export default function AccountsPanel({ token }: { token: string | null }) {
                                 key={u}
                                 label={u}
                                 active={active}
-                                onPress={() => {
+                                onPress={() =>
                                   setE_utils(
                                     active
                                       ? e_utils.filter((x) => x !== u)
-                                      : [...e_utils, u],
-                                  );
-                                }}
+                                      : [...e_utils, u]
+                                  )
+                                }
                               />
                             );
                           })}
                         </View>
+
+                        <Text style={styles.sectionTitle}>Access</Text>
+                        <Text style={styles.helperText}>
+                          Select what this account can open in the system.
+                        </Text>
+                        <View style={styles.chipsRow}>
+                          {ACCESS_OPTIONS.map((m) => (
+                            <Chip
+                              key={m.key}
+                              label={m.label}
+                              leftIcon={m.icon}
+                              active={e_access.includes(m.key)}
+                              onPress={() =>
+                                toggleAccess(e_role, m.key, e_access, setE_access)
+                              }
+                            />
+                          ))}
+                        </View>
                       </>
+                    )}
+
+                    {e_role === "admin" && (
+                      <View style={styles.infoBox}>
+                        <Ionicons
+                          name="shield-checkmark-outline"
+                          size={16}
+                          color="#1d4ed8"
+                        />
+                        <Text style={styles.infoBoxText}>
+                          Admin has full access automatically.
+                        </Text>
+                      </View>
                     )}
                   </>
                 )}
@@ -1082,6 +1368,8 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
   },
   chipActive: { backgroundColor: "#e0ecff", borderColor: "#93c5fd" },
   chipIdle: {},
@@ -1142,6 +1430,23 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#0f172a",
   },
+  helperText: {
+    color: "#64748b",
+    marginBottom: 8,
+  },
+  infoBox: {
+    marginTop: 12,
+    backgroundColor: "#eff6ff",
+    borderColor: "#bfdbfe",
+    borderWidth: 1,
+    padding: 10,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  infoBoxText: { color: "#1d4ed8", fontWeight: "700" },
+
   pickerWrapper: {
     borderWidth: 1,
     borderColor: "#e2e8f0",

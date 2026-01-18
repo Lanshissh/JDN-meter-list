@@ -18,29 +18,56 @@ type Props = {
   onSelect: (tab: TabKey) => void;
 };
 
-function decodeRole(token: string | null): string {
+function safeAtob(b64: string) {
   try {
-    if (!token) return "";
-    const p = token.split(".")[1];
-    const base64 = p.replace(/-/g, "+").replace(/_/g, "/");
-    const json =
-      typeof (globalThis as any).atob === "function"
-        ? (globalThis as any).atob(base64)
-        : "";
-    return json ? String(JSON.parse(json)?.user_level || "").toLowerCase() : "";
+    if (typeof (globalThis as any).atob === "function") return (globalThis as any).atob(b64);
+    return "";
   } catch {
     return "";
   }
 }
 
-export default function SideNav({ active, onSelect }: Props) {
-  const { token, hasRole } = useAuth();
-  const legacyRole = useMemo(() => decodeRole(token), [token]);
+function decodeJwtPayload(token: string | null): any | null {
+  try {
+    if (!token) return null;
+    const p = token.split(".")[1];
+    if (!p) return null;
+    // JWT uses base64url without padding. Convert + pad.
+    let base64 = p.replace(/-/g, "+").replace(/_/g, "/");
+    const mod = base64.length % 4;
+    if (mod) base64 += "=".repeat(4 - mod);
+    const json = safeAtob(base64);
+    return json ? JSON.parse(json) : null;
+  } catch {
+    return null;
+  }
+}
 
-  const isAdmin = hasRole("admin") || legacyRole === "admin";
-  const isOperator = hasRole("operator") || legacyRole === "operator";
-  const isBiller = hasRole("biller") || legacyRole === "biller";
-  const isReader = hasRole("reader") || legacyRole === "reader";
+function decodedRolesFromToken(token: string | null): string[] {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return [];
+
+  // Prefer user_roles (new JWT)
+  const ur = payload.user_roles;
+  if (Array.isArray(ur)) return ur.map((x: any) => String(x).toLowerCase());
+
+  // Legacy: user_level (your old code)
+  const lvl = payload.user_level;
+  if (lvl) return [String(lvl).toLowerCase()];
+
+  return [];
+}
+
+export default function SideNav({ active, onSelect }: Props) {
+  const { token, hasRole, hasAccess } = useAuth();
+
+  // Decode token roles only as fallback (if AuthContext roles not ready)
+  const legacyRoles = useMemo(() => decodedRolesFromToken(token), [token]);
+
+  const isAdmin = hasRole("admin") || legacyRoles.includes("admin");
+  const isOperator = hasRole("operator") || legacyRoles.includes("operator");
+  const isBiller = hasRole("biller") || legacyRoles.includes("biller");
+  const isReader = hasRole("reader") || legacyRoles.includes("reader");
 
   const nonAdminRoles = [
     isOperator ? "operator" : null,
@@ -48,24 +75,44 @@ export default function SideNav({ active, onSelect }: Props) {
     isReader ? "reader" : null,
   ].filter(Boolean) as string[];
 
-  const isPureOperator = !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "operator";
-  const isPureBiller = !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "biller";
-  const isPureReader = !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "reader";
+  const isPureBiller =
+    !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "biller";
 
-  const canSeeAdmin = isAdmin || isOperator || isBiller || isReader;
-  const canSeeScanner = isAdmin || isPureReader;
-  const canSeeBilling = isAdmin || isPureBiller;
-  const canSeeDashboard = isAdmin || isOperator || isBiller || isReader;
+  const isPureReader =
+    !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "reader";
+
+  // ✅ Access-based visibility for Admin tab:
+  // If they can access ANY admin module, they can open Admin area.
+  const hasAnyAdminAccess =
+    hasAccess("buildings") ||
+    hasAccess("stalls") ||
+    hasAccess("tenants") ||
+    hasAccess("assign_tenants") ||
+    hasAccess("meters") ||
+    hasAccess("meter_readings") ||
+    hasAccess("offline_submissions") ||
+    hasAccess("vat") ||
+    hasAccess("withholding") ||
+    hasAccess("billing") ||
+    hasAccess("reader_devices") ||
+    hasAccess("rate_of_change") ||
+    hasAccess("scanner"); // ✅ NEW
+
+  const canSeeAdmin = isAdmin || hasAnyAdminAccess;
+  const canSeeBilling = isAdmin || hasAccess("billing") || isBiller; // keep role fallback
+
+  // ✅ FIX: show scanner if they have scanner access (or admin/reader)
+  const canSeeScanner = isAdmin || isReader || hasAccess("scanner");
+
+  const canSeeDashboard = true;
 
   const homeTab: TabKey =
     isPureBiller && canSeeBilling
       ? "billing"
+      : (isPureReader && canSeeScanner) || canSeeScanner
+      ? "scanner"
       : canSeeAdmin
       ? "admin"
-      : canSeeBilling
-      ? "billing"
-      : canSeeScanner
-      ? "scanner"
       : "dashboard";
 
   const [expanded, setExpanded] = useState(false);
@@ -125,10 +172,7 @@ export default function SideNav({ active, onSelect }: Props) {
         {...(Platform.OS === "web" && !expanded ? { title: "Home" } : {})}
       >
         <View style={styles.logoWrap}>
-          <Image
-            source={require("../assets/images/jdn.jpg")}
-            style={styles.logo}
-          />
+          <Image source={require("../assets/images/jdn.jpg")} style={styles.logo} />
         </View>
         {expanded && (
           <View style={styles.brandInfo}>
@@ -164,7 +208,9 @@ export default function SideNav({ active, onSelect }: Props) {
           style={styles.toggleBtn}
           activeOpacity={0.7}
           accessibilityLabel={expanded ? "Collapse sidebar" : "Expand sidebar"}
-          {...(Platform.OS === "web" ? { title: expanded ? "Collapse" : "Expand" } : {})}
+          {...(Platform.OS === "web"
+            ? { title: expanded ? "Collapse" : "Expand" }
+            : {})}
         >
           <View style={[styles.itemInner, expanded && styles.itemInnerExpanded]}>
             <View style={styles.toggleIconWrap}>
@@ -232,9 +278,7 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 12,
   },
-  brandInfo: {
-    justifyContent: "center",
-  },
+  brandInfo: { justifyContent: "center" },
   brandName: {
     color: "#fff",
     fontSize: 18,
@@ -264,15 +308,9 @@ const styles = StyleSheet.create({
   },
 
   // Navigation
-  navSection: {
-    gap: 4,
-  },
-  spacer: {
-    flex: 1,
-  },
-  bottomSection: {
-    gap: 4,
-  },
+  navSection: { gap: 4 },
+  spacer: { flex: 1 },
+  bottomSection: { gap: 4 },
 
   // Nav Item
   item: {
@@ -281,24 +319,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 8,
     ...(Platform.OS === "web"
-      ? {
-          cursor: "pointer",
-          transition: "background 150ms ease",
-        }
+      ? { cursor: "pointer", transition: "background 150ms ease" }
       : {}),
   },
-  itemActive: {
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
-  },
-  itemInner: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  itemInnerExpanded: {
-    flexDirection: "row",
-    justifyContent: "flex-start",
-    gap: 12,
-  },
+  itemActive: { backgroundColor: "rgba(255, 255, 255, 0.12)" },
+  itemInner: { alignItems: "center", justifyContent: "center" },
+  itemInnerExpanded: { flexDirection: "row", justifyContent: "flex-start", gap: 12 },
   iconWrap: {
     width: 36,
     height: 36,
@@ -319,10 +345,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     letterSpacing: 0.2,
   },
-  itemLabelActive: {
-    color: "#fff",
-    fontWeight: "600",
-  },
+  itemLabelActive: { color: "#fff", fontWeight: "600" },
   activeIndicator: {
     position: "absolute",
     left: 0,
@@ -340,10 +363,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 8,
     ...(Platform.OS === "web"
-      ? {
-          cursor: "pointer",
-          transition: "background 150ms ease",
-        }
+      ? { cursor: "pointer", transition: "background 150ms ease" }
       : {}),
   },
   toggleIconWrap: {
