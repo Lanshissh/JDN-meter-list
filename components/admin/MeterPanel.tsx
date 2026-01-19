@@ -170,7 +170,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const loadAll = async () => {
@@ -190,8 +189,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       setMeters(metersRes.data || []);
       setStalls(stallsRes.data || []);
 
-      // ✅ Try to load buildings for BOTH admin + non-admin
-      // (If server blocks it, we fallback to showing building_id)
       try {
         const bRes = await api.get<Building[]>("/buildings");
         setBuildings(bRes.data || []);
@@ -199,8 +196,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
         setBuildings([]);
       }
 
-      // NOTE: We intentionally do NOT auto-select a building.
-      // The list stays hidden until the user picks a building chip.
     } catch (err: any) {
       notify("Load failed", errorText(err, "Could not load meters/stalls."));
     } finally {
@@ -229,7 +224,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
     return m;
   }, [stalls]);
 
-  // ✅ Building chips show building_name (fallback to building_id)
   const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
       return buildings
@@ -241,7 +235,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
         }));
     }
 
-    // If token has building_id, show it as a chip (common for non-admin)
     if (userBuildingId) {
       return [
         {
@@ -251,7 +244,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       ];
     }
 
-    // Else derive from stalls (if no building_id in token)
     const ids = new Set<string>();
     stalls.forEach((s) => s?.building_id && ids.add(s.building_id));
     const arr = Array.from(ids);
@@ -267,7 +259,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
   }, [isAdmin, buildings, stalls, userBuildingId, buildingNameById]);
 
   const filtered = useMemo(() => {
-    // Hide list until user selects a building
     if (!buildingFilter) return [];
 
     const q = query.trim().toLowerCase();
@@ -613,7 +604,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   label={opt.label}
                   active={buildingFilter === opt.value}
                   onPress={() => {
-                    // Tap the active chip again to hide list (toggle off)
                     const next = buildingFilter === opt.value ? "" : opt.value;
                     setBuildingFilter(next);
                     if (!next) setQuery("");
@@ -629,7 +619,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   label={opt.label}
                   active={buildingFilter === opt.value}
                   onPress={() => {
-                    // Tap the active chip again to hide list (toggle off)
                     const next = buildingFilter === opt.value ? "" : opt.value;
                     setBuildingFilter(next);
                     if (!next) setQuery("");
@@ -767,7 +756,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
         )}
       </View>
 
-      {/* Filters modal */}
       <Modal
         visible={filtersVisible}
         animationType="fade"
@@ -834,7 +822,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </View>
       </Modal>
 
-      {/* Create modal */}
       <Modal
         visible={createVisible}
         animationType="slide"
@@ -945,7 +932,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Edit modal */}
       <Modal
         visible={editVisible}
         animationType="slide"
@@ -1049,7 +1035,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* QR modal */}
       <Modal
         visible={qrVisible}
         animationType="fade"

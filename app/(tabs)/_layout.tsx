@@ -148,12 +148,8 @@ export default function TabLayout() {
   const [activeTab, setActiveTab] = useState<TabKey>("admin");
   const router = useRouter();
   const { logout, hasAccess, hasRole } = useAuth();
-
-  // Keep this consistent with SideNav.tsx
   const canSeeScanner =
     hasRole("admin") || hasRole("reader") || hasAccess("scanner");
-
-  // If user loses scanner access while currently on scanner, force back to admin.
   useEffect(() => {
     if (activeTab === "scanner" && !canSeeScanner) {
       setActiveTab("admin");
@@ -164,7 +160,6 @@ export default function TabLayout() {
   }, [activeTab, canSeeScanner, router]);
 
   const handleSelectTab = async (tab: TabKey) => {
-    // Guard: if user lost access, prevent navigating to scanner
     if (tab === "scanner" && !canSeeScanner) {
       setActiveTab("admin");
       router.replace("/(tabs)/admin" as any);

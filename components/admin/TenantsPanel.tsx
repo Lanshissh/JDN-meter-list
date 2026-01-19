@@ -218,7 +218,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const mergedToken = token || ctxToken || null;
   const jwt = useMemo(() => decodeJwtPayload(mergedToken), [mergedToken]);
 
-  // Role flags (from AuthContext)
   const isAdmin = !!(hasRole && hasRole("admin"));
   const isBiller = !!(hasRole && hasRole("biller"));
   const isOperator = !!(hasRole && hasRole("operator"));
@@ -250,8 +249,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
   const [vatCodes, setVatCodes] = useState<VatRow[]>([]);
   const [wtCodes, setWtCodes] = useState<WtRow[]>([]);
   const [query, setQuery] = useState("");
-
-  // ✅ Gate list: default empty unless user has an assigned building
   const [buildingFilter, setBuildingFilter] = useState<string>(
     userBuildingId ? userBuildingId : "",
   );
@@ -283,7 +280,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergedToken, statusFilter, isAdmin, buildingFilter]);
 
   const loadAll = async () => {
@@ -311,7 +307,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
       try {
         const bRes = await api.get<Building[]>("/buildings");
         setBuildings(bRes.data || []);
-        // helpful default for create flow if empty and user has no building_id
         if (!cBuildingId && (bRes.data?.length ?? 0) > 0) {
           setCBuildingId(bRes.data[0].building_id);
         }
@@ -319,7 +314,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
         setBuildings([]);
       }
 
-      // ✅ If user has building_id, ensure filter is set to it (never force for admin/no building)
       if (userBuildingId) {
         setBuildingFilter(userBuildingId);
         setCBuildingId((prev) => prev || userBuildingId);
@@ -361,7 +355,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
     const q = query.trim().toLowerCase();
     let list = tenants;
 
-    // ✅ only show after a building is selected
     if (buildingFilter)
       list = list.filter((t) => t.building_id === buildingFilter);
 
@@ -547,7 +540,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
                       const bRes = await api.get<Building[]>("/buildings");
                       setBuildings(bRes.data || []);
                     } catch {
-                      // ignore
                     }
                   }
                 }}
@@ -592,7 +584,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
 
-            {/* ✅ NO "All" chip — force building selection */}
             {isMobile ? (
               <ScrollView
                 horizontal
@@ -628,7 +619,6 @@ export default function TenantsPanel({ token }: { token: string | null }) {
             )}
           </View>
 
-          {/* ✅ Gate list: hide until building selected */}
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />

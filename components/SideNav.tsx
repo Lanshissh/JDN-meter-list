@@ -32,7 +32,6 @@ function decodeJwtPayload(token: string | null): any | null {
     if (!token) return null;
     const p = token.split(".")[1];
     if (!p) return null;
-    // JWT uses base64url without padding. Convert + pad.
     let base64 = p.replace(/-/g, "+").replace(/_/g, "/");
     const mod = base64.length % 4;
     if (mod) base64 += "=".repeat(4 - mod);
@@ -47,11 +46,9 @@ function decodedRolesFromToken(token: string | null): string[] {
   const payload = decodeJwtPayload(token);
   if (!payload) return [];
 
-  // Prefer user_roles (new JWT)
   const ur = payload.user_roles;
   if (Array.isArray(ur)) return ur.map((x: any) => String(x).toLowerCase());
 
-  // Legacy: user_level (your old code)
   const lvl = payload.user_level;
   if (lvl) return [String(lvl).toLowerCase()];
 
@@ -61,7 +58,6 @@ function decodedRolesFromToken(token: string | null): string[] {
 export default function SideNav({ active, onSelect }: Props) {
   const { token, hasRole, hasAccess } = useAuth();
 
-  // Decode token roles only as fallback (if AuthContext roles not ready)
   const legacyRoles = useMemo(() => decodedRolesFromToken(token), [token]);
 
   const isAdmin = hasRole("admin") || legacyRoles.includes("admin");
@@ -81,8 +77,6 @@ export default function SideNav({ active, onSelect }: Props) {
   const isPureReader =
     !isAdmin && nonAdminRoles.length === 1 && nonAdminRoles[0] === "reader";
 
-  // ✅ Access-based visibility for Admin tab:
-  // If they can access ANY admin module, they can open Admin area.
   const hasAnyAdminAccess =
     hasAccess("buildings") ||
     hasAccess("stalls") ||
@@ -96,12 +90,11 @@ export default function SideNav({ active, onSelect }: Props) {
     hasAccess("billing") ||
     hasAccess("reader_devices") ||
     hasAccess("rate_of_change") ||
-    hasAccess("scanner"); // ✅ NEW
+    hasAccess("scanner");
 
   const canSeeAdmin = isAdmin || hasAnyAdminAccess;
-  const canSeeBilling = isAdmin || hasAccess("billing") || isBiller; // keep role fallback
+  const canSeeBilling = isAdmin || hasAccess("billing") || isBiller;
 
-  // ✅ FIX: show scanner if they have scanner access (or admin/reader)
   const canSeeScanner = isAdmin || isReader || hasAccess("scanner");
 
   const canSeeDashboard = true;
@@ -164,7 +157,6 @@ export default function SideNav({ active, onSelect }: Props) {
 
   return (
     <Animated.View style={[styles.container, { width: widthAnim }]}>
-      {/* Logo */}
       <TouchableOpacity
         style={[styles.logoContainer, expanded && styles.logoContainerExpanded]}
         onPress={() => onSelect(homeTab)}
@@ -182,10 +174,8 @@ export default function SideNav({ active, onSelect }: Props) {
         )}
       </TouchableOpacity>
 
-      {/* Divider */}
       <View style={styles.divider} />
 
-      {/* Navigation */}
       <View style={styles.navSection}>
         {canSeeAdmin && <NavItem icon="people-outline" label="Admin" tab="admin" />}
         {canSeeScanner && <NavItem icon="scan-outline" label="Scanner" tab="scanner" />}
@@ -193,16 +183,12 @@ export default function SideNav({ active, onSelect }: Props) {
       </View>
 
       <View style={styles.spacer} />
-
-      {/* Bottom section */}
       <View style={styles.bottomSection}>
         {canSeeDashboard && (
           <NavItem icon="analytics-outline" label="Dashboard" tab="dashboard" />
         )}
 
         <View style={styles.dividerThin} />
-
-        {/* Expand/Collapse */}
         <TouchableOpacity
           onPress={() => setExpanded((v) => !v)}
           style={styles.toggleBtn}
@@ -248,7 +234,6 @@ const styles = StyleSheet.create({
         }),
   },
 
-  // Logo
   logoContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -293,7 +278,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // Dividers
   divider: {
     height: 1,
     backgroundColor: "rgba(255,255,255,0.08)",
@@ -307,12 +291,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
   },
 
-  // Navigation
   navSection: { gap: 4 },
   spacer: { flex: 1 },
   bottomSection: { gap: 4 },
 
-  // Nav Item
   item: {
     position: "relative",
     borderRadius: 10,
@@ -357,7 +339,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
 
-  // Toggle
   toggleBtn: {
     borderRadius: 10,
     paddingVertical: 10,

@@ -100,20 +100,14 @@ const Chip = ({
 
 export default function ReaderDevicesPanel() {
   const { token, hasRole, hasAccess } = useAuth();
-
   const isAdmin = hasRole("admin");
   const isOperator = hasRole("operator");
   const isBiller = hasRole("biller");
-
-  // ✅ Option B:
-  // Allow admin/operator/biller as long as they have reader_devices access (admin bypass)
   const roleOk = isAdmin || isOperator || isBiller;
   const accessOk = isAdmin || hasAccess("reader_devices");
   const canUse = roleOk && accessOk;
-
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const api = useMemo(() => {
     const t = token ? String(token).trim() : "";
     const authHeader = t ? (/^Bearer\s/i.test(t) ? t : `Bearer ${t}`) : "";
@@ -128,13 +122,9 @@ export default function ReaderDevicesPanel() {
   const [loading, setLoading] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
   const [error, setError] = useState<string>("");
-
-  // register modal
   const [addOpen, setAddOpen] = useState(false);
   const [serial, setSerial] = useState("");
   const [name, setName] = useState("");
-
-  // UI-only: consistent with StallsPanel style
   const [query, setQuery] = useState("");
   const [filtersVisible, setFiltersVisible] = useState(false);
   type StatusFilter = "all" | "active" | "blocked";
@@ -167,7 +157,6 @@ export default function ReaderDevicesPanel() {
 
   useEffect(() => {
     if (token && canUse) fetchDevices();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, canUse]);
 
   if (!roleOk || !accessOk) {

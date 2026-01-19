@@ -49,40 +49,26 @@ type Page = {
 
 const MOBILE_BREAKPOINT = 768;
 
-/**
- * ✅ Normalize access keys so old camelCase values still work.
- * Examples:
- * - "readerDevices" -> "reader_devices"
- * - "offlineSubmissions" -> "offline_submissions"
- * - "assignTenants" -> "assign_tenants"
- */
 function normalizeAccessKey(raw: any): string {
   const s = String(raw ?? "").trim();
   if (!s) return "";
 
   const lower = s.toLowerCase();
 
-  // explicit aliases for known modules
   const alias: Record<string, string> = {
     readerdevices: "reader_devices",
     reader_device: "reader_devices",
     readerdevicespanel: "reader_devices",
-
     offlinesubmissions: "offline_submissions",
     offline_submission: "offline_submissions",
     offlinesubmission: "offline_submissions",
-
     assigntenants: "assign_tenants",
     assign_tenant: "assign_tenants",
     assigntenant: "assign_tenants",
-
     meterreadings: "meter_readings",
     meter_reading: "meter_readings",
-
     rateofchange: "rate_of_change",
     rate_of_change: "rate_of_change",
-
-    // keep common ones as-is (but normalized)
     buildings: "buildings",
     stalls: "stalls",
     tenants: "tenants",
@@ -94,8 +80,6 @@ function normalizeAccessKey(raw: any): string {
   };
 
   if (alias[lower]) return alias[lower];
-
-  // generic camelCase -> snake_case fallback (and lowercase)
   const snake = s
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replace(/[\s-]+/g, "_")
@@ -111,16 +95,12 @@ function normalizeList(v: any): string[] {
   if (typeof v === "string") {
     const s = v.trim();
     if (!s) return [];
-
-    // try JSON
     try {
       const parsed = JSON.parse(s);
       if (Array.isArray(parsed)) {
         return parsed.map((x) => normalizeAccessKey(x)).filter(Boolean);
       }
     } catch {}
-
-    // csv
     return s
       .split(",")
       .map((x) => normalizeAccessKey(x))
@@ -142,10 +122,7 @@ export default function AdminScreen() {
 
   const { width } = useWindowDimensions();
   const isMobile = width < MOBILE_BREAKPOINT;
-
   const [menuOpen, setMenuOpen] = useState(false);
-
-  // TAX dropdown (desktop)
   const [taxOpen, setTaxOpen] = useState(false);
   const [taxMobileOpen, setTaxMobileOpen] = useState(false);
   const taxBtnRef = useRef<any>(null);
@@ -167,7 +144,6 @@ export default function AdminScreen() {
     else openTaxMenu();
   };
 
-  // ---- role (from JWT user object) ----
   const role: string = useMemo(() => {
     const roles = normalizeList(
       (user as any)?.user_roles ?? (user as any)?.user_level
@@ -178,27 +154,20 @@ export default function AdminScreen() {
     if (roles.includes("reader")) return "reader";
     return "admin";
   }, [user]);
-
-  // ---- access modules (from JWT user object) ----
   const accessModules = useMemo(() => {
     const u: any = user || {};
     const raw =
       u.access_modules ?? u.access ?? u.accesses ?? u.user_access ?? [];
-    // ✅ normalize to snake_case and handle old camelCase
     return new Set(normalizeList(raw));
   }, [user]);
 
   const hasAccess = (key: string) => {
-    if (role === "admin") return true; // admins see everything
+    if (role === "admin") return true;
     if (!key) return true;
     const k = normalizeAccessKey(key);
     return accessModules.has(k);
   };
 
-  /**
-   * Role-based allowed pages (base gate)
-   * Then we further restrict using access modules (checkbox gate)
-   */
   const roleAllowed: Record<string, Set<PageKey>> = useMemo(
     () => ({
       admin: new Set<PageKey>([
@@ -255,10 +224,6 @@ export default function AdminScreen() {
   );
 
   const allowedByRole = roleAllowed[role] ?? roleAllowed.admin;
-
-  /**
-   * Map each PageKey to backend access key (checkbox keys)
-   */
   const accessKeyForPage: Partial<Record<PageKey, string>> = useMemo(
     () => ({
       buildings: "buildings",
@@ -277,13 +242,9 @@ export default function AdminScreen() {
 
   const canSee = (key: PageKey) => {
     if (!allowedByRole.has(key)) return false;
-
-    // accounts is admin-only
     if (key === "accounts") return role === "admin";
-
     const accessKey = accessKeyForPage[key];
     if (!accessKey) return true;
-
     return hasAccess(accessKey);
   };
 
@@ -355,7 +316,6 @@ export default function AdminScreen() {
     if (!canSee(active)) {
       setActive(resolveInitial());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, params?.panel, params?.tab, accessModules]);
 
   const applyRouteParam = (key: PageKey) => {
@@ -448,8 +408,6 @@ export default function AdminScreen() {
       : active === "wt"
       ? "Withholding"
       : visiblePages.find((p) => p.key === active)?.label || "Admin";
-
-  // Desktop: move Accounts + Reader Devices to far right
   const RIGHT_KEYS = useMemo(
     () => new Set<PageKey>(["accounts", "readerDevices"]),
     []
@@ -557,7 +515,6 @@ export default function AdminScreen() {
           <ScrollView style={styles.drawerNav} showsVerticalScrollIndicator={false}>
             <Text style={styles.drawerLabel}>NAVIGATION</Text>
 
-            {/* ✅ Pages BEFORE TAX (includes Buildings) */}
             {(hasTax ? mobileNavWithTax.before : mobileNavPages).map((page) => {
               const isActive2 = active === page.key;
               return (
@@ -596,7 +553,6 @@ export default function AdminScreen() {
               );
             })}
 
-            {/* ✅ TAX inserted here (middle: between Buildings and Stalls) */}
             {hasTax && (
               <View style={{ marginTop: 2 }}>
                 <TouchableOpacity
@@ -667,7 +623,6 @@ export default function AdminScreen() {
               </View>
             )}
 
-            {/* ✅ Pages AFTER TAX (starts with Stalls if present) */}
             {hasTax &&
               mobileNavWithTax.after.map((page) => {
                 const isActive2 = active === page.key;
@@ -805,7 +760,6 @@ export default function AdminScreen() {
         )}
       </View>
 
-      {/* Desktop tabs */}
       {!isMobile && (
         <>
           <View style={styles.tabBar}>
@@ -840,7 +794,6 @@ export default function AdminScreen() {
                   );
                 })}
 
-                {/* Desktop: TAX already between Buildings and Stalls */}
                 {hasTax && (
                   <View style={styles.taxWrap}>
                     <TouchableOpacity

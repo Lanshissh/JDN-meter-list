@@ -106,7 +106,7 @@ export default function StallsPanel({ token }: { token: string | null }) {
   const [tenants, setTenants] = useState<Tenant[]>([]);
 
   const [query, setQuery] = useState("");
-  const [buildingFilter, setBuildingFilter] = useState<string>(""); // <-- default empty, forces selection
+  const [buildingFilter, setBuildingFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"" | Stall["stall_status"]>(
     "",
   );
@@ -169,7 +169,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
 
     let list = stalls;
 
-    // Only show stalls from chosen building (once selected)
     if (buildingFilter) list = list.filter((s) => s.building_id === buildingFilter);
 
     if (statusFilter) list = list.filter((s) => s.stall_status === statusFilter);
@@ -347,7 +346,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
 
-            {/* Building chips (NO "All" option) */}
             {isMobile ? (
               <ScrollView
                 horizontal
@@ -377,7 +375,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
             )}
           </View>
 
-          {/* List gate: hide stalls until a building is selected */}
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />
@@ -489,7 +486,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
           )}
         </View>
 
-        {/* Filters modal */}
         <Modal
           visible={filtersVisible}
           transparent
@@ -554,7 +550,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
           </View>
         </Modal>
 
-        {/* Create modal */}
         <Modal
           visible={createVisible}
           animationType="fade"
@@ -642,7 +637,6 @@ export default function StallsPanel({ token }: { token: string | null }) {
           </KeyboardAvoidingView>
         </Modal>
 
-        {/* Edit modal */}
         <Modal
           visible={editVisible}
           animationType="fade"

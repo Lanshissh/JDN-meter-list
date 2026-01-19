@@ -81,18 +81,12 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
 
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
-
-  // ✅ gate: no building selected by default
   const [buildingId, setBuildingId] = useState<string>("");
-
   const [buildingPickerVisible, setBuildingPickerVisible] = useState(false);
-
   const [search, setSearch] = useState("");
-
   const [assignVisible, setAssignVisible] = useState(false);
   const [assignStall, setAssignStall] = useState<Stall | null>(null);
   const [assignTenantId, setAssignTenantId] = useState("");
@@ -122,21 +116,17 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
         setStalls(s);
         setTenants(t);
 
-        // ✅ IMPORTANT: do NOT auto-select first building.
-        // user must choose a building chip first.
       } catch (err) {
         notify("Load failed", errorText(err, "Connection error."));
       } finally {
         setBusy(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const visibleStalls = useMemo(() => {
     const q = search.trim().toLowerCase();
 
-    // ✅ Gate: until building is selected, show nothing
     if (!buildingId) return [];
 
     let list = (stalls || []).filter((s) => s.stall_status === "available");
@@ -154,7 +144,6 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
   }, [stalls, buildingId, search]);
 
   const activeTenants = useMemo(() => {
-    // ✅ Gate: until building is selected, show nothing
     if (!buildingId) return [];
 
     let list = (tenants || []).filter(
@@ -259,7 +248,6 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
           />
         </View>
 
-        {/* optional: quick picker button if you want (kept your modal available) */}
         <TouchableOpacity
           style={styles.quickSelectBtn}
           onPress={() => setBuildingPickerVisible(true)}
@@ -276,7 +264,6 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
           <Text style={styles.label}>Building</Text>
         </View>
 
-        {/* ✅ NO "All" chip — force selection */}
         {isMobile ? (
           <ScrollView
             horizontal
@@ -350,7 +337,6 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
             <Text style={styles.loadingText}>Loading available stalls…</Text>
           </View>
         ) : !buildingId ? (
-          // ✅ Gate: nothing shown until building is selected
           <View style={styles.selectBuildingEmpty}>
             <Ionicons name="business-outline" size={44} color="#cbd5e1" />
             <Text style={styles.emptyTitle}>Select a building</Text>
@@ -377,7 +363,6 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
         )}
       </View>
 
-      {/* Building picker modal (kept, but removed "All") */}
       <Modal
         visible={buildingPickerVisible}
         transparent
@@ -440,7 +425,6 @@ export default function AssignTenantPanel({ token }: { token: string | null }) {
         </View>
       </Modal>
 
-      {/* Assign modal */}
       <Modal
         visible={assignVisible}
         transparent

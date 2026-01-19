@@ -17,7 +17,7 @@ import {
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { BASE_API } from "../../constants/api";
-import { useAuth } from "../../contexts/AuthContext"; // <-- ADD THIS
+import { useAuth } from "../../contexts/AuthContext";
 
 type Props = { token: string | null };
 
@@ -93,18 +93,13 @@ const Chip = ({
 );
 
 export default function WithholdingPanel({ token }: Props) {
-  // ==========================
-  //  ROLE ACCESS (NEW)
-  // ==========================
   const { hasRole } = useAuth();
   const isAdmin = hasRole("admin");
   const isBiller = hasRole("biller");
   const isOperator = hasRole("operator");
-  const canEdit = isAdmin || isBiller; // <-- ONLY admin & biller can edit WT
-
+  const canEdit = isAdmin || isBiller;
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [rows, setRows] = useState<WtCode[]>([]);
@@ -112,25 +107,20 @@ export default function WithholdingPanel({ token }: Props) {
   const [onlyNonZero, setOnlyNonZero] = useState(false);
   const [hasAnyRate, setHasAnyRate] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("newest");
-
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
-
   const [c_code, setC_code] = useState("");
   const [c_desc, setC_desc] = useState("");
   const [c_e, setC_e] = useState("");
   const [c_w, setC_w] = useState("");
   const [c_l, setC_l] = useState("");
-
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<WtCode | null>(null);
-
   const [e_code, setE_code] = useState("");
   const [e_desc, setE_desc] = useState("");
   const [e_e, setE_e] = useState("");
   const [e_w, setE_w] = useState("");
   const [e_l, setE_l] = useState("");
-
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
     [token],
@@ -164,7 +154,6 @@ export default function WithholdingPanel({ token }: Props) {
     }
   };
 
-  // Filters & sorting
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const nz = (v: number | null) =>
@@ -209,11 +198,8 @@ export default function WithholdingPanel({ token }: Props) {
     }
   }, [filtered, sortMode]);
 
-  // ==========================
-  // CREATE (Admin + Biller only)
-  // ==========================
   const onCreate = async () => {
-    if (!canEdit) return; // safety
+    if (!canEdit) return;
     if (!c_code.trim()) {
       notify("Missing info", "Please enter a withholding code.");
       return;
@@ -242,9 +228,6 @@ export default function WithholdingPanel({ token }: Props) {
     }
   };
 
-  // ==========================
-  // EDIT (Admin + Biller only)
-  // ==========================
   const openEdit = (row: WtCode) => {
     if (!canEdit) return;
     setEditRow(row);
@@ -277,9 +260,6 @@ export default function WithholdingPanel({ token }: Props) {
     }
   };
 
-  // ==========================
-  // DELETE (Admin + Biller only)
-  // ==========================
   const onDelete = (row: WtCode) => {
     if (!canEdit) return;
     const go = async () => {
@@ -305,15 +285,11 @@ export default function WithholdingPanel({ token }: Props) {
     }
   };
 
-  // ============================================================
-  // RENDER
-  // ============================================================
   return (
     <View style={styles.page}>
       <View style={styles.grid}>
         <View style={styles.card}>
-          {/* HEADER ======================== */}
-          <View style={styles.cardHeader}>
+]          <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Withholding Codes</Text>
 
             {canEdit && (
@@ -326,7 +302,6 @@ export default function WithholdingPanel({ token }: Props) {
             )}
           </View>
 
-          {/* SEARCH + FILTERS ============== */}
           <View style={styles.filtersBar}>
             <View style={[styles.searchWrap, { flex: 1 }]}>
               <Ionicons
@@ -358,7 +333,6 @@ export default function WithholdingPanel({ token }: Props) {
             </TouchableOpacity>
           </View>
 
-          {/* LIST ========================== */}
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />
@@ -382,7 +356,6 @@ export default function WithholdingPanel({ token }: Props) {
               }
               renderItem={({ item }) => (
                 <View style={[styles.row, isMobile && styles.rowMobile]}>
-                  {/* MAIN TEXT BLOCK */}
                   <View style={styles.rowMain}>
                     <Text style={styles.rowTitle}>
                       {item.wt_code}{" "}
@@ -404,7 +377,6 @@ export default function WithholdingPanel({ token }: Props) {
                     ) : null}
                   </View>
 
-                  {/* ACTIONS (Shown only if admin/biller) */}
                   {canEdit &&
                     (isMobile ? (
                       <View style={styles.rowActionsMobile}>
@@ -482,7 +454,6 @@ export default function WithholdingPanel({ token }: Props) {
         </View>
       </View>
 
-      {/* FILTERS MODAL ======================= */}
       <Modal
         visible={filtersVisible}
         transparent
@@ -556,7 +527,6 @@ export default function WithholdingPanel({ token }: Props) {
         </View>
       </Modal>
 
-      {/* CREATE MODAL (Admin + Biller) */}
       {canEdit && (
         <Modal
           visible={createVisible}
@@ -669,7 +639,6 @@ export default function WithholdingPanel({ token }: Props) {
         </Modal>
       )}
 
-      {/* EDIT MODAL (Admin + Biller) */}
       {canEdit && (
         <Modal
           visible={editVisible}
@@ -790,10 +759,6 @@ export default function WithholdingPanel({ token }: Props) {
     </View>
   );
 }
-
-// ============================================================
-// STYLES
-// ============================================================
 
 const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 0 },

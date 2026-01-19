@@ -89,7 +89,6 @@ function explainAxiosError(e: any, fallback: string) {
   const serverMsg = pickMessage(e?.response?.data);
   const msg = serverMsg || e?.message || fallback;
 
-  // Add helpful hint for common auth failures
   if (status === 401) {
     return `${toText(msg)}\n\nHint: Your session may be expired. Try logging in again.`;
   }
@@ -127,22 +126,14 @@ const Chip = ({
 
 export default function OfflineSubmissionsPanel() {
   const { token, hasRole, hasAccess } = useAuth();
-
-  // ✅ Match backend:
-  // - Role must be admin/operator/biller
-  // - Access must include offline_submissions OR meter_readings (admin always allowed)
   const isAdmin = hasRole("admin");
   const isOperator = hasRole("operator");
   const isBiller = hasRole("biller");
-
   const roleOk = isAdmin || isOperator || isBiller;
   const accessOk = isAdmin || hasAccess("offline_submissions", "meter_readings");
-
   const canUse = roleOk && accessOk;
-
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const api = useMemo(() => {
     const auth =
       token && String(token).trim()
@@ -161,14 +152,12 @@ export default function OfflineSubmissionsPanel() {
   const [items, setItems] = useState<Submission[]>([]);
   const [error, setError] = useState<string>("");
 
-  // Lookups for building chips + mapping meter->building
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [meterToBuilding, setMeterToBuilding] = useState<Map<string, string>>(
     () => new Map(),
   );
 
-  // UI / filters (match StallsPanel behavior)
-  const [buildingFilter, setBuildingFilter] = useState<string>(""); // default empty -> force select to show list
+  const [buildingFilter, setBuildingFilter] = useState<string>("");
   type SortMode = "newest" | "oldest";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [filtersVisible, setFiltersVisible] = useState(false);
@@ -237,7 +226,6 @@ export default function OfflineSubmissionsPanel() {
 
       setMeterToBuilding(mtb);
     } catch {
-      // ignore lookup errors; UI still works but building mapping might be incomplete
     }
   };
 
@@ -251,7 +239,6 @@ export default function OfflineSubmissionsPanel() {
       setItems([]);
       setError("");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, canUse]);
 
   const buildingLabel = useMemo(() => {
@@ -265,7 +252,6 @@ export default function OfflineSubmissionsPanel() {
   const filtered = useMemo(() => {
     let list = items;
 
-    // Gate by building (hide list until selected)
     if (buildingFilter) {
       list = list.filter(
         (it) => meterToBuilding.get(String(it.meter_id)) === buildingFilter,
@@ -311,7 +297,6 @@ export default function OfflineSubmissionsPanel() {
     }
   };
 
-  // Better “no access” messaging: tell user if it's role or access that failed
   if (!roleOk || !accessOk) {
     const missingRole = !roleOk;
     const missingAccess = !accessOk;
@@ -395,7 +380,6 @@ export default function OfflineSubmissionsPanel() {
               <Text style={styles.dropdownLabel}>Building</Text>
             </View>
 
-            {/* Building chips (NO "All", same as StallsPanel) */}
             {isMobile ? (
               <ScrollView
                 horizontal
@@ -425,7 +409,6 @@ export default function OfflineSubmissionsPanel() {
             )}
           </View>
 
-          {/* Gate like StallsPanel: hide list until a building is selected */}
           {busy ? (
             <View style={styles.loader}>
               <ActivityIndicator />
@@ -591,7 +574,6 @@ export default function OfflineSubmissionsPanel() {
           )}
         </View>
 
-        {/* Filters modal */}
         <Modal
           visible={filtersVisible}
           transparent

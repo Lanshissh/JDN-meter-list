@@ -23,7 +23,6 @@ import { BASE_API } from "../../constants/api";
 type Role = "admin" | "operator" | "biller" | "reader";
 type Util = "electric" | "water" | "lpg";
 
-/** These must match the backend authorizeAccess("<key>") usage */
 type AccessKey =
   | "meters"
   | "buildings"
@@ -70,7 +69,6 @@ function defaultAccessForRole(role: Role): AccessKey[] {
   if (role === "biller")
     return ["billing", "vat", "withholding", "meter_readings"];
 
-  // operator
   return [
     "meters",
     "buildings",
@@ -202,52 +200,33 @@ function normalizeAccessList(v: any): AccessKey[] {
     .filter((x) => allowed.has(x as AccessKey)) as AccessKey[];
 }
 
-/**
- * ✅ Central rule enforcement so UI + backend stay consistent.
- * - offline_submissions requires meter_readings
- * - reader role cannot have management modules (like reader_devices)
- */
 function normalizeAccessForRole(role: Role, list: AccessKey[]): AccessKey[] {
   const uniq = Array.from(new Set(list));
 
-  // Admin: always empty (admin has implicit all)
   if (role === "admin") return [];
 
-  // Reader: keep ONLY meter_readings (prevents reader_devices/others)
   if (role === "reader") return ["meter_readings"];
 
-  // For operator/biller:
-  // Dependency: offline_submissions => meter_readings
   if (uniq.includes("offline_submissions") && !uniq.includes("meter_readings")) {
     uniq.push("meter_readings");
   }
 
-  // Prevent reader_devices on reader already handled above.
   return uniq;
 }
 
 export default function AccountsPanel({ token }: { token: string | null }) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [users, setUsers] = useState<User[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
-
   const [query, setQuery] = useState("");
-
-  // null means "not selected yet" => list hidden
   const [buildingFilter, setBuildingFilter] = useState<string | null>(null);
-
   const [roleFilter, setRoleFilter] = useState<"" | Role>("");
-
   type SortMode = "newest" | "oldest" | "idAsc" | "idDesc";
   const [sortMode, setSortMode] = useState<SortMode>("newest");
-
   const [filtersVisible, setFiltersVisible] = useState(false);
-
   const [createVisible, setCreateVisible] = useState(false);
   const [c_fullname, setC_fullname] = useState("");
   const [c_password, setC_password] = useState("");
@@ -334,7 +313,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
         setC_buildingId(bRes.data[0].building_id);
       }
 
-      // Ensure create form access is normalized
       if (c_role !== "admin") {
         setC_access((prev) =>
           normalizeAccessForRole(c_role, prev.length ? prev : defaultAccessForRole(c_role))
@@ -349,7 +327,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const filtered = useMemo(() => {
@@ -408,7 +385,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
     list: AccessKey[],
     setList: (v: AccessKey[]) => void
   ) => {
-    // Prevent invalid combos in UI (we still sanitize on save too)
     if (role === "reader" && key === "reader_devices") {
       notify("Not allowed", "Reader role cannot be granted Reader Devices access.");
       return;
@@ -419,7 +395,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
 
     const normalized = normalizeAccessForRole(role, next);
 
-    // If user turned on offline_submissions, we auto-add meter_readings.
     if (
       !active &&
       key === "offline_submissions" &&
@@ -638,7 +613,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
             </TouchableOpacity>
           </View>
 
-          {/* Building chips first (no "All") */}
           <View style={{ marginTop: 6, marginBottom: 15 }}>
             <View style={styles.buildingHeaderRow}>
               <Text style={styles.dropdownLabel}>Building</Text>
@@ -800,7 +774,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           )}
         </View>
 
-        {/* Filters modal */}
         <Modal
           visible={filtersVisible}
           transparent
@@ -877,7 +850,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           </View>
         </Modal>
 
-        {/* Create modal */}
         <Modal
           visible={createVisible}
           animationType="fade"
@@ -1042,7 +1014,6 @@ export default function AccountsPanel({ token }: { token: string | null }) {
           </KeyboardAvoidingView>
         </Modal>
 
-        {/* Edit modal */}
         <Modal
           visible={editVisible}
           animationType="fade"

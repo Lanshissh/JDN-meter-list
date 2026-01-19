@@ -29,7 +29,7 @@ type Building = {
   wmin_con?: number | null;
   lrate_perKg?: number | null;
   markup_rate?: number | null;
-  penalty_rate?: number | null; // NEW
+  penalty_rate?: number | null;
   last_updated?: string | null;
   updated_by?: string | null;
 };
@@ -103,7 +103,6 @@ const Chip = ({
 export default function BuildingPanel({ token }: Props) {
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
-
   const [busy, setBusy] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [rows, setRows] = useState<Building[]>([]);
@@ -112,8 +111,6 @@ export default function BuildingPanel({ token }: Props) {
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [hasAnyRate, setHasAnyRate] = useState(false);
   const [onlyNonZero, setOnlyNonZero] = useState(false);
-
-  // Create modal state
   const [createVisible, setCreateVisible] = useState(false);
   const [c_name, setC_name] = useState("");
   const [c_eRate, setC_eRate] = useState("");
@@ -122,9 +119,7 @@ export default function BuildingPanel({ token }: Props) {
   const [c_wMin, setC_wMin] = useState("");
   const [c_lRate, setC_lRate] = useState("");
   const [c_markup, setC_markup] = useState("");
-  const [c_penalty, setC_penalty] = useState(""); // NEW
-
-  // Edit modal state
+  const [c_penalty, setC_penalty] = useState("");
   const [editVisible, setEditVisible] = useState(false);
   const [editRow, setEditRow] = useState<Building | null>(null);
   const [e_name, setE_name] = useState("");
@@ -134,7 +129,7 @@ export default function BuildingPanel({ token }: Props) {
   const [e_wMin, setE_wMin] = useState("");
   const [e_lRate, setE_lRate] = useState("");
   const [e_markup, setE_markup] = useState("");
-  const [e_penalty, setE_penalty] = useState(""); // NEW
+  const [e_penalty, setE_penalty] = useState("");
 
   const authHeader = useMemo(
     () => ({ Authorization: `Bearer ${token ?? ""}` }),
@@ -154,7 +149,6 @@ export default function BuildingPanel({ token }: Props) {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const loadAll = async () => {
@@ -193,7 +187,7 @@ export default function BuildingPanel({ token }: Props) {
           nz(r.wrate_perCbM) ||
           nz(r.lrate_perKg) ||
           nz(r.markup_rate) ||
-          nz(r.penalty_rate) // NEW
+          nz(r.penalty_rate)
         : true;
 
       return textOk && rateOk;
@@ -255,7 +249,7 @@ export default function BuildingPanel({ token }: Props) {
         wmin_con: toNumOrNull(c_wMin),
         lrate_perKg: toNumOrNull(c_lRate),
         markup_rate: toNumOrNull(c_markup),
-        penalty_rate: toNumOrNull(c_penalty), // NEW
+        penalty_rate: toNumOrNull(c_penalty),
       });
       setCreateVisible(false);
       setC_name("");
@@ -265,7 +259,7 @@ export default function BuildingPanel({ token }: Props) {
       setC_wMin("");
       setC_lRate("");
       setC_markup("");
-      setC_penalty(""); // NEW
+      setC_penalty("");
       await loadAll();
       notify("Success", "Building created.");
     } catch (err) {
@@ -284,7 +278,7 @@ export default function BuildingPanel({ token }: Props) {
     setE_wMin(row.wmin_con != null ? String(row.wmin_con) : "");
     setE_lRate(row.lrate_perKg != null ? String(row.lrate_perKg) : "");
     setE_markup(row.markup_rate != null ? String(row.markup_rate) : "");
-    setE_penalty(row.penalty_rate != null ? String(row.penalty_rate) : ""); // NEW
+    setE_penalty(row.penalty_rate != null ? String(row.penalty_rate) : "");
     setEditVisible(true);
   };
 
@@ -305,7 +299,7 @@ export default function BuildingPanel({ token }: Props) {
         wmin_con: toNumOrNull(e_wMin),
         lrate_perKg: toNumOrNull(e_lRate),
         markup_rate: toNumOrNull(e_markup),
-        penalty_rate: toNumOrNull(e_penalty), // NEW
+        penalty_rate: toNumOrNull(e_penalty),
       });
       setEditVisible(false);
       await loadAll();
@@ -508,7 +502,6 @@ export default function BuildingPanel({ token }: Props) {
         </View>
       </View>
 
-      {/* Filters modal */}
       <Modal
         visible={filtersVisible}
         transparent
@@ -589,7 +582,6 @@ export default function BuildingPanel({ token }: Props) {
         </View>
       </Modal>
 
-      {/* Create modal */}
       <Modal
         visible={createVisible}
         animationType="fade"
@@ -726,7 +718,6 @@ export default function BuildingPanel({ token }: Props) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Edit modal */}
       <Modal
         visible={editVisible}
         animationType="fade"
