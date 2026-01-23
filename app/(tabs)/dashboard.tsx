@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
+import { Picker } from "@react-native-picker/picker";
 
 import { BASE_API } from "../../constants/api";
 import { useAuth } from "../../contexts/AuthContext";
@@ -41,7 +42,10 @@ type TileState = {
   restricted?: boolean;
 };
 
+type Building = { building_id: string; building_name: string };
+
 const KEY_OFFLINE_PACKAGE = "offline_package_v1";
+const KEY_DASHBOARD_BUILDING_FILTER = "dashboard_building_filter_v1";
 
 const norm = (v: any) => String(v ?? "").trim().toLowerCase();
 
@@ -50,47 +54,66 @@ const safeAtob = (b64: string): string | null => {
     if (typeof globalThis.atob === "function") return globalThis.atob(b64);
   } catch {}
   try {
-    if (typeof Buffer !== "undefined") return Buffer.from(b64, "base64").toString("utf8");
+    if (typeof Buffer !== "undefined")
+      return Buffer.from(b64, "base64").toString("utf8");
   } catch {}
   return null;
 };
 
-function decodeRole(token: string | null): { role: Role; buildingId?: string } {
-  if (!token) return { role: "unknown" };
+function decodeJwtPayload(token: string | null): any | null {
+  if (!token) return null;
   try {
-    const base64Url = token.split(".")[1];
-    if (!base64Url) return { role: "unknown" };
+    const raw = token.trim().replace(/^Bearer\s+/i, "");
+    const part = raw.split(".")[1];
+    if (!part) return null;
 
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    let base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const mod = base64.length % 4;
+    if (mod) base64 += "=".repeat(4 - mod);
+
     const json = safeAtob(base64);
-    if (!json) return { role: "unknown" };
+    if (!json) return null;
 
-    const payload = JSON.parse(json);
-    const rolesArr: string[] = Array.isArray(payload.user_roles) ? payload.user_roles : [];
-    const roles = rolesArr.map(norm);
-
-    let role: Role = (norm(payload.user_level || payload.role) as Role) || "unknown";
-
-    if (roles.includes("admin")) role = "admin";
-    else if (roles.includes("operator")) role = "operator";
-    else if (roles.includes("biller")) role = "biller";
-    else if (roles.includes("reader")) role = "reader";
-    else role = "unknown";
-
-    const buildingId =
-      payload.building_id ||
-      payload.buildingId ||
-      (Array.isArray(payload.building_ids) ? payload.building_ids?.[0] : undefined) ||
-      undefined;
-
-    return { role, buildingId };
+    return JSON.parse(json);
   } catch {
-    return { role: "unknown" };
+    return null;
   }
 }
 
+function decodeRole(token: string | null): {
+  role: Role;
+  buildingIds: string[];
+} {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return { role: "unknown", buildingIds: [] };
+
+  const rolesArr: string[] = Array.isArray(payload.user_roles)
+    ? payload.user_roles
+    : [];
+  const roles = rolesArr.map(norm);
+
+  let role: Role = (norm(payload.user_level || payload.role) as Role) || "unknown";
+
+  if (roles.includes("admin")) role = "admin";
+  else if (roles.includes("operator")) role = "operator";
+  else if (roles.includes("biller")) role = "biller";
+  else if (roles.includes("reader")) role = "reader";
+  else role = "unknown";
+
+  // Support multiple token shapes
+  const bIds: string[] = Array.isArray(payload.building_ids)
+    ? payload.building_ids.map((x: any) => String(x)).filter(Boolean)
+    : payload.building_id
+      ? [String(payload.building_id)]
+      : payload.buildingId
+        ? [String(payload.buildingId)]
+        : [];
+
+  return { role, buildingIds: Array.from(new Set(bIds)) };
+}
+
 function makeApi(token: string | null) {
-  const api = axios.create({ baseURL: BASE_API });
+  const api = axios.create({ baseURL: BASE_API, timeout: 15000 });
   api.interceptors.request.use((cfg) => {
     if (token) cfg.headers.Authorization = `Bearer ${token}`;
     return cfg;
@@ -98,23 +121,70 @@ function makeApi(token: string | null) {
   return api;
 }
 
+/**
+ * ✅ Robust count extractor:
+ * supports: [], {rows:[]}, {data:[]}, {items:[]}, {tenants:[]}, {meters:[]}, {count:n}
+ */
+function extractCountFromResponse(path: string, data: any): number {
+  if (Array.isArray(data)) return data.length;
+
+  if (typeof data?.count === "number" && Number.isFinite(data.count)) return data.count;
+
+  const candidates: any[] = [data?.rows, data?.data, data?.items, data?.result];
+  for (const c of candidates) if (Array.isArray(c)) return c.length;
+
+  const seg =
+    String(path || "").split("?")[0].split("/").filter(Boolean).pop() || "";
+  const key = seg.toLowerCase();
+
+  const keyed = [
+    data?.[key],
+    key === "readings" ? data?.meter_readings : undefined,
+    key === "readings" ? data?.readings : undefined,
+  ];
+  for (const c of keyed) if (Array.isArray(c)) return c.length;
+
+  return 0;
+}
+
+/**
+ * ✅ safeCount that can try building filter and fall back if backend doesn't support it.
+ */
 async function safeCount(
   api: ReturnType<typeof makeApi>,
   path: string,
+  buildingId?: string,
 ): Promise<{ count?: number; restricted?: boolean }> {
+  const withFilter =
+    buildingId && buildingId !== "all"
+      ? `${path}${path.includes("?") ? "&" : "?"}building_id=${encodeURIComponent(buildingId)}`
+      : path;
+
+  const tryGet = async (p: string) => {
+    const res = await api.get(p);
+    return { count: extractCountFromResponse(p, res.data) };
+  };
+
   try {
-    const res = await api.get(path);
-    const data = Array.isArray(res.data)
-      ? res.data
-      : Array.isArray(res.data?.rows)
-        ? res.data.rows
-        : [];
-    return { count: data.length };
+    return await tryGet(withFilter);
   } catch (e) {
     const err = e as AxiosError;
-    if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-      return { restricted: true };
+    const status = err?.response?.status;
+
+    if (status === 401 || status === 403) return { restricted: true };
+
+    // If backend rejects unknown query param, retry without filter
+    if (status === 400 && withFilter !== path) {
+      try {
+        return await tryGet(path);
+      } catch (e2) {
+        const err2 = e2 as AxiosError;
+        if (err2?.response?.status === 401 || err2?.response?.status === 403)
+          return { restricted: true };
+        return { count: 0 };
+      }
     }
+
     return { count: 0 };
   }
 }
@@ -124,19 +194,18 @@ function MetricCard({
   count,
   isRestricted,
   onPress,
+  subtext,
 }: {
   tile: TileState;
   count: number;
   isRestricted: boolean;
   onPress: () => void;
+  subtext?: string;
 }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 0.98,
-      useNativeDriver: true,
-    }).start();
+    Animated.spring(scaleAnim, { toValue: 0.98, useNativeDriver: true }).start();
   };
   const handlePressOut = () => {
     Animated.spring(scaleAnim, {
@@ -171,7 +240,9 @@ function MetricCard({
         <View style={styles.metricBody}>
           <Text style={styles.metricLabel}>{tile.label}</Text>
           <Text style={styles.metricValue}>{isRestricted ? "—" : count.toLocaleString()}</Text>
-          <Text style={styles.metricSubtext}>{isRestricted ? "Access restricted" : "Total entries"}</Text>
+          <Text style={styles.metricSubtext}>
+            {isRestricted ? "Access restricted" : subtext || "Total entries"}
+          </Text>
         </View>
 
         {!isRestricted && (
@@ -212,7 +283,9 @@ function QuickActionButton({
       <View style={[styles.actionIcon, isPrimary && styles.actionIconPrimary]}>
         <Ionicons name={icon} size={20} color={isPrimary ? "#ffffff" : "#64748b"} />
       </View>
-      <Text style={[styles.actionLabel, isPrimary && styles.actionLabelPrimary]}>{label}</Text>
+      <Text style={[styles.actionLabel, isPrimary && styles.actionLabelPrimary]}>
+        {label}
+      </Text>
       {isPrimary && <Ionicons name="chevron-forward" size={16} color="#ffffff" />}
     </TouchableOpacity>
   );
@@ -224,9 +297,10 @@ export default function Dashboard() {
   const { scans, isConnected } = useScanHistory();
 
   const { width } = useWindowDimensions();
-  const { role } = useMemo(() => decodeRole(token), [token]);
+  const { role, buildingIds } = useMemo(() => decodeRole(token), [token]);
 
   const api = useMemo(() => makeApi(token), [token]);
+
   const [busy, setBusy] = useState(true);
   const [counts, setCounts] = useState<Counts>({});
   const [restrictions, setRestrictions] = useState<Record<CountKey, boolean>>({
@@ -239,18 +313,21 @@ export default function Dashboard() {
     offlinePackage: false,
   });
 
+  // Building filter state
+  const [buildings, setBuildings] = useState<Building[]>([]);
+  const [buildingFilter, setBuildingFilter] = useState<string>("all");
+
   const [offlinePackageCount, setOfflinePackageCount] = useState(0);
   const [offlineMetersCount, setOfflineMetersCount] = useState(0);
   const [offlineTenantsCount, setOfflineTenantsCount] = useState(0);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 600,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, [fadeAnim]);
+
+  const isMobile = width < 768;
+  const containerWidth = Platform.OS === "web" ? Math.min(width - 48, 1400) : width - 32;
 
   const wantedTiles: TileState[] = useMemo(() => {
     const base: TileState[] = [
@@ -288,7 +365,6 @@ export default function Dashboard() {
       }
 
       const parsed = JSON.parse(raw);
-
       const items =
         Array.isArray(parsed?.package?.items) ? parsed.package.items :
         Array.isArray(parsed?.items) ? parsed.items :
@@ -303,7 +379,6 @@ export default function Dashboard() {
       }
 
       const metersCount = items.length;
-
       const tenantSet = new Set<string>();
       for (const it of items) {
         const name = String(it?.tenant_name ?? "").trim();
@@ -324,6 +399,60 @@ export default function Dashboard() {
     }
   }, []);
 
+  // Load + scope buildings and restore last filter
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      if (!token || role === "reader") return;
+
+      try {
+        const [bRes, saved] = await Promise.all([
+          api.get<Building[]>("/buildings"),
+          AsyncStorage.getItem(KEY_DASHBOARD_BUILDING_FILTER),
+        ]);
+
+        if (!alive) return;
+
+        const list = Array.isArray(bRes.data) ? bRes.data : [];
+
+        // Scope: admin sees all, others only token buildingIds if present
+        const scoped =
+          role === "admin" || buildingIds.length === 0
+            ? list
+            : list.filter((b) => buildingIds.includes(String(b.building_id)));
+
+        setBuildings(scoped);
+
+        // Pick default filter
+        const savedId = (saved || "").trim();
+        const canUseSaved =
+          savedId === "all" ||
+          scoped.some((b) => String(b.building_id) === savedId);
+
+        if (canUseSaved) {
+          setBuildingFilter(savedId || "all");
+        } else if (role !== "admin" && scoped.length === 1) {
+          setBuildingFilter(String(scoped[0].building_id));
+        } else {
+          setBuildingFilter("all");
+        }
+      } catch {
+        // If buildings load fails, keep filter as-is; counts still work (unfiltered)
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [token, role, api, buildingIds]);
+
+  // Persist building filter
+  useEffect(() => {
+    if (role === "reader") return;
+    AsyncStorage.setItem(KEY_DASHBOARD_BUILDING_FILTER, buildingFilter).catch(() => {});
+  }, [buildingFilter, role]);
+
   useFocusEffect(
     useCallback(() => {
       loadOfflinePackageStats();
@@ -339,9 +468,9 @@ export default function Dashboard() {
         return;
       }
 
+      // Reader stays local/offline (no building filter)
       if (role === "reader") {
         const stats = await loadOfflinePackageStats();
-
         const pending = scans.filter((s) => s.status === "pending" || s.status === "failed").length;
 
         const nextCounts: Counts = {
@@ -380,14 +509,27 @@ export default function Dashboard() {
 
       await Promise.all(
         wantedTiles.map(async (t) => {
-          const { count, restricted } = await safeCount(api, `/${t.key}`);
+          const path = `/${t.key}`;
+          const shouldFilter =
+            t.key !== "buildings" &&
+            t.key !== "offlinePackage" &&
+            t.key !== "offlineQueue";
+
+          const { count, restricted } = await safeCount(
+            api,
+            path,
+            shouldFilter ? buildingFilter : undefined,
+          );
+
           if (!alive) return;
+
           if (typeof count === "number") nextCounts[t.key] = count;
           if (restricted) nextRestr[t.key] = true;
         }),
       );
 
       if (!alive) return;
+
       setCounts(nextCounts);
       setRestrictions(nextRestr);
       setBusy(false);
@@ -396,19 +538,15 @@ export default function Dashboard() {
     return () => {
       alive = false;
     };
-  }, [token, role, wantedTiles.length, api, scans, loadOfflinePackageStats]);
+  }, [token, role, api, scans, loadOfflinePackageStats, wantedTiles, buildingFilter]);
 
   const openPanel = (key: CountKey) => {
     if (role === "reader") {
       router.push("/(tabs)/scanner");
       return;
     }
-
     router.push({ pathname: "/(tabs)/admin", params: { panel: key } } as any);
   };
-
-  const isMobile = width < 768;
-  const containerWidth = Platform.OS === "web" ? Math.min(width - 48, 1400) : width - 32;
 
   const getRoleDisplay = () => {
     const roleMap: Record<Role, string> = {
@@ -429,8 +567,26 @@ export default function Dashboard() {
   };
 
   const totalRecords = Object.values(counts).reduce((a, b) => a + (b || 0), 0);
-
   const liveLabel = role === "reader" ? (isConnected ? "Online" : "Offline") : "Live";
+
+  const filterLabel =
+    buildingFilter === "all"
+      ? "All Buildings"
+      : buildings.find((b) => String(b.building_id) === buildingFilter)?.building_name ||
+        buildingFilter;
+
+  const tileSubtext = (tileKey: CountKey) => {
+    if (role === "reader") {
+      if (tileKey === "offlineQueue") return "Queued readings";
+      if (tileKey === "offlinePackage") return "Packaged meters";
+      if (tileKey === "tenants") return "Tenants in package";
+      if (tileKey === "meters") return "Meters in package";
+      return "Local records";
+    }
+
+    if (tileKey === "buildings") return "Total entries";
+    return `Filtered: ${filterLabel}`;
+  };
 
   return (
     <View style={styles.screen}>
@@ -452,12 +608,43 @@ export default function Dashboard() {
               </View>
             </View>
 
-            <Text style={styles.subtitle}>Real-time metering analytics and billing automation platform</Text>
+            <Text style={styles.subtitle}>
+              Real-time metering analytics and billing automation platform
+            </Text>
+
+            {/* ✅ Building filter (non-reader only) */}
+            {role !== "reader" ? (
+              <View style={styles.filterRow}>
+                <View style={styles.filterIcon}>
+                  <Ionicons name="business-outline" size={18} color="#334155" />
+                </View>
+                <View style={styles.filterPickerShell}>
+                  <Picker
+                    selectedValue={buildingFilter}
+                    onValueChange={(v) => setBuildingFilter(String(v))}
+                    mode={Platform.OS === "android" ? "dropdown" : undefined}
+                    style={styles.filterPicker}
+                    dropdownIconColor="#334155"
+                  >
+                    <Picker.Item label="All Buildings" value="all" />
+                    {buildings.map((b) => (
+                      <Picker.Item
+                        key={String(b.building_id)}
+                        label={b.building_name || String(b.building_id)}
+                        value={String(b.building_id)}
+                      />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+            ) : null}
 
             <View style={[styles.statsRow, isMobile && styles.statsRowMobile]}>
               <View style={styles.statItem}>
                 <Text style={styles.statValue}>{totalRecords}</Text>
-                <Text style={styles.statLabel}>{role === "reader" ? "Local Records" : "Total Records"}</Text>
+                <Text style={styles.statLabel}>
+                  {role === "reader" ? "Local Records" : "Total Records"}
+                </Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statItem}>
@@ -523,13 +710,19 @@ export default function Dashboard() {
                   const isRestricted = !!restrictions[tile.key];
 
                   const count =
-                    tile.key === "offlinePackage"
-                      ? offlinePackageCount
-                      : tile.key === "meters"
-                        ? offlineMetersCount
-                        : tile.key === "tenants"
-                          ? offlineTenantsCount
-                          : counts[tile.key] ?? 0;
+                    role === "reader"
+                      ? tile.key === "offlinePackage"
+                        ? offlinePackageCount
+                        : tile.key === "meters"
+                          ? offlineMetersCount
+                          : tile.key === "tenants"
+                            ? offlineTenantsCount
+                            : tile.key === "offlineQueue"
+                              ? scans.filter(
+                                  (s) => s.status === "pending" || s.status === "failed",
+                                ).length
+                              : counts[tile.key] ?? 0
+                      : counts[tile.key] ?? 0;
 
                   return (
                     <MetricCard
@@ -537,6 +730,7 @@ export default function Dashboard() {
                       tile={tile}
                       count={count}
                       isRestricted={isRestricted}
+                      subtext={tileSubtext(tile.key)}
                       onPress={() => openPanel(tile.key)}
                     />
                   );
@@ -544,20 +738,6 @@ export default function Dashboard() {
               </View>
             </>
           )}
-
-          <View style={[styles.infoPanel, { width: containerWidth }]}>
-            <View style={styles.infoPanelIcon}>
-              <Ionicons name="information-circle" size={24} color="#3b82f6" />
-            </View>
-            <View style={styles.infoPanelContent}>
-              <Text style={styles.infoPanelTitle}>Workflow Tip</Text>
-              <Text style={styles.infoPanelText}>
-                {role === "reader"
-                  ? "Capture readings in Scanner, then Sync to send them. This dashboard updates immediately after Sync clears your queue."
-                  : "Use Scanner for offline readings, then batch-approve and generate invoices from the Readings module for optimal efficiency."}
-              </Text>
-            </View>
-          </View>
 
           <View style={{ height: 40 }} />
         </Animated.View>
@@ -576,10 +756,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     borderRadius: 16,
     padding: 32,
-    gap: 24,
+    gap: 18,
     alignSelf: "center",
     ...(Platform.select({
-      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8 },
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+      },
       android: { elevation: 2 },
       web: { boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)" } as any,
     }) as any),
@@ -610,11 +795,36 @@ const styles = StyleSheet.create({
 
   subtitle: { fontSize: 15, color: "#64748b", lineHeight: 22 },
 
+  // ✅ Building filter styles
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  filterIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  filterPickerShell: { flex: 1, borderRadius: 10, overflow: "hidden" },
+  filterPicker: { height: 40, width: "100%", color: "#0f172a" },
+
   statsRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 24,
-    paddingTop: 20,
+    paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: "#f1f5f9",
   },
@@ -637,7 +847,7 @@ const styles = StyleSheet.create({
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#10b981" },
   statBadgeText: { fontSize: 12, fontWeight: "600", color: "#059669" },
 
-  quickActions: { flexDirection: "row", gap: 12 },
+  quickActions: { flexDirection: "row", gap: 12, marginTop: 6 },
   quickActionsMobile: { flexDirection: "column" },
 
   actionButton: {
@@ -682,7 +892,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#f1f5f9",
     ...(Platform.select({
-      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8 },
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+      },
       android: { elevation: 2 },
       web: { boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)" } as any,
     }) as any),
@@ -704,7 +919,13 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 11, fontWeight: "600", color: "#059669" },
 
   metricBody: { gap: 4 },
-  metricLabel: { fontSize: 14, fontWeight: "600", color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 },
+  metricLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
   metricValue: { fontSize: 42, fontWeight: "700", color: "#0f172a", letterSpacing: -1.5, marginVertical: 6 },
   metricSubtext: { fontSize: 14, color: "#94a3b8" },
 
@@ -732,26 +953,4 @@ const styles = StyleSheet.create({
 
   loadingContainer: { alignSelf: "center", alignItems: "center", paddingVertical: 80, gap: 16 },
   loadingText: { fontSize: 15, color: "#64748b", fontWeight: "500" },
-
-  infoPanel: {
-    alignSelf: "center",
-    backgroundColor: "#eff6ff",
-    borderRadius: 12,
-    padding: 20,
-    flexDirection: "row",
-    gap: 16,
-    borderWidth: 1,
-    borderColor: "#dbeafe",
-  },
-  infoPanelIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundColor: "#ffffff",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  infoPanelContent: { flex: 1, gap: 4 },
-  infoPanelTitle: { fontSize: 14, fontWeight: "600", color: "#1e40af" },
-  infoPanelText: { fontSize: 13, color: "#3b82f6", lineHeight: 20 },
 });

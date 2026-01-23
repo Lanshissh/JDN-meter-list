@@ -319,6 +319,49 @@
     return (nv - oldN) / oldN;
   }
 
+  function buildMrContinuationMap(
+    rows: { reading_id: string; lastread_date?: string; last_updated?: string }[],
+  ) {
+    const mrRe = /^MR-(\d+)$/i;
+
+    // 1) Find the highest existing MR-###
+    let maxMr = 0;
+    for (const r of rows || []) {
+      const m = mrRe.exec(String(r?.reading_id || ""));
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (Number.isFinite(n)) maxMr = Math.max(maxMr, n);
+      }
+    }
+
+    // 2) Collect everything that is NOT MR-###
+    const offlineLike = (rows || [])
+      .filter((r) => !mrRe.test(String(r?.reading_id || "")))
+      .slice()
+      // sort oldest → newest so the numbering “continues” naturally
+      .sort((a, b) => {
+        const da = ts(String(a?.lastread_date || ""));
+        const db = ts(String(b?.lastread_date || ""));
+        if (da !== db) return da - db;
+        const ua = ts(String(a?.last_updated || ""));
+        const ub = ts(String(b?.last_updated || ""));
+        return ua - ub;
+      });
+
+    // 3) Assign MR numbers after maxMr
+    const map = new Map<string, string>();
+    let cur = maxMr;
+
+    for (const r of offlineLike) {
+      cur += 1;
+      const padded = String(cur).padStart(3, "0");
+      map.set(String(r.reading_id), `MR-${padded}`);
+    }
+
+    return map;
+  }
+
+  
   export type Reading = {
     reading_id: string;
     meter_id: string;
@@ -2290,6 +2333,16 @@
     const safePage = Math.min(page, totalPages);
     const start = (safePage - 1) * 30;
     const pageData = readingsForSelected.slice(start, start + 30);
+    const mrDisplayMap = useMemo(
+      () => buildMrContinuationMap(readingsForSelected || []),
+      [readingsForSelected],
+    );
+
+    const displayReadingId = (r: any) =>
+      mrDisplayMap.get(String(r?.reading_id)) || String(r?.reading_id || "");
+
+    const isOfflineReading = (r: any) => mrDisplayMap.has(String(r?.reading_id));
+
     const [printProofVisible, setPrintProofVisible] = useState(false);
     const [printData, setPrintData] = useState<{
       reading: Reading | null;
@@ -2425,7 +2478,7 @@
           <!DOCTYPE html>
           <html>
             <head>
-              <title>Meter Reading Proof - ${printData.reading?.reading_id}</title>
+              <title>Meter Reading Proof - ${printData.reading ? displayReadingId(printData.reading) : ""}</title>
               <style>
                 body { 
                   font-family: Arial, sans-serif; 
@@ -2491,7 +2544,7 @@
               <div class="content">
                 <div class="reading-info">
                   <h2>Reading Details</h2>
-                  <p><strong>Reading ID:</strong> ${printData.reading?.reading_id}</p>
+                  <p><strong>Reading ID:</strong> ${printData.reading ? displayReadingId(printData.reading) : ""} ${printData.reading && isOfflineReading(printData.reading) ? "(OFFLINE)" : ""}</p>
                   <p><strong>Meter ID:</strong> ${printData.reading?.meter_id}</p>
                   <p><strong>Meter Type:</strong> ${meterType.toUpperCase()}</p>
                   ${tenantLine ? `<p><strong>Tenant:</strong> ${tenantLine}</p>` : ""}
@@ -2851,6 +2904,8 @@
               }
               renderItem={({ item }) => {
                 const { locked, header } = getReadingLockInfoFn(item);
+                const displayId = displayReadingId(item);
+                const offline = isOfflineReading(item);
 
                 return (
                   <View
@@ -2860,10 +2915,9 @@
                       {isMobile ? (
                         <>
                           <Text style={styles.rowTitle}>
-                            <Text style={styles.meterLink}>
-                              {item.reading_id}
-                            </Text>{" "}
-                            • <Text>{item.lastread_date}</Text>
+                            <Text style={styles.meterLink}>{displayId}</Text>{" "}
+                            {offline && <Text style={styles.offlineBadge}>OFFLINE</Text>} •{" "}
+                            <Text>{item.lastread_date}</Text>
                           </Text>
                           <Text style={styles.rowSub}>
                             Value: {fmtValue(item.reading_value)}
@@ -2871,7 +2925,9 @@
                         </>
                       ) : (
                         <>
-                          <Text style={styles.rowTitle}>{item.reading_id}</Text>
+                        <Text style={styles.rowTitle}>
+                          {displayId} {offline && <Text style={styles.offlineBadge}>OFFLINE</Text>}
+                        </Text>
                           <Text style={styles.rowSub}>
                             {item.lastread_date} • Value:{" "}
                             {fmtValue(item.reading_value)}
@@ -3126,12 +3182,19 @@
                         <View style={styles.printSection}>
                           <Text style={styles.sectionTitle}>Reading Details</Text>
                           <View style={styles.detailsGrid}>
-                            <View style={styles.detailItem}>
-                              <Text style={styles.detailLabel}>Reading ID:</Text>
+                          <View style={styles.detailItem}>
+                            <Text style={styles.detailLabel}>Reading ID:</Text>
+
+                            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
                               <Text style={styles.detailValue}>
-                                {printData.reading.reading_id}
+                                {displayReadingId(printData.reading)}
                               </Text>
+
+                              {isOfflineReading(printData.reading) ? (
+                                <Text style={styles.offlineBadge}>OFFLINE</Text>
+                              ) : null}
                             </View>
+                          </View>
                             <View style={styles.detailItem}>
                               <Text style={styles.detailLabel}>Meter ID:</Text>
                               <Text style={styles.detailValue}>
@@ -4492,5 +4555,17 @@
       fontSize: 11,
       fontWeight: "600",
       color: "#b91c1c",
+    },
+    offlineBadge: {
+      marginLeft: 8,
+      alignSelf: "center",
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 9999,
+      backgroundColor: "#e0f2fe",
+      color: "#0369a1",
+      fontSize: 11,
+      fontWeight: "800",
+      overflow: "hidden",
     },
   });
