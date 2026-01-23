@@ -195,7 +195,6 @@ export default function MeterPanel({ token }: { token: string | null }) {
       } catch {
         setBuildings([]);
       }
-
     } catch (err: any) {
       notify("Load failed", errorText(err, "Could not load meters/stalls."));
     } finally {
@@ -223,6 +222,40 @@ export default function MeterPanel({ token }: { token: string | null }) {
     });
     return m;
   }, [stalls]);
+
+  // ---------------------------------------------------------------------------
+  // Stall options for Create/Edit
+  // - Keeps users from selecting a stall outside the currently selected building.
+  // - Also helps prevent "No access: Stall not under your assigned building."
+  // ---------------------------------------------------------------------------
+  const effectiveBuildingId = buildingFilter || userBuildingId || "";
+
+  const scopedStalls = useMemo(() => {
+    const list = (effectiveBuildingId
+      ? stalls.filter(
+          (s) =>
+            (s.building_id || stallToBuilding.get(s.stall_id)) ===
+            effectiveBuildingId,
+        )
+      : stalls
+    ).slice();
+
+    // stable ordering
+    list.sort((a, b) => String(a.stall_id).localeCompare(String(b.stall_id)));
+    return list;
+  }, [stalls, stallToBuilding, effectiveBuildingId]);
+
+  // When the Create modal is open and the building changes,
+  // ensure the selected stall stays valid for that building.
+  useEffect(() => {
+    if (!createVisible) return;
+    if (!effectiveBuildingId) return;
+
+    const ok = scopedStalls.some((s) => s.stall_id === stallId);
+    if (!ok) {
+      setStallId(scopedStalls[0]?.stall_id || "");
+    }
+  }, [createVisible, effectiveBuildingId, scopedStalls, stallId]);
 
   const buildingChipOptions = useMemo(() => {
     if (isAdmin && buildings.length) {
@@ -258,6 +291,30 @@ export default function MeterPanel({ token }: { token: string | null }) {
     return [];
   }, [isAdmin, buildings, stalls, userBuildingId, buildingNameById]);
 
+  const openCreate = () => {
+    // If user didn't pick a building yet, try to auto-pick:
+    // - operators: their assigned building
+    // - admins: first building chip option (if available)
+    let nextBuilding = buildingFilter;
+    if (!nextBuilding) {
+      nextBuilding = userBuildingId || buildingChipOptions[0]?.value || "";
+      if (nextBuilding) setBuildingFilter(nextBuilding);
+    }
+
+    // Default stall to first stall under the chosen building (if any)
+    const defaultStall =
+      (nextBuilding
+        ? stalls.find(
+            (s) =>
+              (s.building_id || stallToBuilding.get(s.stall_id)) === nextBuilding,
+          )?.stall_id
+        : "") || "";
+
+    if (defaultStall) setStallId(defaultStall);
+
+    setCreateVisible(true);
+  };
+
   const filtered = useMemo(() => {
     if (!buildingFilter) return [];
 
@@ -268,9 +325,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       list = list.filter((m) => m.meter_type === filterType);
     }
 
-    list = list.filter(
-      (m) => stallToBuilding.get(m.stall_id) === buildingFilter,
-    );
+    list = list.filter((m) => stallToBuilding.get(m.stall_id) === buildingFilter);
 
     if (!q) return list;
 
@@ -320,25 +375,39 @@ export default function MeterPanel({ token }: { token: string | null }) {
   }, [filtered, sortBy]);
 
   const onCreate = async () => {
-    if (!sn.trim() || !stallId.trim()) {
+    const cleanSn = sn.trim();
+    const cleanStallId = stallId.trim();
+
+    if (!cleanSn || !cleanStallId) {
       notify("Missing info", "Serial number and Stall are required.");
+      return;
+    }
+
+    // ✅ Backend expects a building_id in body for building-scope authorization.
+    // We derive it from the selected stall.
+    const derivedBuildingId =
+      stallToBuilding.get(cleanStallId) || buildingFilter || userBuildingId || "";
+
+    if (!derivedBuildingId) {
+      notify(
+        "Create failed",
+        "No building specified for authorization. Select a building (or pick a stall under a building) and try again.",
+      );
       return;
     }
 
     const payload: any = {
       meter_type: type,
-      meter_sn: sn.trim(),
-      stall_id: stallId.trim(),
+      meter_sn: cleanSn,
+      stall_id: cleanStallId,
       meter_status: status,
+      building_id: derivedBuildingId,
     };
 
     if (mult.trim() !== "") {
       const asNum = Number(mult);
       if (!Number.isFinite(asNum)) {
-        notify(
-          "Invalid multiplier",
-          "Enter a numeric multiplier (e.g., 1 or 93). ",
-        );
+        notify("Invalid multiplier", "Enter a numeric multiplier (e.g., 1 or 93). ");
         return;
       }
       payload.meter_mult = asNum;
@@ -388,10 +457,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
     if (editMult.trim() !== "") {
       const asNum = Number(editMult);
       if (!Number.isFinite(asNum)) {
-        notify(
-          "Invalid multiplier",
-          "Enter a numeric multiplier (e.g., 1 or 93). ",
-        );
+        notify("Invalid multiplier", "Enter a numeric multiplier (e.g., 1 or 93). ");
         return;
       }
       body.meter_mult = asNum;
@@ -414,10 +480,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
   };
 
   const onDelete = async (m: Meter) => {
-    const ok = await confirm(
-      "Delete meter",
-      `Are you sure you want to delete ${m.meter_id}?`,
-    );
+    const ok = await confirm("Delete meter", `Are you sure you want to delete ${m.meter_id}?`);
     if (!ok) return;
 
     try {
@@ -542,10 +605,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Meters</Text>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => setCreateVisible(true)}
-          >
+          <TouchableOpacity style={styles.btn} onPress={openCreate}>
             <Text style={styles.btnText}>+ Create Meter</Text>
           </TouchableOpacity>
         </View>
@@ -632,9 +692,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         {!buildingFilter ? (
           <View style={styles.emptyWrap}>
             <Ionicons name="business-outline" size={22} color="#94a3b8" />
-            <Text style={styles.empty}>
-              Select a building to show the meter list.
-            </Text>
+            <Text style={styles.empty}>Select a building to show the meter list.</Text>
           </View>
         ) : sorted.length === 0 ? (
           <View style={styles.emptyWrap}>
@@ -652,13 +710,10 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 <View style={styles.rowMain}>
                   <Text style={styles.rowTitle}>
                     {item.meter_id}{" "}
-                    <Text style={styles.rowSub}>
-                      • {item.meter_type.toUpperCase()}
-                    </Text>
+                    <Text style={styles.rowSub}>• {item.meter_type.toUpperCase()}</Text>
                   </Text>
                   <Text style={styles.rowMeta}>
-                    SN: {item.meter_sn} · Mult: {item.meter_mult} · Stall:{" "}
-                    {item.stall_id}
+                    SN: {item.meter_sn} · Mult: {item.meter_mult} · Stall: {item.stall_id}
                   </Text>
                   <Text style={styles.rowMetaSmall}>
                     Status: {item.meter_status.toUpperCase()}
@@ -671,14 +726,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
                       style={[styles.actionBtn, styles.actionEdit]}
                       onPress={() => openEdit(item)}
                     >
-                      <Ionicons
-                        name="create-outline"
-                        size={16}
-                        color="#1f2937"
-                      />
-                      <Text style={[styles.actionText, styles.actionEditText]}>
-                        Update
-                      </Text>
+                      <Ionicons name="create-outline" size={16} color="#1f2937" />
+                      <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -686,25 +735,15 @@ export default function MeterPanel({ token }: { token: string | null }) {
                       onPress={() => onDelete(item)}
                     >
                       <Ionicons name="trash-outline" size={16} color="#fff" />
-                      <Text
-                        style={[styles.actionText, styles.actionDeleteText]}
-                      >
-                        Delete
-                      </Text>
+                      <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
                       style={[styles.actionBtn, styles.actionGhost]}
                       onPress={() => openQr(item.meter_id)}
                     >
-                      <Ionicons
-                        name="qr-code-outline"
-                        size={16}
-                        color="#1d4ed8"
-                      />
-                      <Text style={[styles.actionText, styles.actionGhostText]}>
-                        QR
-                      </Text>
+                      <Ionicons name="qr-code-outline" size={16} color="#1d4ed8" />
+                      <Text style={[styles.actionText, styles.actionGhostText]}>QR</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
@@ -713,28 +752,16 @@ export default function MeterPanel({ token }: { token: string | null }) {
                       style={[styles.actionBtn, styles.actionGhost]}
                       onPress={() => openQr(item.meter_id)}
                     >
-                      <Ionicons
-                        name="qr-code-outline"
-                        size={16}
-                        color="#1d4ed8"
-                      />
-                      <Text style={[styles.actionText, styles.actionGhostText]}>
-                        QR
-                      </Text>
+                      <Ionicons name="qr-code-outline" size={16} color="#1d4ed8" />
+                      <Text style={[styles.actionText, styles.actionGhostText]}>QR</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
                       style={[styles.actionBtn, styles.actionEdit]}
                       onPress={() => openEdit(item)}
                     >
-                      <Ionicons
-                        name="create-outline"
-                        size={16}
-                        color="#1f2937"
-                      />
-                      <Text style={[styles.actionText, styles.actionEditText]}>
-                        Update
-                      </Text>
+                      <Ionicons name="create-outline" size={16} color="#1f2937" />
+                      <Text style={[styles.actionText, styles.actionEditText]}>Update</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -742,11 +769,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                       onPress={() => onDelete(item)}
                     >
                       <Ionicons name="trash-outline" size={16} color="#fff" />
-                      <Text
-                        style={[styles.actionText, styles.actionDeleteText]}
-                      >
-                        Delete
-                      </Text>
+                      <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -756,6 +779,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         )}
       </View>
 
+      {/* Filters modal */}
       <Modal
         visible={filtersVisible}
         animationType="fade"
@@ -822,6 +846,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </View>
       </Modal>
 
+      {/* Create modal */}
       <Modal
         visible={createVisible}
         animationType="slide"
@@ -872,9 +897,8 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 placeholder="e.g. 1 or 93"
                 style={styles.input}
               />
-              <Text style={styles.help}>
-                Water defaults to 93.00; Electric/LPG default to 1.00 when left
-                blank.
+              <Text style={{ color: "#64748b", fontSize: 12, marginTop: -6 }}>
+                Water defaults to 93.00; Electric/LPG default to 1.00 when left blank.
               </Text>
 
               <Text style={styles.dropdownLabel}>Stall</Text>
@@ -885,7 +909,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   style={styles.picker}
                 >
                   <Picker.Item label="Select a stall" value="" />
-                  {stalls.map((s) => (
+                  {scopedStalls.map((s) => (
                     <Picker.Item
                       key={s.stall_id}
                       label={`${s.stall_id} • ${s.stall_sn || ""}`}
@@ -924,7 +948,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                 {submitting ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.btnText}>Create Meter</Text>
+                  <Text style={styles.btnText}>Create</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -932,6 +956,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Edit modal */}
       <Modal
         visible={editVisible}
         animationType="slide"
@@ -943,7 +968,9 @@ export default function MeterPanel({ token }: { token: string | null }) {
           style={styles.modalWrap}
         >
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Update {editRow?.meter_id}</Text>
+            <Text style={styles.modalTitle}>
+              Update Meter {editRow?.meter_id || ""}
+            </Text>
             <ScrollView
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={{ paddingBottom: 8 }}
@@ -965,19 +992,21 @@ export default function MeterPanel({ token }: { token: string | null }) {
               <TextInput
                 value={editSn}
                 onChangeText={setEditSn}
+                placeholder="e.g. UGF-E-000111"
                 style={styles.input}
               />
 
               <Text style={styles.dropdownLabel}>
                 Multiplier{" "}
                 <Text style={{ color: "#64748b", fontWeight: "400" }}>
-                  (leave blank to keep or auto if type changed)
+                  (leave blank to keep current)
                 </Text>
               </Text>
               <TextInput
                 value={editMult}
                 onChangeText={setEditMult}
                 keyboardType="numeric"
+                placeholder="e.g. 1 or 93"
                 style={styles.input}
               />
 
@@ -988,6 +1017,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
                   onValueChange={(v) => setEditStallId(v)}
                   style={styles.picker}
                 >
+                  <Picker.Item label="Select a stall" value="" />
                   {stalls.map((s) => (
                     <Picker.Item
                       key={s.stall_id}
@@ -1035,6 +1065,7 @@ export default function MeterPanel({ token }: { token: string | null }) {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* QR modal */}
       <Modal
         visible={qrVisible}
         animationType="fade"

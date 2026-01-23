@@ -2399,7 +2399,7 @@
             }
             if (Platform.OS !== "web") {
               notify(
-                "Print Proof",
+                "Reading Details",
                 "Image preview/printing is available on the web app.",
               );
             }
@@ -2929,7 +2929,7 @@
                           {displayId} {offline && <Text style={styles.offlineBadge}>OFFLINE</Text>}
                         </Text>
                           <Text style={styles.rowSub}>
-                            {item.lastread_date} • Value:{" "}
+                            {item.lastread_date} • Reading:{" "}
                             {fmtValue(item.reading_value)}
                           </Text>
                         </>
@@ -2963,7 +2963,7 @@
                       style={[styles.actionBtn, styles.actionBtnGhost]}
                       onPress={() => openPrintProof(item)}
                     >
-                      <Text style={styles.actionBtnGhostText}>Print Proof</Text>
+                      <Text style={styles.actionBtnGhostText}>View Reading Details</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
