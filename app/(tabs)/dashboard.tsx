@@ -91,7 +91,6 @@ function decodeRole(token: string | null): { role: Role; buildingIds: string[] }
   else if (roles.includes("reader")) role = "reader";
   else role = "unknown";
 
-  // Support multiple token shapes
   const bIds: string[] = Array.isArray(payload.building_ids)
     ? payload.building_ids.map((x: any) => String(x)).filter(Boolean)
     : payload.building_id
@@ -112,34 +111,30 @@ function makeApi(token: string | null) {
   return api;
 }
 
+function yyyymmddLocal(d = new Date()) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 /**
  * ✅ Robust count extractor:
  * supports: [], {rows:[]}, {data:[]}, {items:[]}, {tenants:[]}, {meters:[]}, {count:n}
  */
 function extractCountFromResponse(path: string, data: any): number {
-  // direct array
   if (Array.isArray(data)) return data.length;
 
-  // explicit count
   if (typeof data?.count === "number" && Number.isFinite(data.count)) return data.count;
 
-  // common wrappers
-  const maybeArrays: any[] = [
-    data?.rows,
-    data?.data,
-    data?.items,
-    data?.result,
-  ];
-
+  const maybeArrays: any[] = [data?.rows, data?.data, data?.items, data?.result];
   for (const candidate of maybeArrays) {
     if (Array.isArray(candidate)) return candidate.length;
   }
 
-  // keyed arrays (very common in your backend panels: res.data.devices, res.data.submissions, etc.)
   const seg = String(path || "").split("?")[0].split("/").filter(Boolean).pop() || "";
-  const key = seg.toLowerCase(); // e.g. "tenants", "meters"
+  const key = seg.toLowerCase();
 
-  // allow "readings" -> "meter_readings" too (some APIs use that)
   const keyedCandidates = [
     data?.[key],
     key === "readings" ? data?.meter_readings : undefined,
@@ -185,10 +180,7 @@ function MetricCard({
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 0.98,
-      useNativeDriver: true,
-    }).start();
+    Animated.spring(scaleAnim, { toValue: 0.98, useNativeDriver: true }).start();
   };
   const handlePressOut = () => {
     Animated.spring(scaleAnim, {
@@ -223,9 +215,7 @@ function MetricCard({
         <View style={styles.metricBody}>
           <Text style={styles.metricLabel}>{tile.label}</Text>
           <Text style={styles.metricValue}>{isRestricted ? "—" : count.toLocaleString()}</Text>
-          <Text style={styles.metricSubtext}>
-            {isRestricted ? "Access restricted" : subtext || "Total entries"}
-          </Text>
+          {!!subtext && <Text style={styles.metricSubtext}>{subtext}</Text>}
         </View>
 
         {!isRestricted && (
@@ -278,7 +268,7 @@ export default function Dashboard() {
   const { scans, isConnected } = useScanHistory();
 
   const { width } = useWindowDimensions();
-  const { role, buildingIds } = useMemo(() => decodeRole(token), [token]);
+  const { role } = useMemo(() => decodeRole(token), [token]);
 
   const api = useMemo(() => makeApi(token), [token]);
   const [busy, setBusy] = useState(true);
@@ -297,13 +287,17 @@ export default function Dashboard() {
   const [offlineMetersCount, setOfflineMetersCount] = useState(0);
   const [offlineTenantsCount, setOfflineTenantsCount] = useState(0);
 
+  // NEW: keep the meter IDs from the offline package (so we can compute "to read today")
+  const [offlinePackageMeterIds, setOfflinePackageMeterIds] = useState<string[]>([]);
+
+  // NEW: Today's progress (Reader)
+  const [todayTotal, setTodayTotal] = useState(0);
+  const [todayDone, setTodayDone] = useState(0);
+  const [todayRemaining, setTodayRemaining] = useState(0);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 600,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, [fadeAnim]);
 
   const wantedTiles: TileState[] = useMemo(() => {
@@ -325,8 +319,7 @@ export default function Dashboard() {
     }
 
     if (role === "admin") return base;
-    if (role === "operator")
-      return base.filter((t) => ["tenants", "stalls", "meters", "readings"].includes(t.key));
+    if (role === "operator") return base.filter((t) => ["tenants", "stalls", "meters", "readings"].includes(t.key));
     if (role === "biller") return base.filter((t) => ["tenants", "readings"].includes(t.key));
     return base;
   }, [role]);
@@ -338,7 +331,8 @@ export default function Dashboard() {
         setOfflinePackageCount(0);
         setOfflineMetersCount(0);
         setOfflineTenantsCount(0);
-        return { packageCount: 0, metersCount: 0, tenantsCount: 0 };
+        setOfflinePackageMeterIds([]);
+        return { packageCount: 0, metersCount: 0, tenantsCount: 0, meterIds: [] as string[] };
       }
 
       const parsed = JSON.parse(raw);
@@ -353,28 +347,38 @@ export default function Dashboard() {
         setOfflinePackageCount(1);
         setOfflineMetersCount(0);
         setOfflineTenantsCount(0);
-        return { packageCount: 1, metersCount: 0, tenantsCount: 0 };
+        setOfflinePackageMeterIds([]);
+        return { packageCount: 1, metersCount: 0, tenantsCount: 0, meterIds: [] as string[] };
       }
 
       const metersCount = items.length;
 
       const tenantSet = new Set<string>();
+      const meterIdSet = new Set<string>();
+
       for (const it of items) {
         const name = String(it?.tenant_name ?? "").trim();
         if (name) tenantSet.add(name);
+
+        const mid = String(it?.meter_id ?? it?.meterId ?? "").trim();
+        if (mid) meterIdSet.add(mid);
       }
+
       const tenantsCount = tenantSet.size;
+      const meterIds = Array.from(meterIdSet);
 
       setOfflinePackageCount(items.length);
       setOfflineMetersCount(metersCount);
       setOfflineTenantsCount(tenantsCount);
+      setOfflinePackageMeterIds(meterIds);
 
-      return { packageCount: items.length, metersCount, tenantsCount };
+      return { packageCount: items.length, metersCount, tenantsCount, meterIds };
     } catch {
       setOfflinePackageCount(0);
       setOfflineMetersCount(0);
       setOfflineTenantsCount(0);
-      return { packageCount: 0, metersCount: 0, tenantsCount: 0 };
+      setOfflinePackageMeterIds([]);
+      return { packageCount: 0, metersCount: 0, tenantsCount: 0, meterIds: [] as string[] };
     }
   }, []);
 
@@ -382,6 +386,57 @@ export default function Dashboard() {
     useCallback(() => {
       loadOfflinePackageStats();
     }, [loadOfflinePackageStats]),
+  );
+
+  // NEW: compute "how many to read today" for reader
+  const computeTodayProgress = useCallback(
+    async (packageMeterIds: string[]) => {
+      const total = packageMeterIds.length;
+      const today = yyyymmddLocal();
+
+      const packageSet = new Set(packageMeterIds);
+
+      // Local done today (queued scans)
+      const localDone = new Set<string>();
+      for (const s of scans) {
+        const mid = String((s as any)?.meter_id ?? "").trim();
+        const date = String((s as any)?.lastread_date ?? "").trim();
+        if (mid && packageSet.has(mid) && date === today) localDone.add(mid);
+      }
+
+      // Server done today (only if online)
+      const serverDone = new Set<string>();
+      if (isConnected) {
+        try {
+          const res = await api.get("/meter_reading/today");
+          const data = res.data;
+
+          const rows: any[] =
+            Array.isArray(data) ? data :
+            Array.isArray(data?.rows) ? data.rows :
+            Array.isArray(data?.data) ? data.data :
+            Array.isArray(data?.meter_readings) ? data.meter_readings :
+            Array.isArray(data?.readings) ? data.readings :
+            [];
+
+          for (const r of rows) {
+            const mid = String(r?.meter_id ?? r?.meterId ?? "").trim();
+            if (mid && packageSet.has(mid)) serverDone.add(mid);
+          }
+        } catch {
+          // ignore; we still show local progress
+        }
+      }
+
+      const doneUnion = new Set<string>([...localDone, ...serverDone]);
+      const done = doneUnion.size;
+      const remaining = Math.max(total - done, 0);
+
+      setTodayTotal(total);
+      setTodayDone(done);
+      setTodayRemaining(remaining);
+    },
+    [api, scans, isConnected],
   );
 
   useEffect(() => {
@@ -395,6 +450,7 @@ export default function Dashboard() {
 
       if (role === "reader") {
         const stats = await loadOfflinePackageStats();
+
         const pending = scans.filter((s) => s.status === "pending" || s.status === "failed").length;
 
         const nextCounts: Counts = {
@@ -414,6 +470,10 @@ export default function Dashboard() {
           offlineQueue: false,
           offlinePackage: false,
         }));
+
+        // compute today's progress
+        await computeTodayProgress(stats.meterIds);
+
         setBusy(false);
         return;
       }
@@ -449,20 +509,24 @@ export default function Dashboard() {
     return () => {
       alive = false;
     };
-  }, [token, role, api, scans, loadOfflinePackageStats, wantedTiles]);
+  }, [token, role, api, scans, loadOfflinePackageStats, wantedTiles, computeTodayProgress]);
+
+  // When package meter IDs change (or scans change), recompute progress
+  useEffect(() => {
+    if (role !== "reader") return;
+    computeTodayProgress(offlinePackageMeterIds);
+  }, [role, offlinePackageMeterIds, scans, isConnected, computeTodayProgress]);
 
   const openPanel = (key: CountKey) => {
     if (role === "reader") {
       router.push("/(tabs)/scanner");
       return;
     }
-
     router.push({ pathname: "/(tabs)/admin", params: { panel: key } } as any);
   };
 
   const isMobile = width < 768;
-  const containerWidth =
-    Platform.OS === "web" ? Math.min(width - 48, 1400) : width - 32;
+  const containerWidth = Platform.OS === "web" ? Math.min(width - 48, 1400) : width - 32;
 
   const getRoleDisplay = () => {
     const roleMap: Record<Role, string> = {
@@ -485,39 +549,6 @@ export default function Dashboard() {
   const totalRecords = Object.values(counts).reduce((a, b) => a + (b || 0), 0);
   const liveLabel = role === "reader" ? (isConnected ? "Online" : "Offline") : "Live";
 
-  const scopeHint =
-    role !== "admin" && buildingIds.length > 0
-      ? `Scoped to ${buildingIds.length} building${buildingIds.length > 1 ? "s" : ""}`
-      : role !== "admin"
-        ? "No buildings assigned"
-        : "Total entries";
-
-  const tileSubtext = (tileKey: CountKey, count: number, restricted: boolean) => {
-    if (restricted) return "Access restricted";
-
-    // reader tiles use local/offline wording
-    if (role === "reader") {
-      if (tileKey === "offlineQueue") return "Queued readings";
-      if (tileKey === "offlinePackage") return "Packaged meters";
-      if (tileKey === "tenants") return "Tenants in package";
-      if (tileKey === "meters") return "Meters in package";
-      return "Local records";
-    }
-
-    // Admin can stay generic
-    if (role === "admin") return "Total entries";
-
-    // Non-admin: make 0 not look broken
-    if ((tileKey === "tenants" || tileKey === "meters") && count === 0) {
-      return buildingIds.length === 0
-        ? "No assigned buildings"
-        : `No records in your scope (${buildingIds.length} building${buildingIds.length > 1 ? "s" : ""})`;
-    }
-
-    // Default for scoped users
-    return scopeHint;
-  };
-
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -538,16 +569,12 @@ export default function Dashboard() {
               </View>
             </View>
 
-            <Text style={styles.subtitle}>
-              Real-time metering analytics and billing automation platform
-            </Text>
+            <Text style={styles.subtitle}>Real-time metering analytics and billing automation platform</Text>
 
             <View style={[styles.statsRow, isMobile && styles.statsRowMobile]}>
               <View style={styles.statItem}>
                 <Text style={styles.statValue}>{totalRecords}</Text>
-                <Text style={styles.statLabel}>
-                  {role === "reader" ? "Local Records" : "Total Records"}
-                </Text>
+                <Text style={styles.statLabel}>{role === "reader" ? "Local Records" : "Total Records"}</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statItem}>
@@ -555,11 +582,31 @@ export default function Dashboard() {
                   <View style={styles.liveDot} />
                   <Text style={styles.statBadgeText}>{liveLabel}</Text>
                 </View>
-                <Text style={styles.statLabel}>
-                  {role === "reader" ? "Connection Status" : "System Status"}
-                </Text>
+                <Text style={styles.statLabel}>{role === "reader" ? "Connection Status" : "System Status"}</Text>
               </View>
             </View>
+
+            {/* NEW: Reader "To Read Today" */}
+            {role === "reader" && (
+              <View style={styles.todayPanel}>
+                <View style={styles.todayLeft}>
+                  <View style={styles.todayIcon}>
+                    <Ionicons name="calendar-outline" size={18} color="#0f172a" />
+                  </View>
+                  <View style={{ gap: 2 }}>
+                    <Text style={styles.todayTitle}>To Read Today</Text>
+                    <Text style={styles.todaySub}>
+                      {todayDone}/{todayTotal} done • {todayRemaining} remaining
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.todayRight}>
+                  <Text style={styles.todayBig}>{todayRemaining}</Text>
+                  <Text style={styles.todaySmall}>left</Text>
+                </View>
+              </View>
+            )}
 
             <View style={[styles.quickActions, isMobile && styles.quickActionsMobile]}>
               <QuickActionButton
@@ -571,11 +618,7 @@ export default function Dashboard() {
 
               {role !== "reader" ? (
                 <>
-                  <QuickActionButton
-                    icon="wallet-outline"
-                    label="Billing"
-                    onPress={() => router.push("/(tabs)/billing")}
-                  />
+                  <QuickActionButton icon="wallet-outline" label="Billing" onPress={() => router.push("/(tabs)/billing")} />
                   <QuickActionButton
                     icon="person-circle"
                     label="Admin"
@@ -583,11 +626,7 @@ export default function Dashboard() {
                   />
                 </>
               ) : (
-                <QuickActionButton
-                  icon="cloud-upload-outline"
-                  label="Sync / Queue"
-                  onPress={() => router.push("/(tabs)/scanner")}
-                />
+                <QuickActionButton icon="cloud-upload-outline" label="Sync / Queue" onPress={() => router.push("/(tabs)/scanner")} />
               )}
             </View>
           </View>
@@ -602,9 +641,7 @@ export default function Dashboard() {
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Overview</Text>
                 <Text style={styles.sectionSubtitle}>
-                  {role === "reader"
-                    ? "Your device data updates instantly after Sync"
-                    : "Monitor all operations in real-time"}
+                  {role === "reader" ? "Your device data updates instantly after Sync" : "Monitor all operations in real-time"}
                 </Text>
               </View>
 
@@ -623,7 +660,22 @@ export default function Dashboard() {
                             : tile.key === "offlineQueue"
                               ? scans.filter((s) => s.status === "pending" || s.status === "failed").length
                               : counts[tile.key] ?? 0
-                      : counts[tile.key] ?? 0;
+                      : tile.key === "offlineQueue"
+                        ? 0
+                        : counts[tile.key] ?? 0;
+
+                  const subtext =
+                    role === "reader"
+                      ? tile.key === "offlineQueue"
+                        ? "Queued readings for sync"
+                        : tile.key === "offlinePackage"
+                          ? "Meters packaged on device"
+                          : tile.key === "meters"
+                            ? "Meters in package"
+                            : tile.key === "tenants"
+                              ? "Tenants in package"
+                              : ""
+                      : "";
 
                   return (
                     <MetricCard
@@ -631,8 +683,8 @@ export default function Dashboard() {
                       tile={tile}
                       count={count}
                       isRestricted={isRestricted}
-                      subtext={tileSubtext(tile.key, count, isRestricted)}
                       onPress={() => openPanel(tile.key)}
+                      subtext={subtext}
                     />
                   );
                 })}
@@ -648,8 +700,8 @@ export default function Dashboard() {
               <Text style={styles.infoPanelTitle}>Workflow Tip</Text>
               <Text style={styles.infoPanelText}>
                 {role === "reader"
-                  ? "Capture readings in Scanner, then Sync to send them. This dashboard updates immediately after Sync clears your queue."
-                  : "If Tenants/Meters show 0, it can mean your account is scoped to buildings with no assigned records yet. Check Accounts → building assignment."}
+                  ? "Capture readings in Scanner, then Sync to send them. “To Read Today” uses your offline package minus readings already captured today."
+                  : "Use Scanner for offline readings, then batch-approve and generate invoices from the Readings module for optimal efficiency."}
               </Text>
             </View>
           </View>
@@ -674,12 +726,7 @@ const styles = StyleSheet.create({
     gap: 24,
     alignSelf: "center",
     ...(Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-      },
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8 },
       android: { elevation: 2 },
       web: { boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)" } as any,
     }) as any),
@@ -737,6 +784,36 @@ const styles = StyleSheet.create({
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#10b981" },
   statBadgeText: { fontSize: 12, fontWeight: "600", color: "#059669" },
 
+  // NEW: To Read Today panel
+  todayPanel: {
+    marginTop: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  todayLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  todayIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  todayTitle: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
+  todaySub: { fontSize: 12, color: "#64748b" },
+  todayRight: { alignItems: "flex-end" },
+  todayBig: { fontSize: 22, fontWeight: "800", color: "#0f172a", letterSpacing: -0.5 },
+  todaySmall: { fontSize: 11, color: "#64748b", marginTop: 1 },
+
   quickActions: { flexDirection: "row", gap: 12 },
   quickActionsMobile: { flexDirection: "column" },
 
@@ -782,12 +859,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#f1f5f9",
     ...(Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-      },
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8 },
       android: { elevation: 2 },
       web: { boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)" } as any,
     }) as any),

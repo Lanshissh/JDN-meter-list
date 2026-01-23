@@ -384,6 +384,7 @@
   };
   type Stall = { stall_id: string; building_id?: string; stall_sn?: string };
   type Building = { building_id: string; building_name: string };
+  type BuildingChipOption = { label: string; value: string };
 
   export default function MeterReadingPanel({
     token,
@@ -411,7 +412,20 @@
     const [hasOfflinePackage, setHasOfflinePackage] = useState(false);
     const [syncingPackage, setSyncingPackage] = useState(false);
 
-    const userBuildingId = String(jwt?.building_id || "");
+    const allowedBuildingIds = useMemo<Set<string>>(() => {
+      const raw: any[] =
+        Array.isArray(jwt?.building_ids) ? jwt.building_ids :
+        jwt?.building_id ? [jwt.building_id] :
+        [];
+
+      const ids = raw
+        .map((x) => String(x ?? "").trim())
+        .filter((x) => x.length > 0);
+
+      return new Set<string>(ids);
+    }, [jwt]);
+
+
 
     const headerToken =
       token && /^Bearer\s/i.test(token.trim())
@@ -689,7 +703,7 @@
         notify("Not logged in", "Please log in to manage meter readings.");
         return;
       }
-      if (!isAdmin && !isOperator && !isBiller) {
+      if (!isAdmin && !isOperator && !isBiller && !isReader) {
         setMeters([]);
         setStalls([]);
         setReadings([]);
@@ -698,6 +712,20 @@
         setBusy(false);
         return;
       }
+
+      if (isReader && !isAdmin && !isOperator && !isBiller) {
+        try {
+          setBusy(true);
+          const sRes = await api.get<Stall[]>("/stalls");
+          setStalls(sRes.data || []);
+        } catch {
+          setStalls([]);
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+
 
       try {
         setBusy(true);
@@ -875,24 +903,38 @@
 
     const buildingChipOptionsDeps = 0;
 
-    const buildingChipOptions = useMemo(() => {
-      if (isAdmin && buildings.length) {
-        return buildings
-          .slice()
-          .sort((a, b) => a.building_name.localeCompare(b.building_name))
-          .map((b) => ({
-            label: b.building_name || b.building_id,
-            value: b.building_id,
-          }));
-      }
-      if (userBuildingId) {
-        return [{ label: userBuildingId, value: userBuildingId }];
-      }
-      const ids = Array.from(
-        new Set(stalls.map((s) => s.building_id).filter(Boolean) as string[]),
-      ).sort();
-      return ids.map((id) => ({ label: id, value: id }));
-    }, [isAdmin, buildings, stalls, userBuildingId]);
+const buildingChipOptions = useMemo<BuildingChipOption[]>(() => {
+  const opts: BuildingChipOption[] = [{ label: "All", value: "" }];
+
+  // Admin: show all buildings by name
+  if (isAdmin && buildings.length) {
+    return opts.concat(
+      buildings
+        .slice()
+        .sort((a, b) => a.building_name.localeCompare(b.building_name))
+        .map((b) => ({
+          label: b.building_name || b.building_id,
+          value: String(b.building_id || ""),
+        })),
+    );
+  }
+
+  // Scoped users (Reader, etc): show only assigned building(s)
+  if (allowedBuildingIds.size > 0) {
+    const ids = Array.from(allowedBuildingIds).sort();
+    return opts.concat(ids.map((id) => ({ label: id, value: id })));
+  }
+
+  // Fallback (if no scope in token): infer from stalls
+  const ids = Array.from(
+    new Set(stalls.map((s) => s.building_id).filter(Boolean) as string[]),
+  )
+    .map(String)
+    .sort();
+
+  return opts.concat(ids.map((id) => ({ label: id, value: id })));
+}, [isAdmin, buildings, stalls, allowedBuildingIds]);
+
 
     const metersVisible = useMemo(() => {
       let arr = meters.slice();
@@ -1185,9 +1227,68 @@
             device_token: deviceToken,
           });
 
-          const pkg = res?.data?.package;
-          const items = Array.isArray(pkg?.items) ? pkg.items : [];
-          const importedMeters: Meter[] = items.map((it: any) => ({
+        const pkg = res?.data?.package;
+        const items = Array.isArray(pkg?.items) ? pkg.items : [];
+
+        if (!items.length) {
+          notify(
+            "Import returned 0 meters",
+            [
+              "The server returned an empty package, so the app will NOT overwrite your current offline data.",
+              "",
+              `device_token: ${deviceToken ? "present" : "missing"}`,
+              `allowedBuildingIds: ${Array.from(allowedBuildingIds).join(", ") || "(none)"}`,
+              `stalls loaded: ${stalls.length}`,
+              "",
+              "If this keeps happening, it usually means:",
+              "• reader device token is not ACTIVE / not registered on backend",
+              "• backend import route is returning an empty package for this device",
+            ].join("\n"),
+          );
+          return;
+        }
+
+        // ✅ Ensure we have stalls for mapping (Reader loadAll may not have finished yet)
+        let stallsForMap: Stall[] = stalls;
+        if (!stallsForMap.length) {
+          try {
+            const sRes = await api.get<Stall[]>("/stalls");
+            stallsForMap = sRes.data || [];
+            setStalls(stallsForMap);
+          } catch {
+            stallsForMap = [];
+          }
+        }
+
+        // build lookup: stall_id -> building_id (string)
+        const stallToBuildingId = new Map<string, string>();
+        for (const s of stallsForMap) {
+          const sid = String((s as any).stall_id ?? "").trim();
+          const bid = String((s as any).building_id ?? "").trim();
+          if (sid && bid) stallToBuildingId.set(sid, bid);
+        }
+
+
+        const filteredItems = items.filter((it: any) => {
+          let bId = String(it?.building_id || it?.buildingId || "").trim();
+
+          if (!bId) {
+            const stallId = String(it?.stall_id || it?.stallId || "").trim();
+            if (stallId) bId = stallToBuildingId.get(stallId) || "";
+          }
+
+          if (allowedBuildingIds.size > 0) {
+            return !bId ? true : allowedBuildingIds.has(bId);
+          }
+
+          return true;
+        });
+
+        const importedMeters: Meter[] = filteredItems.map((it: any) => {
+          const stallId = String(it.stall_id || it.stallId || "").trim();
+          const derivedBuildingId = stallId ? (stallToBuildingId.get(stallId) || "") : "";
+
+          return {
             meter_id: String(it.meter_id),
             meter_type: String(
               it.classification || it.meter_type || "electric",
@@ -1198,11 +1299,14 @@
             meter_status: "active",
             last_updated: new Date().toISOString(),
             updated_by: "import",
-          }));
+
+            ...(derivedBuildingId ? ({ building_id: derivedBuildingId } as any) : {}),
+          };
+        });
 
           const importedReadings: Reading[] = [];
 
-          for (const it of items) {
+          for (const it of filteredItems) {
             const meterId = String(it.meter_id || "").trim();
             if (!meterId) continue;
 
@@ -1234,8 +1338,10 @@
           }
 
           setMeters(importedMeters);
-          setStalls([]);
+          // ❌ do NOT clear stalls; keep it for building mapping / filters
+          // setStalls([]);
           setReadings(importedReadings);
+
 
 
           if (!formMeterId && importedMeters.length) {
@@ -1244,8 +1350,12 @@
 
           setHasOfflinePackage(true);
           notify(
-            "Synced",
-            `Imported ${importedMeters.length} meters to this device.`,
+            "Imported",
+            [
+              `Imported meters: ${importedMeters.length}`,
+              `Server items: ${items.length}`,
+              `After filter: ${filteredItems.length}`,
+            ].join("\n"),
           );
           return;
         }
@@ -1562,7 +1672,10 @@
                   style={[styles.btn, styles.btnGhost]}
                   onPress={() => {
                     setMeterQuery("");
-                    setBuildingFilter(isAdmin ? "" : userBuildingId || "");
+setBuildingFilter(
+  isAdmin ? "" : (allowedBuildingIds.size === 1 ? Array.from(allowedBuildingIds)[0] : "")
+);
+
                     setTypeFilter("");
                     setSortBy("date_desc");
                     setFiltersVisible(false);
