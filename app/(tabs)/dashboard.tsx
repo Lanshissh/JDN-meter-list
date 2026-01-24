@@ -50,56 +50,43 @@ const safeAtob = (b64: string): string | null => {
     if (typeof globalThis.atob === "function") return globalThis.atob(b64);
   } catch {}
   try {
-    if (typeof Buffer !== "undefined")
-      return Buffer.from(b64, "base64").toString("utf8");
+    if (typeof Buffer !== "undefined") return Buffer.from(b64, "base64").toString("utf8");
   } catch {}
   return null;
 };
 
-function decodeJwtPayload(token: string | null): any | null {
-  if (!token) return null;
+function decodeRole(token: string | null): { role: Role; buildingId?: string } {
+  if (!token) return { role: "unknown" };
   try {
-    const raw = token.trim().replace(/^Bearer\s+/i, "");
-    const part = raw.split(".")[1];
-    if (!part) return null;
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return { role: "unknown" };
 
-    let base64 = part.replace(/-/g, "+").replace(/_/g, "/");
-    const mod = base64.length % 4;
-    if (mod) base64 += "=".repeat(4 - mod);
-
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
     const json = safeAtob(base64);
-    if (!json) return null;
+    if (!json) return { role: "unknown" };
 
-    return JSON.parse(json);
+    const payload = JSON.parse(json);
+    const rolesArr: string[] = Array.isArray(payload.user_roles) ? payload.user_roles : [];
+    const roles = rolesArr.map(norm);
+
+    let role: Role = (norm(payload.user_level || payload.role) as Role) || "unknown";
+
+    if (roles.includes("admin")) role = "admin";
+    else if (roles.includes("operator")) role = "operator";
+    else if (roles.includes("biller")) role = "biller";
+    else if (roles.includes("reader")) role = "reader";
+    else role = "unknown";
+
+    const buildingId =
+      payload.building_id ||
+      payload.buildingId ||
+      (Array.isArray(payload.building_ids) ? payload.building_ids?.[0] : undefined) ||
+      undefined;
+
+    return { role, buildingId };
   } catch {
-    return null;
+    return { role: "unknown" };
   }
-}
-
-function decodeRole(token: string | null): { role: Role; buildingIds: string[] } {
-  const payload = decodeJwtPayload(token);
-  if (!payload) return { role: "unknown", buildingIds: [] };
-
-  const rolesArr: string[] = Array.isArray(payload.user_roles) ? payload.user_roles : [];
-  const roles = rolesArr.map(norm);
-
-  let role: Role = (norm(payload.user_level || payload.role) as Role) || "unknown";
-
-  if (roles.includes("admin")) role = "admin";
-  else if (roles.includes("operator")) role = "operator";
-  else if (roles.includes("biller")) role = "biller";
-  else if (roles.includes("reader")) role = "reader";
-  else role = "unknown";
-
-  const bIds: string[] = Array.isArray(payload.building_ids)
-    ? payload.building_ids.map((x: any) => String(x)).filter(Boolean)
-    : payload.building_id
-      ? [String(payload.building_id)]
-      : payload.buildingId
-        ? [String(payload.buildingId)]
-        : [];
-
-  return { role, buildingIds: bIds };
 }
 
 function makeApi(token: string | null) {
@@ -116,6 +103,15 @@ function yyyymmddLocal(d = new Date()) {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function ymdFromAny(v: any): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v).trim();
+  if (!s) return "";
+  if (s.includes("T")) return s.split("T")[0];
+  if (s.includes(" ")) return s.split(" ")[0];
+  return s;
 }
 
 /**
@@ -287,10 +283,10 @@ export default function Dashboard() {
   const [offlineMetersCount, setOfflineMetersCount] = useState(0);
   const [offlineTenantsCount, setOfflineTenantsCount] = useState(0);
 
-  // NEW: keep the meter IDs from the offline package (so we can compute "to read today")
+  // Keep meter IDs from offline package (for "To Read Today")
   const [offlinePackageMeterIds, setOfflinePackageMeterIds] = useState<string[]>([]);
 
-  // NEW: Today's progress (Reader)
+  // Reader "To Read Today"
   const [todayTotal, setTodayTotal] = useState(0);
   const [todayDone, setTodayDone] = useState(0);
   const [todayRemaining, setTodayRemaining] = useState(0);
@@ -355,7 +351,6 @@ export default function Dashboard() {
 
       const tenantSet = new Set<string>();
       const meterIdSet = new Set<string>();
-
       for (const it of items) {
         const name = String(it?.tenant_name ?? "").trim();
         if (name) tenantSet.add(name);
@@ -363,7 +358,6 @@ export default function Dashboard() {
         const mid = String(it?.meter_id ?? it?.meterId ?? "").trim();
         if (mid) meterIdSet.add(mid);
       }
-
       const tenantsCount = tenantSet.size;
       const meterIds = Array.from(meterIdSet);
 
@@ -388,23 +382,21 @@ export default function Dashboard() {
     }, [loadOfflinePackageStats]),
   );
 
-  // NEW: compute "how many to read today" for reader
   const computeTodayProgress = useCallback(
     async (packageMeterIds: string[]) => {
       const total = packageMeterIds.length;
       const today = yyyymmddLocal();
-
       const packageSet = new Set(packageMeterIds);
 
-      // Local done today (queued scans)
       const localDone = new Set<string>();
       for (const s of scans) {
         const mid = String((s as any)?.meter_id ?? "").trim();
-        const date = String((s as any)?.lastread_date ?? "").trim();
-        if (mid && packageSet.has(mid) && date === today) localDone.add(mid);
+        const date = ymdFromAny((s as any)?.lastread_date ?? (s as any)?.reading_date ?? "");
+        const status = String((s as any)?.status ?? "").trim().toLowerCase();
+        if (!mid || !packageSet.has(mid)) continue;
+        if (date === today && status !== "rejected" && status !== "failed") localDone.add(mid);
       }
 
-      // Server done today (only if online)
       const serverDone = new Set<string>();
       if (isConnected) {
         try {
@@ -421,10 +413,11 @@ export default function Dashboard() {
 
           for (const r of rows) {
             const mid = String(r?.meter_id ?? r?.meterId ?? "").trim();
-            if (mid && packageSet.has(mid)) serverDone.add(mid);
+            const d = ymdFromAny(r?.lastread_date ?? r?.reading_date ?? "");
+            if (mid && packageSet.has(mid) && (!d || d === today)) serverDone.add(mid);
           }
         } catch {
-          // ignore; we still show local progress
+          // ignore
         }
       }
 
@@ -471,8 +464,7 @@ export default function Dashboard() {
           offlinePackage: false,
         }));
 
-        // compute today's progress
-        await computeTodayProgress(stats.meterIds);
+        await computeTodayProgress((stats as any).meterIds || []);
 
         setBusy(false);
         return;
@@ -511,7 +503,6 @@ export default function Dashboard() {
     };
   }, [token, role, api, scans, loadOfflinePackageStats, wantedTiles, computeTodayProgress]);
 
-  // When package meter IDs change (or scans change), recompute progress
   useEffect(() => {
     if (role !== "reader") return;
     computeTodayProgress(offlinePackageMeterIds);
@@ -582,11 +573,12 @@ export default function Dashboard() {
                   <View style={styles.liveDot} />
                   <Text style={styles.statBadgeText}>{liveLabel}</Text>
                 </View>
-                <Text style={styles.statLabel}>{role === "reader" ? "Connection Status" : "System Status"}</Text>
+                <Text style={styles.statLabel}>
+                  {role === "reader" ? "Connection Status" : "System Status"}
+                </Text>
               </View>
             </View>
 
-            {/* NEW: Reader "To Read Today" */}
             {role === "reader" && (
               <View style={styles.todayPanel}>
                 <View style={styles.todayLeft}>
@@ -626,7 +618,11 @@ export default function Dashboard() {
                   />
                 </>
               ) : (
-                <QuickActionButton icon="cloud-upload-outline" label="Sync / Queue" onPress={() => router.push("/(tabs)/scanner")} />
+              <QuickActionButton
+                icon="cloud-upload-outline"
+                label="Sync / Queue"
+                onPress={() => router.push("/(tabs)/admin?panel=meter_readings")}
+              />
               )}
             </View>
           </View>
@@ -784,9 +780,9 @@ const styles = StyleSheet.create({
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#10b981" },
   statBadgeText: { fontSize: 12, fontWeight: "600", color: "#059669" },
 
-  // NEW: To Read Today panel
+  // Reader: To Read Today
   todayPanel: {
-    marginTop: 4,
+    marginTop: 12,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#e2e8f0",

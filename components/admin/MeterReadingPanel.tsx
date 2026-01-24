@@ -1,4 +1,4 @@
-  import React, { useEffect, useMemo, useRef, useState } from "react";
+  import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
   import {
     ActivityIndicator,
     Alert,
@@ -394,22 +394,55 @@
     initialMeterId?: string;
   }) {
     const jwt = useMemo(() => decodeJwtPayload(token), [token]);
-    const roles = Array.isArray(jwt?.user_roles)
+
+    // Roles (admin is exclusive per account rules; if token ever contains admin + other roles, treat as admin-only)
+    const rawRoles = Array.isArray(jwt?.user_roles)
       ? jwt.user_roles.map((r: any) => String(r).toLowerCase())
       : String(jwt?.user_level ?? jwt?.user_roles ?? "")
           .split(/[,\s]+/)
           .map((r) => r.toLowerCase())
           .filter(Boolean);
 
-    const isAdmin = roles.includes("admin");
+    const isAdmin = rawRoles.includes("admin");
+    const roles = isAdmin ? ["admin"] : rawRoles;
+
     const isOperator = roles.includes("operator");
     const isReader = roles.includes("reader");
     const isBiller = roles.includes("biller");
-    const canWrite = isAdmin || isOperator || isReader || isBiller;
+    // ✅ Pure Reader only (no admin/operator/biller mixed)
+    const isPureReader = isReader && !isAdmin && !isOperator && !isBiller;
+
+    // --- One-read-per-meter-per-day (Reader-only) guard ---
+    const enforceOneReadPerDay = isPureReader;
+
+    // Access modules (gate UI + behavior)
+    const accessModules = useMemo<Set<string>>(() => {
+      const raw: any[] = Array.isArray(jwt?.access_modules)
+        ? jwt.access_modules
+        : typeof (jwt as any)?.access_modules === "string"
+          ? String((jwt as any).access_modules)
+              .split(/[,\s]+/)
+              .filter(Boolean)
+          : [];
+      return new Set(raw.map((x) => String(x).toLowerCase().trim()).filter(Boolean));
+    }, [jwt]);
+
+    const hasAccess = useCallback(
+      (moduleName: string) => {
+        if (isAdmin) return true;
+        const key = String(moduleName || "").toLowerCase().trim();
+        return key ? accessModules.has(key) : false;
+      },
+      [isAdmin, accessModules],
+    );
+
+    const canUseMeterReadings = hasAccess("meter_readings");
+    const canWrite =
+      canUseMeterReadings && (isAdmin || isOperator || isReader || isBiller);
+
     const requireBuildingSelection = !isReader;
 
-
-    const [hasOfflinePackage, setHasOfflinePackage] = useState(false);
+const [hasOfflinePackage, setHasOfflinePackage] = useState(false);
     const [syncingPackage, setSyncingPackage] = useState(false);
 
     const allowedBuildingIds = useMemo<Set<string>>(() => {
@@ -520,6 +553,8 @@
     const [busy, setBusy] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [readings, setReadings] = useState<Reading[]>([]);
+    const [pendingOfflineSubmissions, setPendingOfflineSubmissions] = useState<any[]>([]); // server-side pending offline submissions
+
     const [meters, setMeters] = useState<Meter[]>([]);
     const [stalls, setStalls] = useState<Stall[]>([]);
     const [buildings, setBuildings] = useState<Building[]>([]);
@@ -703,6 +738,17 @@
         notify("Not logged in", "Please log in to manage meter readings.");
         return;
       }
+      if (!canUseMeterReadings) {
+        setMeters([]);
+        setStalls([]);
+        setReadings([]);
+        setBuildings([]);
+        setHasOfflinePackage(false);
+        setBusy(false);
+        notify("Not allowed", "Your account does not have access to meter_readings.");
+        return;
+      }
+
       if (!isAdmin && !isOperator && !isBiller && !isReader) {
         setMeters([]);
         setStalls([]);
@@ -730,10 +776,11 @@
       try {
         setBusy(true);
         const base = await detectReadingEndpoint();
-        const [rRes, mRes, sRes] = await Promise.all([
+        const [rRes, mRes, sRes, pRes] = await Promise.all([
           api.get<Reading[]>(base),
           api.get<Meter[]>("/meters"),
           api.get<Stall[]>("/stalls"),
+          api.get("/offlineExport/pending", { validateStatus: () => true }),
         ]);
         setReadings(
           Array.isArray(rRes.data)
@@ -742,6 +789,18 @@
         );
         setMeters(mRes.data || []);
         setStalls(sRes.data || []);
+        // server-side pending offline submissions (so reader won't double-submit)
+        const submissions =
+          (pRes as any)?.status >= 200 &&
+          (pRes as any)?.status < 400
+            ? ((pRes as any)?.data?.submissions ??
+              (pRes as any)?.data?.items ??
+              ((pRes as any)?.data && Array.isArray((pRes as any)?.data)
+                ? (pRes as any)?.data
+                : []))
+            : [];
+        setPendingOfflineSubmissions(Array.isArray(submissions) ? submissions : []);
+
         if (!formMeterId && mRes.data?.length)
           setFormMeterId(mRes.data[0].meter_id);
         if (isAdmin) {
@@ -800,6 +859,104 @@
     };
 
     const ymd = (d: string) => (typeof d === "string" ? d.split("T")[0] : d);
+
+const OFFLINE_LOCK_STATUSES = new Set([
+  "pending",
+  "queue",
+  "queued",
+  "in_queue",
+  "inqueue",
+  "approved",
+  "synced",
+]);
+
+const OFFLINE_ALLOW_REREAD_STATUSES = new Set(["failed", "rejected"]);
+
+const isMeterLockedForDate = useCallback(
+  (meterId: string, dateYmd: string) => {
+    const mid = String(meterId || "").trim();
+    const d = ymd(dateYmd || "");
+    if (!mid || !d) return false;
+
+    // ONLINE: already has a reading today
+    const hasOnline = readings.some(
+      (r) => String(r.meter_id) === mid && ymd(String(r.lastread_date || "")) === d,
+    );
+    if (hasOnline) return true;
+
+    // OFFLINE: exists in scans today and status is queue/pending/approved/synced
+    const offline = scans.find((s: any) => {
+      const sd = ymd(String(s?.lastread_date || ""));
+      return String(s?.meter_id || "") === mid && sd === d;
+    });
+
+    if (!offline) {
+      // SERVER pending submissions (awaiting approve/reject) should also lock
+      const pending = (pendingOfflineSubmissions as any[]).find((sub: any) => {
+        const sd = ymd(String(sub?.lastread_date || sub?.date || ""));
+        const sid = String(sub?.meter_id || sub?.meterId || "").trim();
+        return sid === mid && sd === d;
+      });
+
+      if (!pending) return false;
+
+      const pStatus = String((pending as any)?.status || "pending").trim().toLowerCase();
+      if (OFFLINE_ALLOW_REREAD_STATUSES.has(pStatus)) return false;
+      return true;
+    }
+
+    const status = String((offline as any)?.status || "").trim().toLowerCase();
+
+    // rejected/failed => can read again
+    if (OFFLINE_ALLOW_REREAD_STATUSES.has(status)) return false;
+
+    // queued/pending/approved/synced => cannot read again
+    if (OFFLINE_LOCK_STATUSES.has(status)) return true;
+
+    // if backend returns unknown status, do NOT lock by default (so unread meters still show)
+    return false;
+  },
+  [readings, scans, pendingOfflineSubmissions],
+);
+
+const lockedMeterIdsToday = useMemo(() => {
+  const d = todayStr();
+  const set = new Set<string>();
+
+  // lock via ONLINE readings today
+  for (const r of readings) {
+    if (ymd(String(r.lastread_date || "")) === d) set.add(String(r.meter_id));
+  }
+
+  // lock via OFFLINE scans today (only when queue/pending/approved/synced)
+  for (const s of scans as any[]) {
+    const sd = ymd(String((s as any)?.lastread_date || ""));
+    const status = String((s as any)?.status || "").trim().toLowerCase();
+    if (sd !== d) continue;
+    if (OFFLINE_ALLOW_REREAD_STATUSES.has(status)) continue;
+    if (OFFLINE_LOCK_STATUSES.has(status)) set.add(String((s as any)?.meter_id));
+  }
+
+
+  // lock via SERVER pending offline submissions today (still awaiting approve/reject)
+  // so reader won't double-submit while it's visible in Offline Submissions.
+  for (const sub of pendingOfflineSubmissions as any[]) {
+    const sd = ymd(String((sub as any)?.lastread_date || (sub as any)?.date || ""));
+    if (sd !== d) continue;
+    const status = String((sub as any)?.status || "pending").trim().toLowerCase();
+    // pending => lock, rejected => unlock (shouldn't be in /pending, but just in case)
+    if (OFFLINE_ALLOW_REREAD_STATUSES.has(status)) continue;
+    set.add(String((sub as any)?.meter_id || (sub as any)?.meterId || ""));
+  }
+
+  return set;
+}, [readings, scans, pendingOfflineSubmissions]);
+
+const metersForCreate = useMemo(() => {
+  if (!enforceOneReadPerDay) return meters;
+  const d = ymd(formDate || todayStr());
+  return meters.filter((m) => !isMeterLockedForDate(m.meter_id, d));
+}, [meters, enforceOneReadPerDay, formDate, isMeterLockedForDate]);
 
     const isBetween = (d: string, s: string, e: string) => {
       const x = ymd(d);
@@ -899,7 +1056,7 @@
           mtrNum(a.meter_id) - mtrNum(b.meter_id) ||
           a.meter_id.localeCompare(b.meter_id),
       );
-    }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
+    }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding, enforceOneReadPerDay, lockedMeterIdsToday]);
 
     const buildingChipOptionsDeps = 0;
 
@@ -937,48 +1094,83 @@ const buildingChipOptions = useMemo<BuildingChipOption[]>(() => {
 
 
     const metersVisible = useMemo(() => {
-      let arr = meters.slice();
+    let arr = meters.slice();
 
-      if (typeFilter) {
-        const t = String(typeFilter).toLowerCase();
-        arr = arr.filter((m) => String(m.meter_type || "").toLowerCase() === t);
-      }
+    if (typeFilter) {
+      const t = String(typeFilter).toLowerCase();
+      arr = arr.filter((m) => String(m.meter_type || "").toLowerCase() === t);
+    }
 
-      if (buildingFilter) {
-        const b = buildingFilter;
-        arr = arr.filter((m) => {
-          const direct = (m as any).building_id || null;
-          const stallId =
-            (m as any).stall_id ||
-            (m as any).stall_no ||
-            (m as any).stall_sn ||
-            null;
-          const viaStall = stallId ? stallToBuilding.get(String(stallId)) : null;
-          return direct === b || viaStall === b;
-        });
-      }
+    if (buildingFilter) {
+      const b = buildingFilter;
+      arr = arr.filter((m) => {
+        const direct = (m as any).building_id || null;
+        const stallId =
+          (m as any).stall_id ||
+          (m as any).stall_no ||
+          (m as any).stall_sn ||
+          null;
+        const viaStall = stallId ? stallToBuilding.get(String(stallId)) : null;
+        return direct === b || viaStall === b;
+      });
+    }
 
-      const q = (meterQuery || "").trim().toLowerCase();
-      if (q) {
-        arr = arr.filter((m) =>
-          [
-            m.meter_id,
-            (m as any).meter_sn,
-            (m as any).stall_id,
-            (m as any).meter_status,
-            (m as any).meter_type,
-          ]
-            .filter(Boolean)
-            .some((v) => String(v).toLowerCase().includes(q)),
-        );
-      }
-
-      return arr.sort(
-        (a, b) =>
-          mtrNum(a.meter_id) - mtrNum(b.meter_id) ||
-          a.meter_id.localeCompare(b.meter_id),
+    const q = (meterQuery || "").trim().toLowerCase();
+    if (q) {
+      arr = arr.filter((m) =>
+        [
+          m.meter_id,
+          (m as any).meter_sn,
+          (m as any).stall_id,
+          (m as any).meter_status,
+          (m as any).meter_type,
+        ]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q)),
       );
-    }, [meters, typeFilter, buildingFilter, meterQuery, stallToBuilding]);
+    }
+
+    // ✅ Hide meters already read TODAY (Reader-only)
+    const isForToday = ymd(String(formDate || "")) === todayStr();
+    if (enforceOneReadPerDay && isForToday && lockedMeterIdsToday.size) {
+      arr = arr.filter((m) => !lockedMeterIdsToday.has(String(m.meter_id)));
+    }
+
+    return arr.sort(
+      (a, b) =>
+        mtrNum(a.meter_id) - mtrNum(b.meter_id) ||
+        a.meter_id.localeCompare(b.meter_id),
+    );
+  }, [
+    meters,
+    typeFilter,
+    buildingFilter,
+    meterQuery,
+    stallToBuilding,
+    formDate,
+    lockedMeterIdsToday,
+  ]);
+
+
+    // If the currently selected meter gets hidden (because it's already read today),
+    // clear it so the form can't accidentally overwrite.
+    useEffect(() => {
+      const hasForm = formMeterId
+        ? metersVisible.some((m) => String(m.meter_id) === String(formMeterId))
+        : false;
+      if (formMeterId && !hasForm) {
+        setFormMeterId(metersVisible[0]?.meter_id || "");
+      }
+
+      const hasSelected = selectedMeterId
+        ? metersVisible.some((m) => String(m.meter_id) === String(selectedMeterId))
+        : false;
+      if (selectedMeterId && !hasSelected) {
+        setSelectedMeterId("");
+      }
+    }, [metersVisible, formMeterId, selectedMeterId]);
+
+
     const onCreate = async () => {
       const b = buildingIdForMeter(formMeterId);
       if (b && isDateLockedFor(b, formDate)) {
@@ -989,7 +1181,7 @@ const buildingChipOptions = useMemo<BuildingChipOption[]>(() => {
         return;
       }
       if (!canWrite) {
-        notify("Not allowed", "Only admin/operator can create readings.");
+        notify("Not allowed", "You do not have permission to create meter readings.");
         return;
       }
       if (!formMeterId || !formValue) {
@@ -999,6 +1191,27 @@ const buildingChipOptions = useMemo<BuildingChipOption[]>(() => {
       const valueNum = parseFloat(formValue);
       if (Number.isNaN(valueNum)) {
         notify("Invalid value", "Reading must be a number.");
+        return;
+      }
+
+    // ✅ Prevent overwriting: if this meter already has a reading for this date
+    // (either ONLINE in readings table or OFFLINE already queued on device), stop here.
+    // ✅ Prevent overwriting (Reader-only)
+    if (enforceOneReadPerDay && isMeterLockedForDate(formMeterId, formDate)) {
+      notify(
+        "Already read",
+        `Meter ${formMeterId} already has a reading for ${ymd(formDate)} (online/offline).`,
+      );
+      return;
+    }
+
+
+      const dateYmd = ymd(formDate || todayStr());
+      if (enforceOneReadPerDay && isMeterLockedForDate(formMeterId, dateYmd)) {
+        notify(
+          "Already read",
+          "You already submitted a reading for this meter today (online or offline). If it was rejected/failed, you can read it again.",
+        );
         return;
       }
 
@@ -1058,6 +1271,24 @@ const buildingChipOptions = useMemo<BuildingChipOption[]>(() => {
       try {
         setSubmitting(true);
         await api.post(readingBase, payload);
+
+        // Reader-only view doesn't reload readings from server in loadAll(),
+        // so we add a local "today" record to immediately lock/hide the meter for the day.
+        if (enforceOneReadPerDay) {
+          setReadings((prev) => [
+            ...prev,
+            {
+              reading_id: `LOCAL-${formMeterId}-${dateYmd}-${Date.now()}`,
+              meter_id: formMeterId,
+              reading_value: valueNum,
+              read_by: "local",
+              lastread_date: dateYmd,
+              last_updated: new Date().toISOString(),
+              updated_by: "local",
+              remarks: formRemarks.trim() || null,
+            },
+          ]);
+        }
         setFormValue("");
         setFormDate(todayStr());
         setFormRemarks("");
@@ -1780,13 +2011,21 @@ setBuildingFilter(
                     label="Meter"
                     value={formMeterId}
                     onChange={(id) => {
+                      const d = ymd(formDate || todayStr());
+                      if (enforceOneReadPerDay && isMeterLockedForDate(id, d)) {
+                        notify(
+                          "Already read",
+                          "That meter already has a reading today (online or offline). If it was rejected/failed, you can read it again.",
+                        );
+                        return;
+                      }
                       setFormMeterId(id);
                       const v = Number(formValue);
                       const { latest } = getLastTwo(readings, id);
                       const p = latest ? pctUp(v, latest.reading_value) : null;
                       setCreateWarn(!!p && p >= 0.2);
                     }}
-                    options={meters.map((m) => ({
+                    options={metersForCreate.map((m) => ({
                       label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
                       value: m.meter_id,
                     }))}
