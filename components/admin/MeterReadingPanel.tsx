@@ -128,6 +128,7 @@
     const formatted = Intl.NumberFormat(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
+      useGrouping: false, // 👈 removes commas
     }).format(v);
     return unit ? `${formatted} ${unit}` : formatted;
   }
@@ -381,6 +382,7 @@
     meter_status: "active" | "inactive";
     last_updated: string;
     updated_by: string;
+    tenant_name?: string | null;
   };
   type Stall = { stall_id: string; building_id?: string; stall_sn?: string };
   type Building = { building_id: string; building_name: string };
@@ -572,6 +574,22 @@ const [hasOfflinePackage, setHasOfflinePackage] = useState(false);
     const [formMeterId, setFormMeterId] = useState<string>(initialMeterId ?? "");
     const [formValue, setFormValue] = useState("");
     const [formDate, setFormDate] = useState<string>(todayStr());
+
+    const selectedMeter = useMemo(
+      () => meters.find((m) => m.meter_id === formMeterId),
+      [meters, formMeterId],
+    );
+
+    const { latest: latestReading } = useMemo(
+      () => getLastTwo(readings, formMeterId),
+      [readings, formMeterId],
+    );
+
+    const formTenantName = selectedMeter?.tenant_name ?? "—";
+    const formPreviousReading =
+      latestReading?.reading_value != null ? String(latestReading.reading_value) : "—";
+
+
     const [formRemarks, setFormRemarks] = useState<string>("");
     const [formImage, setFormImage] = useState<string>("");
     const [imageError, setImageError] = useState<string | null>(null);
@@ -1530,6 +1548,7 @@ const buildingChipOptions = useMemo<BuildingChipOption[]>(() => {
             meter_status: "active",
             last_updated: new Date().toISOString(),
             updated_by: "import",
+            tenant_name: it.tenant_name ?? null,
 
             ...(derivedBuildingId ? ({ building_id: derivedBuildingId } as any) : {}),
           };
@@ -2026,11 +2045,26 @@ setBuildingFilter(
                       setCreateWarn(!!p && p >= 0.2);
                     }}
                     options={metersForCreate.map((m) => ({
-                      label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}`,
+                      label: `${m.meter_id} • ${m.meter_type} • ${m.meter_sn}${m.tenant_name ? ` • ${m.tenant_name}` : ""}`,
                       value: m.meter_id,
                     }))}
                   />
                 </View>
+
+                <View style={styles.infoGrid}>
+                  <View style={styles.infoBox}>
+                    <Text style={styles.infoLabel}>Tenant</Text>
+                    <Text style={styles.infoValue} numberOfLines={1}>
+                      {formTenantName}
+                    </Text>
+                  </View>
+
+                  <View style={styles.infoBox}>
+                    <Text style={styles.infoLabel}>Previous Reading</Text>
+                    <Text style={styles.infoValue}>{formPreviousReading}</Text>
+                  </View>
+                </View>
+
                 <View style={styles.rowWrap}>
                   <View style={{ flex: 1, marginTop: 8 }}>
                     <Text style={styles.dropdownLabel}>Reading Value</Text>
@@ -3942,26 +3976,34 @@ setBuildingFilter(
         openFilePickerWeb();
         return;
       }
+
       try {
         setBusy(true);
+
         const perm = await ImagePicker.requestCameraPermissionsAsync();
         if (!perm.granted) {
           notify("Permission needed", "Please allow camera access.");
           return;
         }
+
         const res = await ImagePicker.launchCameraAsync({
           quality: 0.6,
-          base64: false,
+          base64: false, // ✅ correct
           allowsEditing: true,
         });
+
         if ((res as any).canceled) return;
+
         const asset = (res as any).assets?.[0];
-        const b64 = asset?.base64;
-        if (!b64) {
-          notify("Failed", "No base64 returned. Please try again.");
+        if (!asset?.uri) {
+          notify("Failed", "No photo captured.");
           return;
         }
-        await applyB64(b64, asset?.mimeType || "image/jpeg");
+
+        // ✅ Convert URI → compressed base64
+        const compressedB64 = await compressUriToSizedBase64Native(asset.uri);
+        await applyB64(compressedB64, "image/jpeg");
+
       } catch (e: any) {
         notify("Failed", e?.message || "Unable to take photo.");
       } finally {
@@ -4920,4 +4962,28 @@ setBuildingFilter(
       fontWeight: "800",
       overflow: "hidden",
     },
+    infoGrid: {
+  flexDirection: "row",
+  gap: 10,
+  marginTop: 8,
+  marginBottom: 2,
+},
+infoBox: {
+  flex: 1,
+  borderWidth: 1,
+  borderColor: "#e2e8f0",
+  backgroundColor: "#f8fafc",
+  borderRadius: 12,
+  padding: 10,
+},
+infoLabel: {
+  fontSize: 12,
+  color: "#64748b",
+  marginBottom: 2,
+},
+infoValue: {
+  fontSize: 14,
+  fontWeight: "700",
+  color: "#0f172a",
+},
   });

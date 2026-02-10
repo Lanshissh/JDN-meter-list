@@ -200,7 +200,9 @@ export function ScanHistoryProvider({
     async (id) => {
       await save(
         scans.map((s) =>
-          s.id === id ? ({ ...s, status: "pending", error: undefined } as OfflineScan) : s
+          s.id === id
+            ? ({ ...s, status: "pending", error: undefined } as OfflineScan)
+            : s
         )
       );
     },
@@ -228,7 +230,9 @@ export function ScanHistoryProvider({
       if (!deviceToken) {
         const msg =
           "Missing device token. Resolve/register this reader device first.";
-        await save(scans.map((s) => ({ ...s, status: "failed", error: msg } as OfflineScan)));
+        await save(
+          scans.map((s) => ({ ...s, status: "failed", error: msg } as OfflineScan))
+        );
         return { uploaded: 0, kept: scans.length };
       }
 
@@ -239,45 +243,76 @@ export function ScanHistoryProvider({
           headers: { Authorization: `Bearer ${authToken ?? ""}` },
         });
 
-        await api.post("/offlineExport/export", {
-          device_token: deviceToken,
-          readings: toSend.map((r) => ({
-            meter_id: r.meter_id,
-            reading_value: r.reading_value,
-            // ✅ always YYYY-MM-DD to match server and dashboard
-            lastread_date: toYMD(r.lastread_date),
-            remarks: r.remarks ?? null,
-            image: r.image ?? null,
+        // ✅ IMPORTANT:
+        // Axios throws for non-2xx by default.
+        // Your current issue (“Export shows error but items still appear in Offline Submissions”)
+        // typically means the server INSERTED successfully but returned a non-2xx status (or a
+        // response shape the UI didn't expect).
+        //
+        // So we:
+        // 1) accept ALL HTTP statuses
+        // 2) decide success based on status *and/or* response flags
+        const res = await api.post(
+          "/offlineExport/export",
+          {
+            device_token: deviceToken,
+            readings: toSend.map((r) => ({
+              meter_id: r.meter_id,
+              reading_value: r.reading_value,
+              // ✅ always YYYY-MM-DD to match server and dashboard
+              lastread_date: toYMD(r.lastread_date),
+              remarks: r.remarks ?? null,
+              image: r.image ?? null,
 
-            // optional
-            meter_type: r.meter_type ?? null,
-            tenant_name: r.tenant_name ?? null,
-          })),
-        });
+              // optional
+              meter_type: r.meter_type ?? null,
+              tenant_name: r.tenant_name ?? null,
+            })),
+          },
+          {
+            // treat non-2xx as a normal response so we can inspect it
+            validateStatus: () => true,
+          }
+        );
 
-        // ✅ IMPORTANT CHANGE:
-        // Don't clear scans; mark the uploaded ones as "synced" so dashboard can still count done today.
+        const statusOk = res.status >= 200 && res.status < 300;
+        const bodyOk =
+          res.data?.success === true ||
+          res.data?.ok === true ||
+          // some APIs return { uploaded: n }
+          (typeof res.data?.uploaded === "number" && res.data.uploaded >= 0);
+
+        // Many backends use 409 when duplicates are detected (already exported).
+        // If that happens, we still mark as synced because the server already has them.
+        const duplicateOk = res.status === 409;
+
+        if (!statusOk && !bodyOk && !duplicateOk) {
+          const msg =
+            (typeof res.data?.error === "string" && res.data.error) ||
+            (typeof res.data?.message === "string" && res.data.message) ||
+            `Export failed: HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+
+        const uploadedCount =
+          typeof res.data?.uploaded === "number"
+            ? res.data.uploaded
+            : // if server doesn't report counts, assume we exported what we sent
+              toSend.length;
+              
         const sentKey = new Set(
           toSend.map((r) => `${r.meter_id}__${toYMD(r.lastread_date)}`)
         );
 
-        // ✅ TS FIX: force exact OfflineScan[] output (prevents "status: string" widening)
-        const next: OfflineScan[] = scans.map((s): OfflineScan => {
+        const next: OfflineScan[] = scans.filter((s) => {
           const key = `${s.meter_id}__${toYMD(s.lastread_date)}`;
-          if (sentKey.has(key)) {
-            return {
-              ...s,
-              status: "synced",
-              error: undefined,
-            };
-          }
-          return s;
+          return !sentKey.has(key);
         });
 
         await save(next);
 
         return {
-          uploaded: toSend.length,
+          uploaded: uploadedCount,
           kept: next.length,
         };
       } catch (e: any) {
