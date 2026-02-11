@@ -16,6 +16,7 @@
     View,
     useWindowDimensions,
     Linking,
+    Pressable,
     Image as RNImage,
   } from "react-native";
   import { SafeAreaView } from "react-native-safe-area-context";
@@ -29,6 +30,7 @@
   import { useScanHistory } from "../../contexts/ScanHistoryContext";
   import AsyncStorage from "@react-native-async-storage/async-storage";
   import { useAuth } from "../../contexts/AuthContext";
+  import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 
   const KEY_DEVICE_TOKEN = "device_token_v1";
   const KEY_DEVICE_NAME = "device_name_v1";
@@ -387,6 +389,20 @@
   type Stall = { stall_id: string; building_id?: string; stall_sn?: string };
   type Building = { building_id: string; building_name: string };
   type BuildingChipOption = { label: string; value: string };
+
+  function pad2(n: number) {
+    return String(n).padStart(2, "0");
+  }
+
+  function formatYYYYMMDD(d: Date) {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+
+  function parseYYYYMMDD(s: string) {
+    const [y, m, d] = s.split("-").map(Number);
+    if (!y || !m || !d) return new Date();
+    return new Date(y, m - 1, d);
+  }
 
   export default function MeterReadingPanel({
     token,
@@ -2744,6 +2760,28 @@ setBuildingFilter(
     const [ledgerStart, setLedgerStart] = useState<string>(todayStr());
     const [ledgerEnd, setLedgerEnd] = useState<string>(todayStr());
 
+    const [showStartPicker, setShowStartPicker] = React.useState(false);
+    const [showEndPicker, setShowEndPicker] = React.useState(false);
+
+    const startDateObj = React.useMemo(
+      () => parseYYYYMMDD(ledgerStart || "2025-01-01"),
+      [ledgerStart]
+    );
+    const endDateObj = React.useMemo(
+      () => parseYYYYMMDD(ledgerEnd || "2025-01-31"),
+      [ledgerEnd]
+    );
+
+    function onChangeStart(e: DateTimePickerEvent, selected?: Date) {
+      setShowStartPicker(false);
+      if (e.type === "set" && selected) setLedgerStart(formatYYYYMMDD(selected));
+    }
+
+    function onChangeEnd(e: DateTimePickerEvent, selected?: Date) {
+      setShowEndPicker(false);
+      if (e.type === "set" && selected) setLedgerEnd(formatYYYYMMDD(selected));
+    }
+
     const openPrintProof = async (reading: Reading) => {
       setPrintLoading(true);
       setPrintProofVisible(true);
@@ -3097,7 +3135,7 @@ setBuildingFilter(
             ? String(currentVal)
             : String(reading.reading_value);
           const consStr = consVal != null ? fmtValue(consVal) : "";
-          let remarks = reading.remarks || "";
+          let remarks = (reading.remarks || "").replace(/\[OFFLINE\]/gi, "").trim();
 
           if (!remarks && consVal != null && prevVal != null && prevVal > 0) {
             const pct = consVal / prevVal;
@@ -3117,14 +3155,6 @@ setBuildingFilter(
           if (!Number.isNaN(currentVal)) {
             lastValue = currentVal;
           }
-        } else {
-          rows.push({
-            date: dayLabel,
-            prev: "",
-            current: "",
-            cons: "",
-            remarks: "",
-          });
         }
 
         cursor.setDate(cursor.getDate() + 1);
@@ -3147,20 +3177,29 @@ setBuildingFilter(
           (meter as any)?.account_no ||
           selectedMeterId;
         const tenantLine = [tenantCode, tenantName].filter(Boolean).join(" ");
-
-        const rowsHtml = rows
-          .map(
-            (r) => `
-            <tr>
-              <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:center;">${r.date}</td>
-              <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">${r.prev}</td>
-              <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">${r.current}</td>
-              <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">${r.cons}</td>
-              <td style="border:1px solid #d1d5db;padding:4px 6px;">${r.remarks}</td>
-            </tr>
-          `,
-          )
-          .join("");
+const rowsHtml = rows
+  .map(
+    (r) => `
+      <tr>
+        <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:center;">
+          ${r.date}
+        </td>
+        <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">
+          ${r.prev}
+        </td>
+        <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">
+          ${r.current}
+        </td>
+        <td style="border:1px solid #d1d5db;padding:4px 6px;text-align:right;">
+          ${r.cons}
+        </td>
+        <td style="border:1px solid #d1d5db;padding:4px 6px;">
+          ${r.remarks ?? ""}
+        </td>
+      </tr>
+    `
+  )
+  .join("");
 
         const w = window.open("", "_blank");
         if (!w) {
@@ -3484,21 +3523,74 @@ setBuildingFilter(
                   <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>
                     Start date (YYYY-MM-DD)
                   </Text>
-                  <TextInput
-                    value={ledgerStart}
-                    onChangeText={setLedgerStart}
-                    style={styles.input}
-                    placeholder="2025-01-01"
-                  />
-                  <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>
-                    End date (YYYY-MM-DD)
-                  </Text>
-                  <TextInput
-                    value={ledgerEnd}
-                    onChangeText={setLedgerEnd}
-                    style={styles.input}
-                    placeholder="2025-01-31"
-                  />
+                  <Text style={[styles.dropdownLabel, { marginTop: 4 }]}>Start date</Text>
+
+                  {Platform.OS === "web" ? (
+                    <input
+                      value={ledgerStart || ""}
+                      onChange={(e) => setLedgerStart(e.target.value)}
+                      type="date"
+                      style={{
+                        width: "100%",
+                        height: 44,
+                        borderRadius: 10,
+                        border: "1px solid rgba(0,0,0,0.2)",
+                        padding: "0 12px",
+                        fontSize: 16,
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  ) : (
+                    <Pressable onPress={() => setShowStartPicker(true)} style={[styles.input, { justifyContent: "center" }]}>
+                      <Text style={{ fontSize: 16, color: ledgerStart ? "#111" : "rgba(0,0,0,0.45)" }}>
+                        {ledgerStart || "2025-01-01"}
+                      </Text>
+                    </Pressable>
+                  )}
+
+                  <Text style={[styles.dropdownLabel, { marginTop: 8 }]}>End date</Text>
+
+                  {Platform.OS === "web" ? (
+                    <input
+                      value={ledgerEnd || ""}
+                      onChange={(e) => setLedgerEnd(e.target.value)}
+                      type="date"
+                      style={{
+                        width: "100%",
+                        height: 44,
+                        borderRadius: 10,
+                        border: "1px solid rgba(0,0,0,0.2)",
+                        padding: "0 12px",
+                        fontSize: 16,
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  ) : (
+                    <Pressable onPress={() => setShowEndPicker(true)} style={[styles.input, { justifyContent: "center" }]}>
+                      <Text style={{ fontSize: 16, color: ledgerEnd ? "#111" : "rgba(0,0,0,0.45)" }}>
+                        {ledgerEnd || "2025-01-31"}
+                      </Text>
+                    </Pressable>
+                  )}
+                  {showStartPicker && Platform.OS !== "web" && (
+                    <DateTimePicker
+                      value={startDateObj}
+                      mode="date"
+                      display={Platform.OS === "android" ? "default" : "spinner"}
+                      onChange={onChangeStart}
+                    />
+                  )}
+
+                  {showEndPicker && Platform.OS !== "web" && (
+                    <DateTimePicker
+                      value={endDateObj}
+                      mode="date"
+                      display={Platform.OS === "android" ? "default" : "spinner"}
+                      onChange={onChangeEnd}
+                    />
+                  )}
                   <View
                     style={{
                       flexDirection: "row",
